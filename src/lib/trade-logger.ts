@@ -17,7 +17,7 @@ export interface TradeLog {
   strategy?: string;
   reason?: string;
   error?: string;
-  metadata?: Record<string, any>;
+  metadata?: Record<string, unknown>;
 }
 
 export interface DailySummary {
@@ -130,7 +130,7 @@ export class TradeLogger {
     epic?: string;
     operation: string;
     message: string;
-    details?: Record<string, any>;
+    details?: Record<string, unknown>;
   }): void {
     this.addLog({
       id: this.generateId(),
@@ -149,7 +149,7 @@ export class TradeLogger {
   logInfo(info: {
     epic?: string;
     message: string;
-    details?: Record<string, any>;
+    details?: Record<string, unknown>;
   }): void {
     this.addLog({
       id: this.generateId(),

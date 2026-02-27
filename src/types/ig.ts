@@ -191,19 +191,21 @@ export interface PerformanceMetrics {
 // ============================================
 
 export const DEFAULT_MARKETS = {
-  GOLD: 'CS.D.GOLDUSD.CFD',
-  EUR_USD: 'CS.D.EURUSD.CFD',
-  GBP_USD: 'CS.D.GBPUSD.CFD',
-  USD_JPY: 'CS.D.USDJPY.CFD',
-  AUD_USD: 'CS.D.AUDUSD.CFD',
+  GOLD: 'CS.D.CFIGOLD.CFI.IP',
+  EUR_USD: 'CS.D.EURUSD.CSD.IP',
+  GBP_USD: 'CS.D.GBPUSD.CSD.IP',
+  USD_JPY: 'CS.D.USDJPY.CSD.IP',
+  AUD_USD: 'CS.D.AUDUSD.CSD.IP',
 } as const;
 
 export const MARKET_NAMES: Record<string, string> = {
+  'CS.D.CFIGOLD.CFI.IP': 'Spot Gold (SGD1)',
+  'CS.D.CFDGOLD.CMG.IP': 'Spot Gold ($1)',
   'CS.D.GOLDUSD.CFD': 'Gold (XAU/USD)',
-  'CS.D.EURUSD.CFD': 'EUR/USD',
-  'CS.D.GBPUSD.CFD': 'GBP/USD',
-  'CS.D.USDJPY.CFD': 'USD/JPY',
-  'CS.D.AUDUSD.CFD': 'AUD/USD',
+  'CS.D.EURUSD.CSD.IP': 'EUR/USD',
+  'CS.D.GBPUSD.CSD.IP': 'GBP/USD',
+  'CS.D.USDJPY.CSD.IP': 'USD/JPY',
+  'CS.D.AUDUSD.CSD.IP': 'AUD/USD',
 };
 
 export const DEFAULT_RISK_CONFIG: RiskConfig = {

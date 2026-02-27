@@ -1,7 +1,7 @@
 // Trading Strategies Library
 
 import type { Candle, StrategyConfig } from '@/types/ig';
-import { calculateSMA, calculateEMA, calculateRSI, calculateATR, calculateBollingerBands, findSupportResistance, analyzeMACD } from './technical-indicators';
+import { calculateSMA, calculateEMA, calculateRSI, calculateBollingerBands, analyzeMACD } from './technical-indicators';
 
 export interface StrategyResult {
   signal: 'BUY' | 'SELL' | 'NONE';
@@ -82,7 +82,7 @@ export function bollingerBandsStrategy(candles: Candle[], config: StrategyConfig
   const stdDev = Number(config.parameters.stdDev) || 2;
   if (candles.length < period + 5) return { signal: 'NONE', strength: 0, reason: 'Insufficient data', indicators: {} };
   const closes = candles.map((c) => c.close);
-  const { upper, middle, lower } = calculateBollingerBands(closes, period, stdDev);
+  const { upper, lower } = calculateBollingerBands(closes, period, stdDev);
   const currentPrice = closes[closes.length - 1];
   const currentUpper = upper[upper.length - 1];
   const currentLower = lower[lower.length - 1];
@@ -101,7 +101,7 @@ export const STRATEGY_METADATA = {
 };
 
 // Analyze all strategies
-export function analyzeStrategies(candles: Candle[], strategies: StrategyConfig[]): any {
+export function analyzeStrategies(candles: Candle[], strategies: StrategyConfig[]) {
   let buySignals = 0;
   let sellSignals = 0;
   const reasons: string[] = [];

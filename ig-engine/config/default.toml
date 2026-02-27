@@ -1,0 +1,152 @@
+# IG Trading Engine — Hardened Configuration
+# ============================================
+# Billionaire-grade risk settings. Conservative by design.
+
+[general]
+mode = "demo"                    # | demo | live
+log_level = "info"
+heartbeat_interval_secs = 30
+api_port = 9090
+
+[ig]
+environment = "demo"              # demo | live
+session_refresh_mins = 50
+rate_limit_per_minute = 20        # Conservative (IG allows 30/account, 60/app)
+confirm_timeout_ms = 5000
+confirm_max_retries = 10
+
+[markets]
+epics = [
+    "CS.D.EURUSD.CSD.IP",     # EUR/USD — Tightest forex spread, highest liquidity
+    "CS.D.USDJPY.CSD.IP",     # USD/JPY — Tight spread, strong Asia/US session play
+    "CS.D.CFIGOLD.CFI.IP",    # Spot Gold SGD1 Contract — Native SGD, no conversion fees
+    
+    # --- PHASE 2/3 SCALING PAIRS (COMMENTED OUT TO PROTECT PHASE 1 CAPITAL) ---
+    # "CS.D.GBPUSD.CSD.IP",     # GBP/USD — Major pair, but heavily correlated to EUR/USD
+    # "CS.D.AUDUSD.CSD.IP",     # AUD/USD — Good Asian session, but wider spread
+    # "IX.D.SPX.IFM.IP",        # SP500 — Index proxy, requires different margin calculus
+    # "IX.D.NASDAQ.IFM.IP",     # NASDAQ 100 — High volatility tech proxy
+]
+
+# ============================================
+# RISK MANAGEMENT
+# ============================================
+[risk]
+max_risk_per_trade = 0.5          # 0.5% of account per trade (conservative)
+max_daily_loss_pct = 2.0          # Stop trading after 2% daily loss
+max_weekly_drawdown_pct = 5.0     # Weekly circuit breaker
+max_open_positions = 2            # Focus: 2 high-conviction positions
+max_correlated_positions = 1      # Max positions in correlated pairs
+max_margin_usage_pct = 20.0       # Never use more than 20% margin
+min_risk_reward = 2.0             # Minimum 2:1 risk/reward
+sizing_method = "quarter_kelly"   # Quarter-Kelly: what serious funds use
+max_daily_trades = 20
+
+limited_risk_account = true
+use_trailing_stop = false
+allowed_sessions = ["Asia", "London", "UsOverlap"]
+
+# INSTRUMENT SPECIFICATIONS (Externalized from code)
+[risk.instrument_specs."CS.D.EURUSD.CSD.IP"]
+epic = "CS.D.EURUSD.CSD.IP"
+min_deal_size = 0.02
+max_deal_size = 100.0
+pip_value = 1.25
+pip_scale = 0.0001
+contract_size = 1.0
+margin_requirement_pct = 5.0
+size_decimals = 2
+min_guaranteed_stop_pips = 5.0
+
+[risk.instrument_specs."CS.D.CFIGOLD.CFI.IP"]
+epic = "CS.D.CFIGOLD.CFI.IP"
+min_deal_size = 3.0
+max_deal_size = 100.0
+pip_value = 1.0
+pip_scale = 1.0
+contract_size = 1.0
+margin_requirement_pct = 20.0
+size_decimals = 2
+min_guaranteed_stop_pips = 2.0
+
+[risk.circuit_breaker]
+consecutive_losses_reduce = 2     # After 2 losses: halve position size
+consecutive_losses_pause = 3      # After 3 losses: pause trading
+pause_duration_mins = 120         # Pause for 2 hours
+daily_loss_warning_pct = 60.0     # Alert at 60% of daily limit
+
+# ============================================
+# STRATEGIES
+# ============================================
+[strategies]
+min_consensus = 3                 # Require 3/4 strategies to agree (high conviction)
+min_avg_strength = 7.0            # Only trade strong signals
+default_atr_sl_multiplier = 2.0
+default_atr_tp_multiplier = 3.0
+
+[strategies.ma_crossover]
+enabled = true
+weight = 1.0
+short_period = 9
+long_period = 21
+trend_filter_period = 200
+require_adx_above = 25.0
+atr_sl_multiplier = 2.0
+atr_tp_multiplier = 3.0
+trailing_stop_pips = 15.0
+
+[strategies.rsi_divergence]
+enabled = true
+weight = 0.9
+period = 14
+overbought = 70.0
+oversold = 30.0
+detect_divergence = true
+atr_sl_multiplier = 2.0
+atr_tp_multiplier = 3.5
+trailing_stop_pips = 12.0
+
+[strategies.macd_momentum]
+enabled = true
+weight = 1.0
+fast = 12
+slow = 26
+signal = 9
+atr_sl_multiplier = 2.0
+atr_tp_multiplier = 3.0
+trailing_stop_pips = 15.0
+
+[strategies.bollinger_reversion]
+enabled = true
+weight = 0.8
+period = 20
+std_dev = 2.0
+atr_sl_multiplier = 1.5
+atr_tp_multiplier = 2.5
+trailing_stop_pips = 10.0
+
+# Multi-timeframe confirmation
+[strategies.multi_timeframe]
+enabled = true
+weight = 1.2
+trend_tf = "4H"
+signal_tf = "1H"
+entry_tf = "15MIN"
+
+# ============================================
+# TRADING HOURS (UTC)
+# ============================================
+[trading_hours]
+start = "00:00"                   # 08:00 SGT — Asia open
+end = "16:00"                     # 00:00 SGT — after US close
+timezone = "UTC"
+
+# ============================================
+# NOTIFICATIONS
+# ============================================
+[notifications.telegram]
+enabled = true
+trade_alerts = true
+risk_alerts = true
+daily_summary = true
+summary_time = "21:00"            # SGT time (UTC+8)

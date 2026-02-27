@@ -14,6 +14,7 @@ interface PriceChartProps {
   epic: string;
   loading?: boolean;
   onRefresh?: () => void;
+  livePrice?: { bid: number; offer: number; timestamp?: string };
 }
 
 function formatPrice(value: number, epic: string): string {
@@ -26,10 +27,29 @@ function formatTime(timestamp: string): string {
   return new Date(timestamp).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false });
 }
 
-export function PriceChart({ candles, epic, loading, onRefresh }: PriceChartProps) {
+export function PriceChart({ candles, epic, loading, onRefresh, livePrice }: PriceChartProps) {
   const [chartType, setChartType] = useState<'line' | 'area'>('line');
 
-  const chartData = candles.map((candle) => ({
+  // Merge historical candles with live tick so chart matches MarketOverview
+  const mergedCandles = [...candles];
+  if (livePrice && livePrice.bid > 0) {
+    const mid = (livePrice.bid + livePrice.offer) / 2;
+    const lastCandle = candles[candles.length - 1];
+    const ts = livePrice.timestamp || new Date().toISOString();
+    // If live tick is newer than last candle, append as virtual candle
+    if (!lastCandle || new Date(ts).getTime() > new Date(lastCandle.timestamp).getTime()) {
+      mergedCandles.push({
+        open: lastCandle ? lastCandle.close : mid,
+        high: Math.max(lastCandle ? lastCandle.high : mid, mid),
+        low: Math.min(lastCandle ? lastCandle.low : mid, mid),
+        close: mid,
+        volume: 0,
+        timestamp: ts,
+      });
+    }
+  }
+
+  const chartData = mergedCandles.map((candle) => ({
     time: formatTime(candle.timestamp),
     open: candle.open,
     high: candle.high,
@@ -38,9 +58,9 @@ export function PriceChart({ candles, epic, loading, onRefresh }: PriceChartProp
     volume: candle.volume,
   }));
 
-  const priceDomain = candles.length > 0 ? [Math.min(...candles.map((c) => c.low)) * 0.999, Math.max(...candles.map((c) => c.high)) * 1.001] : ['auto', 'auto'];
-  const currentPrice = candles.length > 0 ? candles[candles.length - 1].close : 0;
-  const previousPrice = candles.length > 1 ? candles[candles.length - 2].close : currentPrice;
+  const priceDomain = mergedCandles.length > 0 ? [Math.min(...mergedCandles.map((c) => c.low)) * 0.999, Math.max(...mergedCandles.map((c) => c.high)) * 1.001] : ['auto', 'auto'];
+  const currentPrice = livePrice && livePrice.bid > 0 ? (livePrice.bid + livePrice.offer) / 2 : (mergedCandles.length > 0 ? mergedCandles[mergedCandles.length - 1]?.close || 0 : 0);
+  const previousPrice = candles.length > 1 ? candles[candles.length - 2]?.close || currentPrice : (candles.length > 0 ? candles[0]?.close || currentPrice : currentPrice);
   const priceChange = currentPrice - previousPrice;
   const isPositive = priceChange >= 0;
 
@@ -72,10 +92,10 @@ export function PriceChart({ candles, epic, loading, onRefresh }: PriceChartProp
             )}
           </div>
         </div>
-        <CardDescription>{candles.length} data points • Last update: {candles.length > 0 ? new Date(candles[candles.length - 1].timestamp).toLocaleString() : 'N/A'}</CardDescription>
+        <CardDescription>{mergedCandles.length} data points • Last update: {mergedCandles.length > 0 ? new Date(mergedCandles[mergedCandles.length - 1].timestamp).toLocaleString() : 'N/A'}</CardDescription>
       </CardHeader>
       <CardContent>
-        {candles.length === 0 ? (
+        {mergedCandles.length === 0 ? (
           <div className="h-[300px] flex items-center justify-center text-muted-foreground">{loading ? 'Loading chart data...' : 'No data available'}</div>
         ) : (
           <div className="h-[300px] w-full">
@@ -100,23 +120,23 @@ export function PriceChart({ candles, epic, loading, onRefresh }: PriceChartProp
             </ResponsiveContainer>
           </div>
         )}
-        {candles.length > 0 && (
+        {mergedCandles.length > 0 && mergedCandles[mergedCandles.length - 1] && (
           <div className="grid grid-cols-4 gap-4 mt-4 pt-4 border-t">
             <div className="text-center">
               <div className="text-xs text-muted-foreground">Open</div>
-              <div className="font-semibold">{formatPrice(candles[candles.length - 1].open, epic)}</div>
+              <div className="font-semibold">{formatPrice(mergedCandles[mergedCandles.length - 1]?.open || 0, epic)}</div>
             </div>
             <div className="text-center">
               <div className="text-xs text-muted-foreground">High</div>
-              <div className="font-semibold text-green-500">{formatPrice(candles[candles.length - 1].high, epic)}</div>
+              <div className="font-semibold text-green-500">{formatPrice(mergedCandles[mergedCandles.length - 1]?.high || 0, epic)}</div>
             </div>
             <div className="text-center">
               <div className="text-xs text-muted-foreground">Low</div>
-              <div className="font-semibold text-red-500">{formatPrice(candles[candles.length - 1].low, epic)}</div>
+              <div className="font-semibold text-red-500">{formatPrice(mergedCandles[mergedCandles.length - 1]?.low || 0, epic)}</div>
             </div>
             <div className="text-center">
               <div className="text-xs text-muted-foreground">Close</div>
-              <div className="font-semibold">{formatPrice(candles[candles.length - 1].close, epic)}</div>
+              <div className="font-semibold">{formatPrice(mergedCandles[mergedCandles.length - 1]?.close || 0, epic)}</div>
             </div>
           </div>
         )}

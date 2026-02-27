@@ -1,0 +1,7 @@
+target/
+.git/
+.env
+logs/
+node_modules/
+dist/
+.next/

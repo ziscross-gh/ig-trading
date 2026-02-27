@@ -1,0 +1,93 @@
+# IG Trading Engine — Live Configuration
+# ============================================
+# CAUTION: This configuration uses REAL MONEY.
+# Test thoroughly on demo before using this.
+
+[general]
+mode = "live"               # paper | demo | live
+api_port = 9090
+log_level = "info"
+
+[ig]
+environment = "live"        # demo | live
+session_refresh_mins = 50   # Refresh before 60-min expiry
+
+[markets]
+# Gold + Major FX pairs
+epics = [
+    "CS.D.GOLDUSD.CFD",
+    "CS.D.EURUSD.CFD",
+    "CS.D.GBPUSD.CFD",
+    "CS.D.USDJPY.CFD",
+]
+poll_interval_secs = 10     # Price polling interval
+history_candles = 200       # Candles to load on startup
+
+[risk]
+max_risk_per_trade = 0.5    # 0.5% per trade (conservative for live)
+max_daily_loss_pct = 2.0    # 2% daily loss limit (tighter for live)
+max_open_positions = 2      # Max 2 concurrent positions
+max_correlated = 1          # Max 1 position in correlated pairs
+sizing_method = "quarter_kelly"  # Most conservative sizing
+
+# LIMITED RISK ACCOUNT (your account type)
+# Every trade MUST have a guaranteed stop — IG charges a small premium.
+# Trailing stops are NOT available on your account.
+limited_risk_account = true
+guaranteed_stop = true
+
+[risk.circuit_breaker]
+consecutive_losses_reduce = 2  # Halve size after 2 losses
+consecutive_losses_pause = 4   # Full stop after 4 losses
+pause_duration_mins = 120      # 2 hour pause
+cooldown_reset_wins = 2        # 2 wins to reset counter
+
+[strategies]
+min_consensus = 2           # Need 2+ strategies agreeing
+min_avg_strength = 7.0      # Higher threshold for live
+
+[strategies.ma_crossover]
+enabled = true
+weight = 1.0
+fast_period = 9
+slow_period = 21
+trend_period = 200
+adx_threshold = 25.0
+
+[strategies.rsi_divergence]
+enabled = true
+weight = 1.0
+rsi_period = 14
+oversold = 30.0
+overbought = 70.0
+
+[strategies.macd_momentum]
+enabled = true
+weight = 0.8
+fast = 12
+slow = 26
+signal = 9
+adx_threshold = 20.0
+
+[strategies.bollinger_reversion]
+enabled = true
+weight = 0.8
+period = 20
+std_dev = 2.0
+squeeze_threshold = 0.05
+
+[trading_hours]
+start = "07:00"
+end = "20:00"
+timezone = "UTC"
+# Avoid trading 30 min before/after major news
+news_blackout_mins = 30
+
+[notifications]
+enabled = true
+# Notify on every trade in live mode
+notify_on_trade = true
+notify_on_signal = false    # Too noisy for live
+notify_on_risk_alert = true
+notify_on_daily_summary = true
+daily_summary_time = "20:30"

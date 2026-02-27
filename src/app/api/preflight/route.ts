@@ -1,16 +1,15 @@
-import { NextRequest, NextResponse } from 'next/server';
+import { NextResponse } from 'next/server';
 import { PreFlightChecker } from '@/lib/preflight-checks';
 
-export async function GET(request: NextRequest) {
+/**
+ * Pre-flight checks API route.
+ * Credentials are handled by the Rust engine — this route only
+ * queries engine status and validates dashboard-side config.
+ */
+export async function GET() {
   try {
-    const searchParams = request.nextUrl.searchParams;
-    const environment = (searchParams.get('environment') || 'demo') as 'demo' | 'live';
-    const apiKey = searchParams.get('apiKey') || undefined;
-    const identifier = searchParams.get('identifier') || undefined;
-    const password = searchParams.get('password') || undefined;
-
     const checker = new PreFlightChecker();
-    const result = await checker.runAllChecks(apiKey, identifier, password, environment);
+    const result = await checker.runAllChecks();
 
     return NextResponse.json({
       success: true,

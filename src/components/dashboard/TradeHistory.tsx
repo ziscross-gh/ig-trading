@@ -4,13 +4,16 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { History, TrendingUp, TrendingDown, BarChart2 } from 'lucide-react';
+import { History, TrendingUp, TrendingDown, BarChart2, LineChart } from 'lucide-react';
 import type { TradeSignal, PerformanceMetrics } from '@/types/ig';
 import { MARKET_NAMES } from '@/types/ig';
+import { formatTimeSGT, formatDateSGT } from '@/lib/utils';
+import { LineChart as RechartsLineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 
 interface TradeHistoryProps {
   signals?: TradeSignal[];
   performance?: PerformanceMetrics;
+  equityCurve?: Array<{ timestamp: string; pnl: number; cumulative_pnl: number; epic: string; strategy: string }>;
   mockMode?: boolean;
 }
 
@@ -27,11 +30,11 @@ function PerformanceCard({ label, value, subValue, trend }: { label: string; val
 
 function generateMockTradeHistory(): { trades: Array<{ id: string; epic: string; direction: 'BUY' | 'SELL'; entry: number; exit: number; size: number; pnl: number; timestamp: Date; status: 'CLOSED' | 'OPEN' }>; performance: PerformanceMetrics } {
   const trades = [
-    { id: 'trade-1', epic: 'CS.D.GOLDUSD.CFD', direction: 'BUY' as const, entry: 2345.50, exit: 2352.25, size: 0.5, pnl: 33.75, timestamp: new Date(Date.now() - 3600000), status: 'CLOSED' as const },
+    { id: 'trade-1', epic: 'CS.D.CFIGOLD.CFI.IP', direction: 'BUY' as const, entry: 2345.50, exit: 2352.25, size: 0.5, pnl: 33.75, timestamp: new Date(Date.now() - 3600000), status: 'CLOSED' as const },
     { id: 'trade-2', epic: 'CS.D.EURUSD.CFD', direction: 'SELL' as const, entry: 1.0875, exit: 1.0855, size: 1.0, pnl: 20.00, timestamp: new Date(Date.now() - 7200000), status: 'CLOSED' as const },
-    { id: 'trade-3', epic: 'CS.D.GOLDUSD.CFD', direction: 'SELL' as const, entry: 2360.00, exit: 2365.50, size: 0.5, pnl: -27.50, timestamp: new Date(Date.now() - 10800000), status: 'CLOSED' as const },
+    { id: 'trade-3', epic: 'CS.D.CFIGOLD.CFI.IP', direction: 'SELL' as const, entry: 2360.00, exit: 2365.50, size: 0.5, pnl: -27.50, timestamp: new Date(Date.now() - 10800000), status: 'CLOSED' as const },
     { id: 'trade-4', epic: 'CS.D.GBPUSD.CFD', direction: 'BUY' as const, entry: 1.2680, exit: 1.2715, size: 0.8, pnl: 28.00, timestamp: new Date(Date.now() - 14400000), status: 'CLOSED' as const },
-    { id: 'trade-5', epic: 'CS.D.GOLDUSD.CFD', direction: 'BUY' as const, entry: 2340.00, exit: 2335.00, size: 0.3, pnl: -15.00, timestamp: new Date(Date.now() - 18000000), status: 'CLOSED' as const },
+    { id: 'trade-5', epic: 'CS.D.CFIGOLD.CFI.IP', direction: 'BUY' as const, entry: 2340.00, exit: 2335.00, size: 0.3, pnl: -15.00, timestamp: new Date(Date.now() - 18000000), status: 'CLOSED' as const },
   ];
 
   const performance: PerformanceMetrics = {
@@ -57,10 +60,16 @@ function generateMockTradeHistory(): { trades: Array<{ id: string; epic: string;
   return { trades, performance };
 }
 
-export function TradeHistory({ signals, performance, mockMode = true }: TradeHistoryProps) {
+export function TradeHistory({ performance, equityCurve, mockMode = true }: TradeHistoryProps) {
   const mockData = mockMode ? generateMockTradeHistory() : null;
   const trades = mockData?.trades || [];
   const perf = mockData?.performance || performance;
+
+  // Format equity curve data for recharts
+  const equityCurveData = equityCurve?.map((point) => ({
+    time: new Date(point.timestamp).toLocaleTimeString('en-SG', { hour: '2-digit', minute: '2-digit' }),
+    cumPnl: parseFloat(point.cumulative_pnl.toFixed(2)),
+  })) || [];
 
   return (
     <Card className="w-full">
@@ -80,9 +89,10 @@ export function TradeHistory({ signals, performance, mockMode = true }: TradeHis
       </CardHeader>
       <CardContent>
         <Tabs defaultValue="trades" className="w-full">
-          <TabsList className="grid w-full grid-cols-2 mb-4">
+          <TabsList className="grid w-full grid-cols-3 mb-4">
             <TabsTrigger value="trades">Trades</TabsTrigger>
             <TabsTrigger value="performance">Performance</TabsTrigger>
+            <TabsTrigger value="equity">Equity Curve</TabsTrigger>
           </TabsList>
 
           <TabsContent value="trades">
@@ -116,7 +126,7 @@ export function TradeHistory({ signals, performance, mockMode = true }: TradeHis
                         <TableCell className="font-mono text-sm">{trade.exit.toFixed(trade.exit < 10 ? 4 : 2)}</TableCell>
                         <TableCell className="font-mono text-sm">{trade.size.toFixed(2)}</TableCell>
                         <TableCell className={`font-mono font-semibold ${trade.pnl >= 0 ? 'text-green-500' : 'text-red-500'}`}>{trade.pnl >= 0 ? '+' : ''}${trade.pnl.toFixed(2)}</TableCell>
-                        <TableCell className="text-sm text-muted-foreground">{new Date(trade.timestamp).toLocaleTimeString()}</TableCell>
+                        <TableCell className="text-sm text-muted-foreground">{formatTimeSGT(trade.timestamp)}</TableCell>
                       </TableRow>
                     ))}
                   </TableBody>
@@ -148,7 +158,7 @@ export function TradeHistory({ signals, performance, mockMode = true }: TradeHis
                     {perf.dailyPnl.map((day, index) => (
                       <div key={index} className="flex-1 flex flex-col items-center">
                         <div className={`w-full rounded-t transition-all ${day.pnl >= 0 ? 'bg-green-500' : 'bg-red-500'}`} style={{ height: `${Math.min(Math.abs(day.pnl) * 2, 60)}px` }} />
-                        <span className="text-[10px] text-muted-foreground mt-1">{new Date(day.date).toLocaleDateString('en-US', { weekday: 'short' })}</span>
+                        <span className="text-[10px] text-muted-foreground mt-1">{formatDateSGT(day.date)}</span>
                       </div>
                     ))}
                   </div>
@@ -156,6 +166,57 @@ export function TradeHistory({ signals, performance, mockMode = true }: TradeHis
               </div>
             ) : (
               <div className="text-center text-muted-foreground py-8">No performance data available</div>
+            )}
+          </TabsContent>
+
+          <TabsContent value="equity">
+            {equityCurveData && equityCurveData.length > 0 ? (
+              <div className="space-y-4">
+                <div className="flex items-center gap-2">
+                  <LineChart className="h-4 w-4 text-muted-foreground" />
+                  <span className="text-sm font-medium">Cumulative P&L Over Time</span>
+                </div>
+                <div className="w-full h-64 bg-muted/10 rounded-lg p-4">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <RechartsLineChart data={equityCurveData}>
+                      <CartesianGrid strokeDasharray="3 3" />
+                      <XAxis dataKey="time" />
+                      <YAxis />
+                      <Tooltip
+                        contentStyle={{ backgroundColor: '#1a1a1a', border: '1px solid #333' }}
+                        formatter={(value: number) => `$${value.toFixed(2)}`}
+                        labelFormatter={(label) => `Time: ${label}`}
+                      />
+                      <Line
+                        type="monotone"
+                        dataKey="cumPnl"
+                        stroke="#10b981"
+                        dot={false}
+                        strokeWidth={2}
+                        isAnimationActive={false}
+                      />
+                    </RechartsLineChart>
+                  </ResponsiveContainer>
+                </div>
+                <div className="grid grid-cols-3 gap-3 pt-2">
+                  <div className="text-center p-3 bg-muted/30 rounded-lg">
+                    <div className="text-xs text-muted-foreground mb-1">Starting P&L</div>
+                    <div className="text-lg font-bold">$0.00</div>
+                  </div>
+                  <div className="text-center p-3 bg-muted/30 rounded-lg">
+                    <div className="text-xs text-muted-foreground mb-1">Current P&L</div>
+                    <div className={`text-lg font-bold ${equityCurveData[equityCurveData.length - 1]?.cumPnl >= 0 ? 'text-green-500' : 'text-red-500'}`}>
+                      ${equityCurveData[equityCurveData.length - 1]?.cumPnl.toFixed(2) || '0.00'}
+                    </div>
+                  </div>
+                  <div className="text-center p-3 bg-muted/30 rounded-lg">
+                    <div className="text-xs text-muted-foreground mb-1">Trades</div>
+                    <div className="text-lg font-bold">{equityCurveData.length}</div>
+                  </div>
+                </div>
+              </div>
+            ) : (
+              <div className="text-center text-muted-foreground py-8">No equity curve data available</div>
             )}
           </TabsContent>
         </Tabs>

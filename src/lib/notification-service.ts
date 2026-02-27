@@ -8,7 +8,7 @@ export interface NotificationMessage {
   title: string;
   message: string;
   type: 'info' | 'warning' | 'error' | 'success' | 'trade';
-  data?: Record<string, any>;
+  data?: Record<string, unknown>;
   timestamp: Date;
 }
 
@@ -117,7 +117,7 @@ export class NotificationService {
   async sendBotStatus(status: {
     action: 'STARTED' | 'STOPPED' | 'ERROR' | 'WARNING';
     message: string;
-    stats?: Record<string, any>;
+    stats?: Record<string, unknown>;
   }): Promise<boolean> {
     const emoji = {
       STARTED: '🚀',

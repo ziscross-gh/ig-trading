@@ -1,0 +1,70 @@
+[package]
+name = "ig-engine"
+version = "0.1.0"
+edition = "2021"
+description = "High-performance autonomous trading engine for IG Markets"
+
+[dependencies]
+# Async runtime
+tokio = { version = "1", features = ["full"] }
+
+# HTTP client for IG API
+reqwest = { version = "0.12", features = ["json", "rustls-tls"], default-features = false }
+
+# Serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# Configuration
+toml = "0.8"
+
+# Internal API server
+axum = { version = "0.7", features = ["ws"] }
+tower = "0.4"
+tower-http = { version = "0.5", features = ["cors"] }
+
+# WebSocket
+tokio-tungstenite = "0.24"
+futures-util = "0.3"
+
+# Database
+sqlx = { version = "0.8", features = ["runtime-tokio", "postgres", "chrono", "uuid", "rust_decimal"] }
+
+# Redis
+redis = { version = "0.27", features = ["tokio-comp", "aio"] }
+
+# Logging
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+tracing-appender = "0.2"
+
+# Time
+chrono = { version = "0.4", features = ["serde"] }
+
+# IDs
+uuid = { version = "1", features = ["v4", "serde"] }
+
+# Precise decimal math (no floating point in financial calculations)
+rust_decimal = { version = "1", features = ["serde-with-str"] }
+rust_decimal_macros = "1"
+
+# Error handling
+anyhow = "1"
+thiserror = "1"
+rsa = "0.9.10"
+base64 = "0.22.1"
+pkcs8 = "0.10.2"
+rand = "0.8"
+lightstreamer-client = "0.1.12"
+dotenvy = "0.15.7"
+async-trait = "0.1.89"
+
+[dev-dependencies]
+approx = "0.5"
+tokio-test = "0.4"
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+strip = true

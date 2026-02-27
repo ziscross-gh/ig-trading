@@ -1,0 +1,113 @@
+# IG Trading System — Docker Compose
+# ============================================
+# Usage:
+#   docker compose up -d          # Start all services
+#   docker compose logs -f engine # Follow engine logs
+#   docker compose down           # Stop all services
+
+version: "3.9"
+
+services:
+  # ============================================
+  # PostgreSQL — Trade history & analytics
+  # ============================================
+  postgres:
+    image: postgres:16-alpine
+    container_name: ig-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ig_trading
+      POSTGRES_USER: ${POSTGRES_USER:-ig}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-ig_secret_change_me}
+    ports:
+      - "5432:5432"
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+      - ./ig-engine/migrations:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ig -d ig_trading"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ============================================
+  # Redis — Session cache & pub/sub
+  # ============================================
+  redis:
+    image: redis:7-alpine
+    container_name: ig-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ============================================
+  # Rust Trading Engine — Core execution
+  # ============================================
+  engine:
+    build:
+      context: ./ig-engine
+      dockerfile: Dockerfile
+    container_name: ig-engine
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    ports:
+      - "9090:9090"
+    environment:
+      CONFIG_PATH: /app/config/live.toml
+      RUST_LOG: ${RUST_LOG:-info}
+      DATABASE_URL: postgres://${POSTGRES_USER:-ig}:${POSTGRES_PASSWORD:-ig_secret_change_me}@postgres:5432/ig_trading
+      REDIS_URL: redis://redis:6379
+      IG_API_KEY: ${IG_API_KEY}
+      IG_IDENTIFIER: ${IG_IDENTIFIER}
+      IG_PASSWORD: ${IG_PASSWORD}
+      IG_ACCOUNT_ID: ${IG_ACCOUNT_ID:-}
+      IG_ENVIRONMENT: ${IG_ENVIRONMENT:-demo}
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+      TELEGRAM_CHAT_ID: ${TELEGRAM_CHAT_ID:-}
+    volumes:
+      - ./ig-engine/config:/app/config:ro
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9090/api/ready"]
+      interval: 30s
+      timeout: 5s
+      start_period: 15s
+      retries: 3
+
+  # ============================================
+  # Next.js Dashboard — Monitoring UI
+  # ============================================
+  dashboard:
+    build:
+      context: .
+      dockerfile: Dockerfile.dashboard
+    container_name: ig-dashboard
+    restart: unless-stopped
+    depends_on:
+      engine:
+        condition: service_healthy
+    ports:
+      - "3000:3000"
+    environment:
+      NEXT_PUBLIC_ENGINE_URL: http://engine:9090
+      ENGINE_INTERNAL_URL: http://engine:9090
+      NODE_ENV: production
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+volumes:
+  pg_data:
+  redis_data:

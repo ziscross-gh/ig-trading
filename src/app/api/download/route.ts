@@ -1,8 +1,8 @@
-import { NextRequest, NextResponse } from 'next/server';
+import { NextResponse } from 'next/server';
 import { readFile } from 'fs/promises';
 import path from 'path';
 
-export async function GET(request: NextRequest) {
+export async function GET() {
   try {
     const filePath = path.join(process.cwd(), 'download', 'ig-trading-bot.zip');
     const fileBuffer = await readFile(filePath);
