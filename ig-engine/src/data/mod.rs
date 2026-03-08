@@ -3,3 +3,4 @@
 pub mod candle_store;
 pub mod bar_accumulator;
 
+pub mod trade_logger;

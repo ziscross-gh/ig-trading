@@ -189,6 +189,7 @@ pub async fn run(
                 ma_cfg.weight,
                 ma_cfg.atr_sl_multiplier.unwrap_or(config.strategies.default_atr_sl_multiplier),
                 ma_cfg.atr_tp_multiplier.unwrap_or(config.strategies.default_atr_tp_multiplier),
+                ma_cfg.trailing_stop_pips,
             )));
             info!("MA Crossover strategy enabled");
         }
@@ -204,6 +205,7 @@ pub async fn run(
                 rsi_cfg.detect_divergence,
                 rsi_cfg.atr_sl_multiplier.unwrap_or(config.strategies.default_atr_sl_multiplier),
                 rsi_cfg.atr_tp_multiplier.unwrap_or(config.strategies.default_atr_tp_multiplier),
+                rsi_cfg.trailing_stop_pips,
             )));
             info!("RSI Reversal strategy enabled");
         }
@@ -215,6 +217,7 @@ pub async fn run(
                 macd_cfg.weight,
                 macd_cfg.atr_sl_multiplier.unwrap_or(config.strategies.default_atr_sl_multiplier),
                 macd_cfg.atr_tp_multiplier.unwrap_or(config.strategies.default_atr_tp_multiplier),
+                macd_cfg.trailing_stop_pips,
             )));
             info!("MACD Momentum strategy enabled");
         }
@@ -228,6 +231,7 @@ pub async fn run(
                 bollinger_cfg.weight,
                 bollinger_cfg.atr_sl_multiplier.unwrap_or(config.strategies.default_atr_sl_multiplier),
                 bollinger_cfg.atr_tp_multiplier.unwrap_or(config.strategies.default_atr_tp_multiplier),
+                bollinger_cfg.trailing_stop_pips,
             )));
             info!("Bollinger Reversion strategy enabled");
         }
@@ -242,6 +246,7 @@ pub async fn run(
                 mtf_cfg.weight,
                 config.strategies.default_atr_sl_multiplier,
                 config.strategies.default_atr_tp_multiplier,
+                mtf_cfg.trailing_stop_pips,
             )));
             info!("Multi-Timeframe strategy enabled");
         }

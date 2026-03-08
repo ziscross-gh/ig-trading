@@ -1,7 +1,7 @@
 # CLAUDE.md — IG Trading Engine (Claude-specific)
 
 > **Start here:** Read `AGENTS.md` first — it contains the full shared project reference for all AI tools.
-> This file only adds Claude / Cowork-specific behaviour on top of that.
+> This file only adds Claude Code CLI-specific behaviour on top of that.
 
 ---
 
@@ -16,37 +16,28 @@
 
 ## Claude-Specific Notes
 
-- **Cowork mode** auto-loads this file at session start via the project context system.
+- **Tool:** Claude Code CLI (terminal)
 - The IG API is unreachable from sandboxed/proxied environments (`ProxyError: 403`). When running test scripts, explain this clearly rather than retrying.
 - When editing Rust, flag any new `.unwrap()` or `println!` — both violate project conventions.
 - When editing TypeScript, confirm `noImplicitAny: true` is respected — no bare `any` types.
 - Prefer `Edit` over `Write` for existing files.
 - When completing any task, update `TASK_TRACKER.md` (🏗️ → ✅).
+- If a task needs Gemini to continue, add it to `GEMINI.md` under "Active".
 
 ---
 
 ## Assigned Tasks (Claude's Focus)
 
 > ⚠️ **Current focus: Bot engine + Telegram only.** All dashboard/frontend work is paused.
+> Phases 5, 6, 8.1–8.5 are all complete. See `TASK_TRACKER.md` for full history.
 
-Claude owns the **Rust bot engine and Telegram notification** work. Refer to `TASK_TRACKER.md` for full details.
+Claude owns the **Rust bot engine, Python ML pipeline, and Telegram notification** work.
 
 ### Active
 
-| # | Task | Phase |
-|---|------|-------|
-| 5.1 | Trailing Stop Loss logic | Phase 5 |
-| 5.2 | Session-specific filters (news exclusion) | Phase 5 |
-| 4.6 | WebSocket push migration (Rust streaming side) | Phase 4 |
+All current active tasks have been handed to Gemini CLI. See `GEMINI.md`.
 
-### Planned (Phase 6)
-
-| # | Task |
-|---|------|
-| 6.1 | Multi-timeframe analysis |
-| 6.4 | Fix remaining `unwrap()` panics (optimizer, backtester) |
-
-### Bug Fixes
+### Bug Fixes (low priority)
 
 - **Low:** `optimizer.rs:70` — NaN panic on `partial_cmp`
 - **Low:** `backtester.rs:139` — `candles.last()` without empty guard
@@ -55,20 +46,20 @@ Claude owns the **Rust bot engine and Telegram notification** work. Refer to `TA
 
 ## Multi-Agent Setup
 
-This project is used with both **Claude Cowork** and **Google Antigravity**.
+This project is used with **Claude Code CLI** and **Gemini CLI**.
 
 | File | Read by | How | Purpose |
 |------|---------|-----|---------|
 | `AGENTS.md` | **All agents** | Directly | Shared source of truth — full project reference |
-| `CLAUDE.md` | Claude / Cowork | Auto-loaded at session start | Claude-specific additions → then directs to `AGENTS.md` |
-| `GEMINI.md` | Google Antigravity | Auto-loaded at session start | Gemini-specific additions → then directs to `AGENTS.md` |
+| `CLAUDE.md` | Claude Code CLI | Auto-loaded at session start | Claude-specific additions → then directs to `AGENTS.md` |
+| `GEMINI.md` | Gemini CLI | Auto-loaded at session start | Gemini-specific additions → then directs to `AGENTS.md` |
 | `PROJECT_ARCHITECTURE.md` | All agents | On demand | Deep module + interface reference |
 | `TASK_TRACKER.md` | All agents | On demand | Live task status + bugs |
 | `TECH_DEBT_AUDIT.md` | All agents | On demand | Debt audit + phase history |
 
 **How the reading chain works:**
-- **Claude Cowork** → auto-loads `CLAUDE.md` → `CLAUDE.md` says read `AGENTS.md` → full context achieved
-- **Google Antigravity** → auto-loads `GEMINI.md` → `GEMINI.md` says read `AGENTS.md` → full context achieved
+- **Claude Code CLI** → auto-loads `CLAUDE.md` → `CLAUDE.md` says read `AGENTS.md` → full context achieved
+- **Gemini CLI** → auto-loads `GEMINI.md` → `GEMINI.md` says read `AGENTS.md` → full context achieved
 - Both tools end up with identical shared knowledge from `AGENTS.md`
 
 Do not duplicate content from `AGENTS.md` into this file.

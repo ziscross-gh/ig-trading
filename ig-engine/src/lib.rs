@@ -21,3 +21,5 @@ pub mod notifications;
 pub mod risk;
 /// Trading strategies and ensemble logic
 pub mod strategy;
+/// ML regime classifier reader (TRENDING / RANGING / VOLATILE)
+pub mod regime;

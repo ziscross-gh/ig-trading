@@ -148,6 +148,17 @@ impl EnsembleVoter {
             }
         };
 
+        // Select most conservative trailing stop distance (smallest distance = tighter trail)
+        let trailing_stop_distance = dominant_signals
+            .iter()
+            .filter_map(|s| s.trailing_stop_distance)
+            .fold(None, |min_dist, dist| {
+                match min_dist {
+                    Some(m) => Some(f64::min(m, dist)),
+                    None => Some(dist),
+                }
+            });
+
         // Use the first signal's price and epic as reference
         let reference_signal = dominant_signals[0];
 
@@ -175,6 +186,7 @@ impl EnsembleVoter {
             price: reference_signal.price,
             stop_loss,
             take_profit,
+            trailing_stop_distance,
             timestamp: Utc::now(),
         })
     }
@@ -192,6 +204,7 @@ mod tests {
         price: f64,
         stop_loss: f64,
         take_profit: f64,
+        trailing_stop_distance: Option<f64>,
     ) -> Signal {
         Signal {
             id: Uuid::new_v4().to_string(),
@@ -203,6 +216,7 @@ mod tests {
             price,
             stop_loss,
             take_profit,
+            trailing_stop_distance,
             timestamp: Utc::now(),
         }
     }
@@ -225,7 +239,7 @@ mod tests {
     fn test_insufficient_consensus() {
         let voter = EnsembleVoter::new(3, 6.0);
         let signals = vec![
-            create_test_signal("EUR/USD", Direction::Buy, 7.0, "MA_Crossover", 1.1000, 1.0950, 1.1100),
+            create_test_signal("EUR/USD", Direction::Buy, 7.0, "MA_Crossover", 1.1000, 1.0950, 1.1100, None),
         ];
         assert!(voter.vote(&signals).is_none());
     }
@@ -234,8 +248,8 @@ mod tests {
     fn test_weak_average_strength() {
         let voter = EnsembleVoter::new(2, 7.0);
         let signals = vec![
-            create_test_signal("EUR/USD", Direction::Buy, 5.0, "MA_Crossover", 1.1000, 1.0950, 1.1100),
-            create_test_signal("EUR/USD", Direction::Buy, 6.0, "RSI_Reversal", 1.1000, 1.0950, 1.1100),
+            create_test_signal("EUR/USD", Direction::Buy, 5.0, "MA_Crossover", 1.1000, 1.0950, 1.1100, None),
+            create_test_signal("EUR/USD", Direction::Buy, 6.0, "RSI_Reversal", 1.1000, 1.0950, 1.1100, None),
         ];
         // Average strength is 5.5, below 7.0 threshold
         assert!(voter.vote(&signals).is_none());
@@ -248,8 +262,8 @@ mod tests {
         voter.set_strategy_weight("RSI_Reversal".to_string(), 1.0);
 
         let signals = vec![
-            create_test_signal("EUR/USD", Direction::Buy, 7.0, "MA_Crossover", 1.1000, 1.0950, 1.1100),
-            create_test_signal("EUR/USD", Direction::Buy, 7.0, "RSI_Reversal", 1.1000, 1.0950, 1.1100),
+            create_test_signal("EUR/USD", Direction::Buy, 7.0, "MA_Crossover", 1.1000, 1.0950, 1.1100, None),
+            create_test_signal("EUR/USD", Direction::Buy, 7.0, "RSI_Reversal", 1.1000, 1.0950, 1.1100, None),
         ];
 
         let result = voter.vote(&signals);
@@ -269,8 +283,8 @@ mod tests {
         voter.set_strategy_weight("RSI_Reversal".to_string(), 1.0);
 
         let signals = vec![
-            create_test_signal("EUR/USD", Direction::Buy, 6.0, "MA_Crossover", 1.1000, 1.0950, 1.1100),
-            create_test_signal("EUR/USD", Direction::Buy, 9.0, "RSI_Reversal", 1.1000, 1.0950, 1.1100),
+            create_test_signal("EUR/USD", Direction::Buy, 6.0, "MA_Crossover", 1.1000, 1.0950, 1.1100, None),
+            create_test_signal("EUR/USD", Direction::Buy, 9.0, "RSI_Reversal", 1.1000, 1.0950, 1.1100, None),
         ];
 
         let result = voter.vote(&signals);
@@ -286,8 +300,8 @@ mod tests {
         let voter = EnsembleVoter::new(2, 6.0);
 
         let signals = vec![
-            create_test_signal("EUR/USD", Direction::Buy, 7.0, "MA_Crossover", 1.1000, 1.0900, 1.1100),
-            create_test_signal("EUR/USD", Direction::Buy, 7.0, "RSI_Reversal", 1.1000, 1.0950, 1.1100),
+            create_test_signal("EUR/USD", Direction::Buy, 7.0, "MA_Crossover", 1.1000, 1.0900, 1.1100, None),
+            create_test_signal("EUR/USD", Direction::Buy, 7.0, "RSI_Reversal", 1.1000, 1.0950, 1.1100, None),
         ];
 
         let result = voter.vote(&signals);
@@ -303,8 +317,8 @@ mod tests {
         let voter = EnsembleVoter::new(2, 6.0);
 
         let signals = vec![
-            create_test_signal("EUR/USD", Direction::Buy, 7.0, "MA_Crossover", 1.1000, 1.0950, 1.1150),
-            create_test_signal("EUR/USD", Direction::Buy, 7.0, "RSI_Reversal", 1.1000, 1.0950, 1.1100),
+            create_test_signal("EUR/USD", Direction::Buy, 7.0, "MA_Crossover", 1.1000, 1.0950, 1.1150, None),
+            create_test_signal("EUR/USD", Direction::Buy, 7.0, "RSI_Reversal", 1.1000, 1.0950, 1.1100, None),
         ];
 
         let result = voter.vote(&signals);
@@ -323,9 +337,9 @@ mod tests {
         let voter = EnsembleVoter::new(1, 6.0);
 
         let signals = vec![
-            create_test_signal("EUR/USD", Direction::Sell, 9.0, "MA_Crossover", 1.1000, 1.1050, 1.0900),
-            create_test_signal("EUR/USD", Direction::Sell, 9.0, "RSI_Reversal", 1.1000, 1.1050, 1.0900),
-            create_test_signal("EUR/USD", Direction::Buy, 9.0, "MACD_Momentum", 1.1000, 1.0950, 1.1100),
+            create_test_signal("EUR/USD", Direction::Sell, 9.0, "MA_Crossover", 1.1000, 1.1050, 1.0900, None),
+            create_test_signal("EUR/USD", Direction::Sell, 9.0, "RSI_Reversal", 1.1000, 1.1050, 1.0900, None),
+            create_test_signal("EUR/USD", Direction::Buy, 9.0, "MACD_Momentum", 1.1000, 1.0950, 1.1100, None),
         ];
 
         let result = voter.vote(&signals);
@@ -343,9 +357,9 @@ mod tests {
         let voter = EnsembleVoter::new(1, 6.0);
 
         let signals = vec![
-            create_test_signal("EUR/USD", Direction::Sell, 7.0, "MA_Crossover", 1.1000, 1.1050, 1.0900),
-            create_test_signal("EUR/USD", Direction::Sell, 7.0, "RSI_Reversal", 1.1000, 1.1050, 1.0900),
-            create_test_signal("EUR/USD", Direction::Buy,  7.0, "MACD_Momentum", 1.1000, 1.0950, 1.1100),
+            create_test_signal("EUR/USD", Direction::Sell, 7.0, "MA_Crossover", 1.1000, 1.1050, 1.0900, None),
+            create_test_signal("EUR/USD", Direction::Sell, 7.0, "RSI_Reversal", 1.1000, 1.1050, 1.0900, None),
+            create_test_signal("EUR/USD", Direction::Buy,  7.0, "MACD_Momentum", 1.1000, 1.0950, 1.1100, None),
         ];
 
         // conflict_ratio=0.5, penalty=0.825 → 7.0*0.825=5.775 < 6.0 → blocked

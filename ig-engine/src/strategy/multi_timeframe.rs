@@ -17,6 +17,7 @@ pub struct MultiTimeframeStrategy {
     pub weight: f64,
     pub atr_sl_multiplier: f64,
     pub atr_tp_multiplier: f64,
+    pub trailing_stop_pips: Option<f64>,
 }
 
 impl MultiTimeframeStrategy {
@@ -27,6 +28,7 @@ impl MultiTimeframeStrategy {
         weight: f64,
         atr_sl_multiplier: f64,
         atr_tp_multiplier: f64,
+        trailing_stop_pips: Option<f64>,
     ) -> Self {
         Self {
             trend_tf,
@@ -35,6 +37,7 @@ impl MultiTimeframeStrategy {
             weight,
             atr_sl_multiplier,
             atr_tp_multiplier,
+            trailing_stop_pips,
         }
     }
 
@@ -43,10 +46,10 @@ impl MultiTimeframeStrategy {
         direction: Direction,
         price: f64,
         entry_indicators: &IndicatorSnapshot,
-    ) -> (f64, f64) {
+    ) -> (f64, f64, Option<f64>) {
         let atr = entry_indicators.atr.unwrap_or(price * 0.02);
 
-        match direction {
+        let (stop_loss, take_profit) = match direction {
             Direction::Buy => {
                 let stop_loss = price - (self.atr_sl_multiplier * atr);
                 let take_profit = price + (self.atr_tp_multiplier * atr);
@@ -57,7 +60,14 @@ impl MultiTimeframeStrategy {
                 let take_profit = price - (self.atr_tp_multiplier * atr);
                 (stop_loss, take_profit)
             }
-        }
+        };
+
+        let trailing_stop_distance = self.trailing_stop_pips.map(|pips| {
+            let pip_scale = if price > 50.0 { 0.01 } else { 0.0001 };
+            pips * pip_scale
+        });
+
+        (stop_loss, take_profit, trailing_stop_distance)
     }
 }
 
@@ -99,7 +109,7 @@ impl Strategy for MultiTimeframeStrategy {
             // Wait for a slight pullback on the entry timeframe before firing
             if entry_rsi < 45.0 {
                 let strength = 9.0; // MTF signals are high conviction
-                let (stop_loss, take_profit) = self.calculate_stops_and_targets(Direction::Buy, price, entry_ind);
+                let (stop_loss, take_profit, trailing_stop_distance) = self.calculate_stops_and_targets(Direction::Buy, price, entry_ind);
 
                 let reason = format!(
                     "MTF Alignment BUY: {} trend bullish, {} signal bullish, {} entry RSI={:.2}",
@@ -116,6 +126,7 @@ impl Strategy for MultiTimeframeStrategy {
                     price,
                     stop_loss,
                     take_profit,
+                    trailing_stop_distance,
                     timestamp: Utc::now(),
                 });
             }
@@ -125,7 +136,7 @@ impl Strategy for MultiTimeframeStrategy {
              // Wait for a slight pullback on the entry timeframe before firing
              if entry_rsi > 55.0 {
                 let strength = 9.0; 
-                let (stop_loss, take_profit) = self.calculate_stops_and_targets(Direction::Sell, price, entry_ind);
+                let (stop_loss, take_profit, trailing_stop_distance) = self.calculate_stops_and_targets(Direction::Sell, price, entry_ind);
 
                 let reason = format!(
                     "MTF Alignment SELL: {} trend bearish, {} signal bearish, {} entry RSI={:.2}",
@@ -142,6 +153,7 @@ impl Strategy for MultiTimeframeStrategy {
                     price,
                     stop_loss,
                     take_profit,
+                    trailing_stop_distance,
                     timestamp: Utc::now(),
                 });
             }

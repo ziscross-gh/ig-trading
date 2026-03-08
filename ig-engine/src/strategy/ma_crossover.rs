@@ -17,6 +17,7 @@ pub struct MACrossoverStrategy {
     pub weight: f64,            // reserved for ensemble weight override; ensemble manages weights by name
     pub atr_sl_multiplier: f64,
     pub atr_tp_multiplier: f64,
+    pub trailing_stop_pips: Option<f64>,
 }
 
 impl MACrossoverStrategy {
@@ -27,6 +28,7 @@ impl MACrossoverStrategy {
         weight: f64,
         atr_sl_multiplier: f64,
         atr_tp_multiplier: f64,
+        trailing_stop_pips: Option<f64>,
     ) -> Self {
         Self {
             short_period,
@@ -35,13 +37,14 @@ impl MACrossoverStrategy {
             weight,
             atr_sl_multiplier,
             atr_tp_multiplier,
+            trailing_stop_pips,
         }
     }
 }
 
 impl Default for MACrossoverStrategy {
     fn default() -> Self {
-        Self::new(12, 26, 25.0, 1.0, 2.0, 3.0)
+        Self::new(12, 26, 25.0, 1.0, 2.0, 3.0, Some(15.0))
     }
 }
 
@@ -84,10 +87,10 @@ impl MACrossoverStrategy {
         direction: Direction,
         price: f64,
         indicators: &IndicatorSnapshot,
-    ) -> (f64, f64) {
+    ) -> (f64, f64, Option<f64>) {
         let atr = indicators.atr.unwrap_or(price * 0.02); // Default 2% if no ATR
 
-        match direction {
+        let (stop_loss, take_profit) = match direction {
             Direction::Buy => {
                 let stop_loss = price - (self.atr_sl_multiplier * atr);
                 let take_profit = price + (self.atr_tp_multiplier * atr);
@@ -98,7 +101,14 @@ impl MACrossoverStrategy {
                 let take_profit = price - (self.atr_tp_multiplier * atr);
                 (stop_loss, take_profit)
             }
-        }
+        };
+
+        let trailing_stop_distance = self.trailing_stop_pips.map(|pips| {
+            let pip_scale = if price > 50.0 { 0.01 } else { 0.0001 };
+            pips * pip_scale
+        });
+
+        (stop_loss, take_profit, trailing_stop_distance)
     }
 }
 
@@ -133,7 +143,7 @@ impl Strategy for MACrossoverStrategy {
             }
 
             let strength = self.calculate_signal_strength(indicators);
-            let (stop_loss, take_profit) = self.calculate_stops_and_targets(Direction::Buy, price, indicators);
+            let (stop_loss, take_profit, trailing_stop_distance) = self.calculate_stops_and_targets(Direction::Buy, price, indicators);
 
             let reason = format!(
                 "EMA Crossover BUY: Short({:.2}) > Long({:.2}), ADX={:.2}",
@@ -150,6 +160,7 @@ impl Strategy for MACrossoverStrategy {
                 price,
                 stop_loss,
                 take_profit,
+                trailing_stop_distance,
                 timestamp: Utc::now(),
             });
         }
@@ -162,7 +173,7 @@ impl Strategy for MACrossoverStrategy {
             }
 
             let strength = self.calculate_signal_strength(indicators);
-            let (stop_loss, take_profit) = self.calculate_stops_and_targets(Direction::Sell, price, indicators);
+            let (stop_loss, take_profit, trailing_stop_distance) = self.calculate_stops_and_targets(Direction::Sell, price, indicators);
 
             let reason = format!(
                 "EMA Crossover SELL: Short({:.2}) < Long({:.2}), ADX={:.2}",
@@ -179,6 +190,7 @@ impl Strategy for MACrossoverStrategy {
                 price,
                 stop_loss,
                 take_profit,
+                trailing_stop_distance,
                 timestamp: Utc::now(),
             });
         }
@@ -197,7 +209,7 @@ mod tests {
 
     #[test]
     fn test_ma_crossover_creation() {
-        let strategy = MACrossoverStrategy::new(12, 26, 20.0, 1.0, 2.0, 3.0);
+        let strategy = MACrossoverStrategy::new(12, 26, 20.0, 1.0, 2.0, 3.0, Some(15.0));
         assert_eq!(strategy.name(), "MA_Crossover");
         assert_eq!(strategy.short_period, 12);
         assert_eq!(strategy.long_period, 26);
@@ -206,7 +218,7 @@ mod tests {
 
     #[test]
     fn test_warmup_period() {
-        let strategy = MACrossoverStrategy::new(12, 26, 20.0, 1.0, 2.0, 3.0);
+        let strategy = MACrossoverStrategy::new(12, 26, 20.0, 1.0, 2.0, 3.0, Some(15.0));
         assert_eq!(strategy.warmup_period(), 76); // 26 + 50
     }
 }

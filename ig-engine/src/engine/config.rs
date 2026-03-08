@@ -84,6 +84,7 @@ pub struct MACrossoverConfig {
     pub require_adx_above: f64,
     pub atr_sl_multiplier: Option<f64>,
     pub atr_tp_multiplier: Option<f64>,
+    pub trailing_stop_pips: Option<f64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -96,6 +97,7 @@ pub struct RSIDivergenceConfig {
     pub detect_divergence: bool,
     pub atr_sl_multiplier: Option<f64>,
     pub atr_tp_multiplier: Option<f64>,
+    pub trailing_stop_pips: Option<f64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -107,6 +109,7 @@ pub struct MACDMomentumConfig {
     pub signal: usize,
     pub atr_sl_multiplier: Option<f64>,
     pub atr_tp_multiplier: Option<f64>,
+    pub trailing_stop_pips: Option<f64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -117,6 +120,7 @@ pub struct BollingerReversionConfig {
     pub std_dev: f64,
     pub atr_sl_multiplier: Option<f64>,
     pub atr_tp_multiplier: Option<f64>,
+    pub trailing_stop_pips: Option<f64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -126,6 +130,7 @@ pub struct MultiTimeframeConfig {
     pub trend_tf: String,
     pub signal_tf: String,
     pub entry_tf: String,
+    pub trailing_stop_pips: Option<f64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -238,6 +243,7 @@ impl Default for EngineConfig {
                     require_adx_above: 25.0,
                     atr_sl_multiplier: None,
                     atr_tp_multiplier: None,
+                    trailing_stop_pips: None,
                 }),
                 rsi_divergence: Some(RSIDivergenceConfig {
                     enabled: true,
@@ -248,6 +254,7 @@ impl Default for EngineConfig {
                     detect_divergence: true,
                     atr_sl_multiplier: None,
                     atr_tp_multiplier: None,
+                    trailing_stop_pips: None,
                 }),
                 macd_momentum: Some(MACDMomentumConfig {
                     enabled: true,
@@ -257,6 +264,7 @@ impl Default for EngineConfig {
                     signal: 9,
                     atr_sl_multiplier: None,
                     atr_tp_multiplier: None,
+                    trailing_stop_pips: None,
                 }),
                 bollinger_reversion: Some(BollingerReversionConfig {
                     enabled: true,
@@ -265,6 +273,7 @@ impl Default for EngineConfig {
                     std_dev: 2.0,
                     atr_sl_multiplier: None,
                     atr_tp_multiplier: None,
+                    trailing_stop_pips: None,
                 }),
                 multi_timeframe: None,
                 instrument_overrides: {

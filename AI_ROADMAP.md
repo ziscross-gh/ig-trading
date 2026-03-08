@@ -24,7 +24,7 @@ adding AI layers on top for sentiment signals and autonomous parameter adaptatio
 | 8.1 | Walk-Forward Auto Re-optimisation | ✅ Done | 🔴 High |
 | 8.2 | Performance-Based Strategy Weighting | ✅ Done | 🔴 High |
 | 8.3 | Gold News Sentiment Signal | ✅ Done | 🟠 Medium |
-| 8.4 | ML Regime Classifier (replace fixed ADX threshold) | ⏳ Planned | 🟠 Medium |
+| 8.4 | ML Regime Classifier (replace fixed ADX threshold) | ✅ Done | 🟠 Medium |
 | 8.5 | Macro Calendar Awareness (CPI, NFP, FOMC) | ✅ Done | 🟡 Low |
 | 8.6 | Reinforcement Learning for Position Sizing | ⏳ Planned | 🔵 Long-term |
 

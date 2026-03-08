@@ -112,6 +112,7 @@ pub struct Signal {
     pub price: f64,
     pub stop_loss: f64,
     pub take_profit: f64,
+    pub trailing_stop_distance: Option<f64>,
     pub timestamp: DateTime<Utc>,
 }
 
@@ -222,6 +223,8 @@ pub struct SessionState {
     pub ig_security_token: Option<String>,
 }
 
+use crate::data::trade_logger::TradeLogger;
+
 /// The complete engine state — decoupled into domain-specific sub-states
 pub struct EngineState {
     pub config: EngineConfig,
@@ -234,6 +237,7 @@ pub struct EngineState {
     pub metrics: MetricsState,
     pub learning: LearningState,
     pub session: SessionState,
+    pub trade_logger: TradeLogger,
 }
 
 impl EngineState {
@@ -299,6 +303,7 @@ impl EngineState {
                 weight_manager: None,
             },
             session: SessionState::default(),
+            trade_logger: TradeLogger::default(),
         }
     }
 
@@ -380,6 +385,11 @@ impl EngineState {
     }
 
     pub fn add_closed_trade(&mut self, trade: ClosedTrade) {
+        // Log the trade outcome to structured JSONL for Task 8.6
+        if let Err(e) = self.trade_logger.log_trade(&trade) {
+            tracing::error!("Failed to log trade to JSONL: {}", e);
+        }
+
         self.trades.history.push_back(trade);
         if self.trades.history.len() > 500 {
             self.trades.history.pop_front();
