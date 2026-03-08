@@ -21,6 +21,7 @@ async fn test_mock_trade_execution() {
         stop_distance: None,
         limit_level: Some(1.20),
         currency_code: Some("USD".to_string()),
+        expiry: "DFB".to_string(),
         guaranteed_stop: Some(false),
         trailing_stop: Some(false),
         force_open: Some(false),
