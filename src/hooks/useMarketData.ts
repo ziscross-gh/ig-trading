@@ -235,6 +235,6 @@ export function useMarketData() {
     selectMarket,
     startAutoRefresh,
     stopAutoRefresh,
-    marketName: MARKET_NAMES[state.selectedEpic] || state.selectedEpic,
+    marketName: state.markets.find(m => m.epic === state.selectedEpic)?.name || MARKET_NAMES[state.selectedEpic] || state.selectedEpic,
   };
 }

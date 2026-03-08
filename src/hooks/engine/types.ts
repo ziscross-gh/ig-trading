@@ -30,6 +30,7 @@ export interface EngineStatus {
 export interface EnginePosition {
     deal_id: string;
     epic: string;
+    name?: string;
     direction: 'buy' | 'sell';
     size: number;
     entry_price: number;
@@ -43,6 +44,7 @@ export interface EnginePosition {
 
 export interface EngineSignal {
     epic: string;
+    name?: string;
     direction: 'buy' | 'sell';
     strategy: string;
     strength: number;
@@ -75,6 +77,7 @@ export interface IndicatorSnapshot {
 export interface EngineTrade {
     deal_id: string;
     epic: string;
+    name?: string;
     direction: 'buy' | 'sell';
     size: number;
     entry_price: number;

@@ -199,13 +199,20 @@ export const DEFAULT_MARKETS = {
 } as const;
 
 export const MARKET_NAMES: Record<string, string> = {
+  // Gold variants
   'CS.D.CFIGOLD.CFI.IP': 'Spot Gold (SGD1)',
   'CS.D.CFDGOLD.CMG.IP': 'Spot Gold ($1)',
   'CS.D.GOLDUSD.CFD': 'Gold (XAU/USD)',
+  'CS.D.XAUUSD.CFD': 'Gold (XAU/USD)',
+  // Forex — demo (*.CSD.IP) and live (*.CFD) variants
   'CS.D.EURUSD.CSD.IP': 'EUR/USD',
+  'CS.D.EURUSD.CFD': 'EUR/USD',
   'CS.D.GBPUSD.CSD.IP': 'GBP/USD',
+  'CS.D.GBPUSD.CFD': 'GBP/USD',
   'CS.D.USDJPY.CSD.IP': 'USD/JPY',
+  'CS.D.USDJPY.CFD': 'USD/JPY',
   'CS.D.AUDUSD.CSD.IP': 'AUD/USD',
+  'CS.D.AUDUSD.CFD': 'AUD/USD',
 };
 
 export const DEFAULT_RISK_CONFIG: RiskConfig = {

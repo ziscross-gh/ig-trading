@@ -153,10 +153,10 @@ export function EngineControlPanel({
                 <div className="font-medium">
                   {status.daily_stats.trades_today > 0
                     ? (
-                        (status.daily_stats.winning /
-                          status.daily_stats.trades_today) *
-                        100
-                      ).toFixed(0)
+                      (status.daily_stats.winning /
+                        status.daily_stats.trades_today) *
+                      100
+                    ).toFixed(0)
                     : 0}
                   %
                 </div>
@@ -287,7 +287,7 @@ export function EnginePositionsPanel({
                     <TrendingDown className="h-4 w-4 text-red-500" />
                   )}
                   <div>
-                    <div className="font-medium">{pos.epic}</div>
+                    <div className="font-medium">{pos.name || pos.epic}</div>
                     <div className="text-xs text-muted-foreground">
                       {pos.strategy} • {pos.size} lots @ {pos.entry_price}
                     </div>
@@ -345,9 +345,9 @@ export function EngineSignalsPanel({
           </p>
         ) : (
           <div className="space-y-2">
-            {displayed.map((sig, i) => (
+            {displayed.map((sig) => (
               <div
-                key={i}
+                key={`${sig.timestamp}-${sig.epic}-${sig.strategy}`}
                 className="flex items-center justify-between p-2 rounded border text-xs"
               >
                 <div className="flex items-center gap-2">
@@ -357,7 +357,7 @@ export function EngineSignalsPanel({
                   >
                     {sig.direction.toUpperCase()}
                   </Badge>
-                  <span className="font-medium">{sig.epic}</span>
+                  <span className="font-medium">{sig.name || sig.epic}</span>
                   <span className="text-muted-foreground">{sig.strategy}</span>
                 </div>
                 <div className="flex items-center gap-2">

@@ -20,3 +20,16 @@ dev.log
 engine.log
 test_js_encrypt.js
 test_ig_market.py
+# Generated data and logs
+data/
+logs/
+
+# Workspace and editor files
+*.code-workspace
+.claude/
+
+# Test trade scripts (personal/debug)
+test_ig_trade*.py
+trigger_trade.sh
+tsconfig.tsbuildinfo
+next-env.d.ts

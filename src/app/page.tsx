@@ -59,6 +59,7 @@ export default function Dashboard() {
                 <PriceChart
                   candles={marketData.historicalData}
                   epic={marketData.selectedEpic}
+                  marketName={marketData.marketName}
                   loading={marketData.loading}
                   onRefresh={() => marketData.fetchHistory(marketData.selectedEpic)}
                   livePrice={(() => {

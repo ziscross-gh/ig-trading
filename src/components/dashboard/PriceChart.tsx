@@ -12,6 +12,7 @@ import { useState } from 'react';
 interface PriceChartProps {
   candles: Candle[];
   epic: string;
+  marketName?: string;
   loading?: boolean;
   onRefresh?: () => void;
   livePrice?: { bid: number; offer: number; timestamp?: string };
@@ -27,7 +28,7 @@ function formatTime(timestamp: string): string {
   return new Date(timestamp).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false });
 }
 
-export function PriceChart({ candles, epic, loading, onRefresh, livePrice }: PriceChartProps) {
+export function PriceChart({ candles, epic, marketName, loading, onRefresh, livePrice }: PriceChartProps) {
   const [chartType, setChartType] = useState<'line' | 'area'>('line');
 
   // Merge historical candles with live tick so chart matches MarketOverview
@@ -71,7 +72,7 @@ export function PriceChart({ candles, epic, loading, onRefresh, livePrice }: Pri
           <div className="flex items-center gap-3">
             <BarChart3 className="h-5 w-5 text-primary" />
             <div>
-              <CardTitle className="text-lg">{MARKET_NAMES[epic] || epic}</CardTitle>
+              <CardTitle className="text-lg">{marketName || MARKET_NAMES[epic] || epic}</CardTitle>
               <div className="flex items-center gap-2 mt-1">
                 <span className="text-2xl font-bold">{formatPrice(currentPrice, epic)}</span>
                 <span className={`text-sm font-medium ${isPositive ? 'text-green-500' : 'text-red-500'}`}>{isPositive ? '+' : ''}{formatPrice(priceChange, epic)}</span>
