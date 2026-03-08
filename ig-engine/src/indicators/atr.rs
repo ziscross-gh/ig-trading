@@ -3,7 +3,6 @@
 ///
 /// TR = max(high-low, |high-prev_close|, |low-prev_close|)
 /// ATR = Wilder's smoothed average of TR over `period`
-
 pub fn calculate(highs: &[f64], lows: &[f64], closes: &[f64], period: usize) -> f64 {
     let len = highs.len().min(lows.len()).min(closes.len());
     if len < period + 1 {
@@ -28,8 +27,8 @@ pub fn calculate(highs: &[f64], lows: &[f64], closes: &[f64], period: usize) -> 
 
     // Wilder's smoothing for remaining
     let period_f = period as f64;
-    for i in period..tr_values.len() {
-        atr = (atr * (period_f - 1.0) + tr_values[i]) / period_f;
+    for &tr in &tr_values[period..] {
+        atr = (atr * (period_f - 1.0) + tr) / period_f;
     }
 
     atr

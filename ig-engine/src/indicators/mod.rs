@@ -128,6 +128,10 @@ impl RingBuffer {
         self.len
     }
 
+    pub fn is_empty(&self) -> bool {
+        self.len == 0
+    }
+
     pub fn is_full(&self) -> bool {
         self.len == self.capacity
     }
@@ -236,6 +240,8 @@ pub struct IndicatorSet {
 }
 
 impl IndicatorSet {
+    #[allow(clippy::too_many_arguments)]
+    // TODO: bundle args into an IndicatorConfig struct to reduce parameter count
     pub fn new(
         short_period: usize,
         long_period: usize,

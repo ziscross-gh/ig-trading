@@ -40,9 +40,9 @@ impl CandleStore {
         let resolution_data = self
             .storage
             .entry(epic.to_string())
-            .or_insert_with(HashMap::new)
+            .or_default()
             .entry(resolution.to_string())
-            .or_insert_with(Vec::new);
+            .or_default();
 
         // Enforce maximum candles per series
         if resolution_data.len() >= MAX_CANDLES_PER_SERIES {
@@ -103,7 +103,7 @@ impl CandleStore {
 
         self.storage
             .entry(epic.to_string())
-            .or_insert_with(HashMap::new)
+            .or_default()
             .insert(resolution.to_string(), candles);
     }
 

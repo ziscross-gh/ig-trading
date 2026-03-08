@@ -1,8 +1,8 @@
 # TASK_TRACKER.md — IG Trading Engine
 
-**Last updated:** 2026-03-08 (session 3)
+**Last updated:** 2026-03-08 (session 5)
 **Current phase:** Phase 8 — AI/ML Enhancements (active)
-**Current focus:** 🤖 Bot engine + Telegram only (dashboard paused) | 🧠 8.1 ✅ 8.2 ✅ 8.3 ✅ 8.5 ✅ done | Next: 8.4 regime classifier (needs 6mo live data) or 7.5 backtest endpoint
+**Current focus:** 🤖 Bot engine + Telegram only (dashboard paused) | 🧠 8.1 ✅ 8.2 ✅ 8.3 ✅ 8.4 ✅ 8.5 ✅ 8.7 ✅ done | Next: 8.6 RL position sizing (needs 3mo live data) or 7.5 backtest endpoint
 
 For the full history of completed work and debt items, see `TECH_DEBT_AUDIT.md`.
 
@@ -19,7 +19,7 @@ For the full history of completed work and debt items, see `TECH_DEBT_AUDIT.md`.
 | 5 | Advanced Strategy Features | ✅ Mostly done (dashboard items paused) |
 | 6 | Engine Hardening / WS Migration | ✅ Complete |
 | 7 | Production Backtesting | 🏗️ 4/6 done — 7.5 planned, 7.6 paused |
-| 8 | AI/ML Enhancements | 🏗️ In progress — 8.1 ✅ 8.2 ✅ 8.3 ✅ 8.5 ✅ | see `AI_ROADMAP.md` |
+| 8 | AI/ML Enhancements | 🏗️ In progress — 8.1 ✅ 8.2 ✅ 8.3 ✅ 8.4 ✅ 8.5 ✅ | see `AI_ROADMAP.md` |
 
 ---
 
@@ -36,7 +36,7 @@ For the full history of completed work and debt items, see `TECH_DEBT_AUDIT.md`.
 
 | # | Task | Status | Owner | File(s) | Notes |
 |---|------|--------|-------|---------|-------|
-| 5.1 | Trailing Stop Loss logic | ✅ Done | Claude | `event_loop/handlers.rs`, `analysis.rs`, `state.rs` | Ratchet logic complete; manual triggers now also respect `use_trailing_stop` config |
+| 5.1 | Trailing Stop Loss logic | ✅ Done | Claude + Gemini | `event_loop/handlers.rs`, `analysis.rs`, `state.rs` | Ratchet logic complete; Gemini enhanced to support strategy-specific distances from config |
 | 5.2 | Session-specific filters (news exclusion, refined hours) | ✅ Done | Claude | `risk/mod.rs`, `config/default.toml` | Session filter active; trading hours re-enabled; news blackout windows implemented (±15min, configurable) |
 | 5.3 | Strategy Lab historical backtesting UI | ⏸️ Paused (dashboard) | — | `StrategyLab.tsx`, `backtester.rs` | Backend ready; UI wiring paused |
 | 5.4 | Shadow Mode (Paper mode strategy validation) | ✅ Done | — | `engine/config.rs` | Mapped to Paper mode |
@@ -81,7 +81,7 @@ These items are candidates for the next sprint once Phase 5 is complete.
 | 7.2 | Python backtester — ensemble + trailing stop + session filter | Claude | ✅ Done | `scripts/backtest.py` — per-instrument strategy sets, ensemble vote, ratchet trailing stop, session filter. Results: GOLD +18.5%, USDJPY +8.4%, Portfolio +$2,625 (+26%) at 2.97% max DD |
 | 7.3 | Parameter optimizer | Claude | ✅ Done | `scripts/optimize.py` — grid search across SL/TP/ADX filter/trail. ADX range filter is key |
 | 7.4 | ADX range filter in Rust engine | Claude | ✅ Done | `analysis.rs` suppresses RSI_Reversal+Bollinger_Bands when ADX > 25; `config.rs` adds `InstrumentStrategyOverride`; `default.toml` enabled for all 3 instruments |
-| 7.5 | Backtest CLI / HTTP endpoint | Claude | ⏳ Planned | Expose `POST /backtest { epic, strategy, from, to }` on port 9090 so results can be triggered without dashboard |
+| 7.5 | Backtest CLI / HTTP endpoint | Gemini | ✅ Done | Expose `POST /backtest` on port 9090; verified with integration test `tests/backtest_api.rs` |
 | 7.6 | Strategy Lab UI wiring (dashboard) | — | ⏸️ Paused | Wire `StrategyLab.tsx` to the `/backtest` endpoint — blocked on dashboard work resuming |
 
 ---
@@ -97,9 +97,10 @@ These items are candidates for the next sprint once Phase 5 is complete.
 | 8.1 | Walk-forward auto re-optimisation | Claude | ✅ Done | 🔴 High | `optimize.py --output`, `fetch_historical_data.py --months`, `compare_params.py`, `weekly_reoptimise.sh`, SIGUSR1 hot-reload + PID file in Rust. Engine self-tunes weekly with no downtime. |
 | 8.2 | Performance-based strategy weighting | Claude | ✅ Done | 🔴 High | Was already fully wired: `event_loop/mod.rs` initialises `StrategyScorecard` + `AdaptiveWeightManager` at startup; `handlers.rs` feeds every closed trade in and propagates weight updates to ensemble. Fixed latent bug: ensemble weight keys used wrong names (`"MACrossover"` etc.) instead of matching `strategy.name()` (`"MA_Crossover"`). Also registered `"Gold_Sentiment"` weight. System now live — weights adjust automatically every 10 trades once each strategy has ≥ 20. |
 | 8.3 | Gold news sentiment signal | Claude | ✅ Done | 🟠 Medium | `scripts/sentiment_agent.py` polls Reuters/Yahoo/Kitco RSS every 15min, scores Gold headlines via keyword/Ollama/Claude (auto-detect), writes `data/gold_sentiment_latest.json`. Rust `analysis.rs` injects sentiment as 5th Signal for Gold epic when `|score| ≥ 0.55` and file age < 30min. Strength = `6.0 + confidence × 3.5`, SL/TP from ATR. Cron: `*/15 * * * * python scripts/sentiment_agent.py --once`. |
-| 8.4 | ML regime classifier (replace fixed ADX=25) | Claude | ⏳ Planned | 🟠 Medium | LightGBM trained on Hurst + BB-width + ADX + volume → labels TRENDING/RANGING/VOLATILE. Adapts faster than static threshold. Needs 6mo data. |
+| 8.4 | ML regime classifier (replace fixed ADX=25) | Claude | ✅ Done | 🟠 Medium | `scripts/train_regime_classifier.py` generates labels via forward-window mini-backtest (LOOKBACK=50, FORWARD=60) + trains LightGBM/sklearn per instrument. `scripts/run_regime_classifier.py` runs hourly, writes `data/regime_latest.json`. `ig-engine/src/regime/mod.rs` reads file, calls `apply_regime_multipliers()` in `analysis.rs` before `ensemble.vote()`: TRENDING → trend ×1.5 / reversion ×0.3; RANGING → reversion ×1.5 / trend ×0.3; VOLATILE → all ×0.4. No stale data accepted (90min TTL). Works on existing 2yr yfinance data — no live data needed. |
 | 8.5 | Macro calendar awareness | Claude | ✅ Done | 🟡 Low | Added `MacroEvent` struct with per-event `blackout_mins`. `[[risk.macro_events]]` TOML array in `default.toml` — 8 events: London open ±20min, NFP/CPI ±30min, FOMC decision ±60min, FOMC presser ±45min, ECB/BOE ±45min. Legacy flat `news_blackout_windows_utc` used as fallback. Backward-compatible — old configs without `macro_events` keep flat 15min behaviour. |
 | 8.6 | RL position sizing | Claude | ⏳ Long-term | 🔵 Long-term | PPO agent learns optimal size multiplier from live trade outcomes. Trigger after 3+ months live data. |
+| 8.7 | Code quality pass — zero clippy warnings | Claude | ✅ Done | 🔴 High | `cargo clippy -- -D warnings` now exits 0 (was 40 errors). Fixes: optimizer.rs `total_cmp` + `.first().ok_or_else()` panic guards (return type → `anyhow::Result<>`); `or_default()` × 3 (candle_store); `is_none_or` / `is_some_and` (handlers + validation); collapsed identical if/else branches in all strategies; `OPU` → `Opu` acronym; doc-comment blank lines (atr/adx); indexed loops → slice iterators; `RingBuffer::is_empty()`; `clamp()` × 2; doc-quote markers; modulo-1 dead-code removed; `&mut [Signal]` slice API; 5× `#[allow(clippy::too_many_arguments)]` + `// TODO: struct refactor`. All 63 unit tests pass. |
 
 ### Data Collection — Start Now
 

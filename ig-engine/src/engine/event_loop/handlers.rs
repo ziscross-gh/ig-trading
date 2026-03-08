@@ -57,8 +57,8 @@ pub async fn handle_position_monitoring(
                     };
                     
                     let should_update = match position.direction {
-                        Direction::Buy => position.stop_loss.map_or(true, |sl| new_sl >= sl + min_step),
-                        Direction::Sell => position.stop_loss.map_or(true, |sl| new_sl <= sl - min_step),
+                        Direction::Buy => position.stop_loss.is_none_or(|sl| new_sl >= sl + min_step),
+                        Direction::Sell => position.stop_loss.is_none_or(|sl| new_sl <= sl - min_step),
                     };
                     if should_update {
                         debug!(
@@ -75,17 +75,17 @@ pub async fn handle_position_monitoring(
                 }
 
                 if let Some(stop_loss) = position.stop_loss {
-                    if position.direction == Direction::Buy && current_price <= stop_loss {
-                        to_close.push((idx, position.clone(), "Stop Loss"));
-                    } else if position.direction == Direction::Sell && current_price >= stop_loss {
+                    if (position.direction == Direction::Buy && current_price <= stop_loss)
+                        || (position.direction == Direction::Sell && current_price >= stop_loss)
+                    {
                         to_close.push((idx, position.clone(), "Stop Loss"));
                     }
                 }
 
                 if let Some(take_profit) = position.take_profit {
-                    if position.direction == Direction::Buy && current_price >= take_profit {
-                        to_close.push((idx, position.clone(), "Take Profit"));
-                    } else if position.direction == Direction::Sell && current_price <= take_profit {
+                    if (position.direction == Direction::Buy && current_price >= take_profit)
+                        || (position.direction == Direction::Sell && current_price <= take_profit)
+                    {
                         to_close.push((idx, position.clone(), "Take Profit"));
                     }
                 }

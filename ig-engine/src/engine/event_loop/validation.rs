@@ -36,10 +36,10 @@ pub fn validate_config(config: &EngineConfig) -> Result<()> {
 
     // Consensus: can't require more strategies than are enabled
     let enabled_count = [
-        config.strategies.ma_crossover.as_ref().map_or(false, |s| s.enabled),
-        config.strategies.rsi_divergence.as_ref().map_or(false, |s| s.enabled),
-        config.strategies.macd_momentum.as_ref().map_or(false, |s| s.enabled),
-        config.strategies.bollinger_reversion.as_ref().map_or(false, |s| s.enabled),
+        config.strategies.ma_crossover.as_ref().is_some_and(|s| s.enabled),
+        config.strategies.rsi_divergence.as_ref().is_some_and(|s| s.enabled),
+        config.strategies.macd_momentum.as_ref().is_some_and(|s| s.enabled),
+        config.strategies.bollinger_reversion.as_ref().is_some_and(|s| s.enabled),
     ].iter().filter(|&&e| e).count();
 
     if config.strategies.min_consensus > enabled_count {

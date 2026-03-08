@@ -13,21 +13,23 @@ pub struct MACDMomentumStrategy {
     pub weight: f64,            // reserved for ensemble weight override; ensemble manages weights by name
     pub atr_sl_multiplier: f64,
     pub atr_tp_multiplier: f64,
+    pub trailing_stop_pips: Option<f64>,
 }
 
 impl MACDMomentumStrategy {
-    pub fn new(weight: f64, atr_sl_multiplier: f64, atr_tp_multiplier: f64) -> Self {
+    pub fn new(weight: f64, atr_sl_multiplier: f64, atr_tp_multiplier: f64, trailing_stop_pips: Option<f64>) -> Self {
         Self {
             weight,
             atr_sl_multiplier,
             atr_tp_multiplier,
+            trailing_stop_pips,
         }
     }
 }
 
 impl Default for MACDMomentumStrategy {
     fn default() -> Self {
-        Self::new(1.0, 2.0, 3.0)
+        Self::new(1.0, 2.0, 3.0, Some(15.0))
     }
 }
 
@@ -46,9 +48,7 @@ impl MACDMomentumStrategy {
 
         // MA alignment confirmation
         if let (Some(ema_short), Some(ema_long)) = (indicators.ema_short, indicators.ema_long) {
-            if is_buy && ema_short > ema_long {
-                strength += 1.0;
-            } else if !is_buy && ema_short < ema_long {
+            if (is_buy && ema_short > ema_long) || (!is_buy && ema_short < ema_long) {
                 strength += 1.0;
             }
         }
@@ -71,10 +71,10 @@ impl MACDMomentumStrategy {
         direction: Direction,
         price: f64,
         indicators: &IndicatorSnapshot,
-    ) -> (f64, f64) {
+    ) -> (f64, f64, Option<f64>) {
         let atr = indicators.atr.unwrap_or(price * 0.02);
 
-        match direction {
+        let (stop_loss, take_profit) = match direction {
             Direction::Buy => {
                 let stop_loss = price - (self.atr_sl_multiplier * atr);
                 let take_profit = price + (self.atr_tp_multiplier * atr);
@@ -85,7 +85,14 @@ impl MACDMomentumStrategy {
                 let take_profit = price - (self.atr_tp_multiplier * atr);
                 (stop_loss, take_profit)
             }
-        }
+        };
+
+        let trailing_stop_distance = self.trailing_stop_pips.map(|pips| {
+            let pip_scale = if price > 50.0 { 0.01 } else { 0.0001 };
+            pips * pip_scale
+        });
+
+        (stop_loss, take_profit, trailing_stop_distance)
     }
 }
 
@@ -110,7 +117,7 @@ impl Strategy for MACDMomentumStrategy {
         // BUY Signal: Histogram crosses above zero AND histogram is expanding
         if prev_histogram < 0.0 && histogram > 0.0 && self.histogram_is_expanding(indicators) {
             let strength = self.calculate_signal_strength(indicators, true);
-            let (stop_loss, take_profit) = self.calculate_stops_and_targets(Direction::Buy, price, indicators);
+            let (stop_loss, take_profit, trailing_stop_distance) = self.calculate_stops_and_targets(Direction::Buy, price, indicators);
 
             let reason = format!(
                 "MACD Momentum BUY: Histogram crossing zero (prev={:.6}, curr={:.6}), ADX={:.2}",
@@ -127,6 +134,7 @@ impl Strategy for MACDMomentumStrategy {
                 price,
                 stop_loss,
                 take_profit,
+                trailing_stop_distance,
                 timestamp: Utc::now(),
             });
         }
@@ -134,7 +142,7 @@ impl Strategy for MACDMomentumStrategy {
         // SELL Signal: Histogram crosses below zero AND histogram is contracting
         if prev_histogram > 0.0 && histogram < 0.0 && self.histogram_is_expanding(indicators) {
             let strength = self.calculate_signal_strength(indicators, false);
-            let (stop_loss, take_profit) = self.calculate_stops_and_targets(Direction::Sell, price, indicators);
+            let (stop_loss, take_profit, trailing_stop_distance) = self.calculate_stops_and_targets(Direction::Sell, price, indicators);
 
             let reason = format!(
                 "MACD Momentum SELL: Histogram crossing zero (prev={:.6}, curr={:.6}), ADX={:.2}",
@@ -151,6 +159,7 @@ impl Strategy for MACDMomentumStrategy {
                 price,
                 stop_loss,
                 take_profit,
+                trailing_stop_distance,
                 timestamp: Utc::now(),
             });
         }
@@ -169,13 +178,13 @@ mod tests {
 
     #[test]
     fn test_macd_momentum_creation() {
-        let strategy = MACDMomentumStrategy::new(1.0, 2.0, 3.0);
+        let strategy = MACDMomentumStrategy::new(1.0, 2.0, 3.0, Some(15.0));
         assert_eq!(strategy.name(), "MACD_Momentum");
     }
 
     #[test]
     fn test_warmup_period() {
-        let strategy = MACDMomentumStrategy::new(1.0, 2.0, 3.0);
+        let strategy = MACDMomentumStrategy::new(1.0, 2.0, 3.0, Some(15.0));
         assert_eq!(strategy.warmup_period(), 50);
     }
 }

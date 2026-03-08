@@ -89,6 +89,8 @@ pub struct BacktestRequest {
     pub strategy_name: String,
     pub initial_balance: f64,
     pub risk_pct: f64,
+    pub from: Option<i64>,
+    pub to: Option<i64>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -837,10 +839,9 @@ async fn get_scan(
 
             // Signal strength (0-10)
             let strength = ((rsi - 50.0).abs() / 5.0
-                + if trend == "bullish" { 2.0 } else if trend == "bearish" { 2.0 } else { 0.0 }
+                + if trend == "bullish" || trend == "bearish" { 2.0 } else { 0.0 }
                 + ((price - sma20).abs() / sma20 * 100.0).min(10.0))
-                .min(10.0)
-                .max(0.0);
+                .clamp(0.0, 10.0);
 
             // Generate signal
             let signal = if trend == "bullish" && rsi < 70.0 {
@@ -1037,15 +1038,20 @@ pub async fn post_optimize(
     // Run optimization in a separate task so we don't block the API
     let state_clone = app_state.clone();
     tokio::spawn(async move {
-        let result = optimizer.optimize_ma_crossover(
+        match optimizer.optimize_ma_crossover(
             &epic,
             payload.short_range.0..payload.short_range.1,
             payload.long_range.0..payload.long_range.1,
             vec![20.0, 25.0, 30.0],
-        ).await;
-
-        let mut last_res = state_clone.last_optimization_result.write().await;
-        *last_res = Some(result);
+        ).await {
+            Ok(result) => {
+                let mut last_res = state_clone.last_optimization_result.write().await;
+                *last_res = Some(result);
+            }
+            Err(e) => {
+                tracing::error!("Optimization failed: {}", e);
+            }
+        }
     });
 
     Json(json!({ "success": true, "message": "Optimization started" }))
@@ -1262,24 +1268,32 @@ async fn handle_socket(mut socket: WebSocket, state: AppState) {
 }
 
 /// Backtest endpoint: run a historical strategy backtest
-async fn post_backtest(
+pub async fn post_backtest(
     State(app_state): State<AppState>,
     Json(payload): Json<BacktestRequest>,
 ) -> Json<Value> {
     let epic = payload.epic.clone();
     
     // Get historical candles for the backtest
-    let candles = {
+    let mut candles = {
         let s = app_state.engine_state.read().await;
         s.markets.history.get_candles(&epic, "HOUR")
             .cloned()
             .unwrap_or_default()
     };
 
+    // Apply time range filtering if requested
+    if let Some(from_ts) = payload.from {
+        candles.retain(|c| c.timestamp >= from_ts);
+    }
+    if let Some(to_ts) = payload.to {
+        candles.retain(|c| c.timestamp <= to_ts);
+    }
+
     if candles.len() < 50 {
         return Json(json!({
             "success": false,
-            "message": format!("Insufficient historical data for backtest of {}. Need at least 50 candles. Try running for a different market or wait for more data collection.", epic),
+            "message": format!("Insufficient historical data for backtest of {} in selected range. Need at least 50 candles. Try a wider range or wait for more data collection.", epic),
         }));
     }
 

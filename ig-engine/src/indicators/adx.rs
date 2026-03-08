@@ -5,7 +5,6 @@
 /// ADX < 20 = ranging/choppy market
 /// +DI > -DI = bullish trend
 /// -DI > +DI = bearish trend
-
 use super::ADXValues;
 
 pub fn calculate(
@@ -91,8 +90,8 @@ pub fn calculate(
 
     // ADX = smoothed average of DX
     let mut adx: f64 = dx_values[..period].iter().map(|(dx, _, _)| dx).sum::<f64>() / period_f;
-    for i in period..dx_values.len() {
-        adx = (adx * (period_f - 1.0) + dx_values[i].0) / period_f;
+    for &(dx, _, _) in &dx_values[period..] {
+        adx = (adx * (period_f - 1.0) + dx) / period_f;
     }
 
     let (_, plus_di, minus_di) = dx_values.last().unwrap_or(&(0.0, 0.0, 0.0));

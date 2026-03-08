@@ -101,8 +101,7 @@ impl StrategyScorecard {
 
         self.total_trades_processed += 1;
         debug!(
-            "Scorecard updated ({}): {} — {} trades in window, lifetime={}",
-            if self.total_trades_processed % 1 == 0 { "trade" } else { "virtual" },
+            "Scorecard updated: {} — {} trades in window, lifetime={}",
             strategy,
             entries.len(),
             self.total_trades_processed

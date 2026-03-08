@@ -294,6 +294,8 @@ impl RiskManager {
     }
 
     /// Check if trade passes all risk checks and return verdict
+    #[allow(clippy::too_many_arguments)]
+    // TODO: bundle args into a TradeCheckRequest struct to reduce parameter count
     pub fn check_trade(
         &mut self,
         epic: &str,
@@ -301,6 +303,7 @@ impl RiskManager {
         entry_price: f64,
         stop_loss: f64,
         take_profit: f64,
+        trailing_stop_distance: Option<f64>,
         account_info: &AccountInfo,
         open_positions: &[OpenPosition],
         strategy: &str,
@@ -557,17 +560,23 @@ impl RiskManager {
             "Position sizing: raw={:.2}, multiplier={:.2}, final={:.2}",
             raw_size, self.position_size_multiplier, final_size
         );
+        
+        // Final trailing stop distance logic:
+        // 1. If strategy provided a specific distance, use it.
+        // 2. Otherwise fall back to the initial stop-loss distance if trailing stops are globally enabled.
+        let final_trailing_stop = if self.config.use_trailing_stop {
+            Some(trailing_stop_distance.unwrap_or_else(|| (entry_price - adjusted_stop_loss).abs()))
+        } else {
+            None
+        };
+
         let adjusted_trade = AdjustedTrade {
             epic: epic.to_string(),
             direction: direction.to_string(),
             size: final_size,
             stop_loss: adjusted_stop_loss,
             take_profit,
-            trailing_stop_distance: if self.config.use_trailing_stop {
-                Some((entry_price - adjusted_stop_loss).abs())
-            } else {
-                None
-            },
+            trailing_stop_distance: final_trailing_stop,
             strategy: strategy.to_string(),
             warning: warning_note,
         };
@@ -787,6 +796,7 @@ mod tests {
             1.1000,
             0.0, // Invalid stop loss
             1.1100,
+            None,
             &account,
             &[],
             "test",

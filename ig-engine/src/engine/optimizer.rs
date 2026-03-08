@@ -29,14 +29,17 @@ impl Optimizer {
         }
     }
 
-    /// Optimizes the MA Crossover strategy by sweeping short/long periods and ADX threshold
+    /// Optimizes the MA Crossover strategy by sweeping short/long periods and ADX threshold.
+    ///
+    /// Returns `Err` if no valid parameter combinations exist (e.g. empty ranges where
+    /// every short >= long).
     pub async fn optimize_ma_crossover(
         &self,
         epic: &str,
         short_range: std::ops::Range<usize>,
         long_range: std::ops::Range<usize>,
         adx_range: Vec<f64>,
-    ) -> OptimizationResult {
+    ) -> anyhow::Result<OptimizationResult> {
         let mut runs = Vec::new();
 
         for short in short_range.step_by(2) {
@@ -50,9 +53,10 @@ impl Optimizer {
                         short,
                         long,
                         adx,
-                        1.0,  // weight
+                        1.0,  // Base weight
                         2.0,  // ATR SL multiplier
                         3.0,  // ATR TP multiplier
+                        None, // Trailing stop (not used in grid search yet)
                     );
 
                     let mut engine = BacktestEngine::new(self.initial_balance, 1.0);
@@ -66,18 +70,23 @@ impl Optimizer {
             }
         }
 
-        // Sort by PnL descending
-        runs.sort_by(|a, b| b.result.total_pnl.partial_cmp(&a.result.total_pnl).unwrap_or(std::cmp::Ordering::Equal));
+        // Sort by PnL descending — total_cmp handles NaN deterministically
+        runs.sort_by(|a, b| b.result.total_pnl.total_cmp(&a.result.total_pnl));
 
         // Keep top 10
         let top_runs = runs.iter().take(10).cloned().collect::<Vec<_>>();
 
-        let best = &top_runs[0];
+        let best = top_runs
+            .first()
+            .ok_or_else(|| anyhow::anyhow!(
+                "No valid optimization runs — check data and parameter ranges \
+                 (every short period >= long period?)"
+            ))?;
 
-        OptimizationResult {
+        Ok(OptimizationResult {
             best_pnl: best.result.total_pnl,
             best_parameters: best.parameters.clone(),
             top_runs,
-        }
+        })
     }
 }

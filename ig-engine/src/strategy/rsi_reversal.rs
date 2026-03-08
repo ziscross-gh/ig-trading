@@ -17,6 +17,7 @@ pub struct RSIReversalStrategy {
     pub detect_divergence: bool,
     pub atr_sl_multiplier: f64,
     pub atr_tp_multiplier: f64,
+    pub trailing_stop_pips: Option<f64>,
     // State for divergence
     last_rsi_low: Option<f64>,
     last_price_low: Option<f64>,
@@ -25,6 +26,7 @@ pub struct RSIReversalStrategy {
 }
 
 impl RSIReversalStrategy {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         period: usize,
         overbought: f64,
@@ -33,6 +35,7 @@ impl RSIReversalStrategy {
         detect_divergence: bool,
         atr_sl_multiplier: f64,
         atr_tp_multiplier: f64,
+        trailing_stop_pips: Option<f64>,
     ) -> Self {
         Self {
             period,
@@ -42,6 +45,7 @@ impl RSIReversalStrategy {
             detect_divergence,
             atr_sl_multiplier,
             atr_tp_multiplier,
+            trailing_stop_pips,
             last_rsi_low: None,
             last_price_low: None,
             last_rsi_high: None,
@@ -52,7 +56,7 @@ impl RSIReversalStrategy {
 
 impl Default for RSIReversalStrategy {
     fn default() -> Self {
-        Self::new(14, 70.0, 30.0, 1.0, true, 1.5, 3.0)
+        Self::new(14, 70.0, 30.0, 1.0, true, 1.5, 3.0, Some(12.0))
     }
 }
 
@@ -62,31 +66,23 @@ impl RSIReversalStrategy {
 
         // RSI extremeness check
         if let Some(rsi) = indicators.rsi {
-            if is_buy && rsi < 20.0 {
+            if (is_buy && rsi < 20.0) || (!is_buy && rsi > 80.0) {
                 strength += 2.0;
-            } else if !is_buy && rsi > 80.0 {
-                strength += 2.0;
-            } else if is_buy && rsi < 30.0 {
-                strength += 1.0;
-            } else if !is_buy && rsi > 70.0 {
+            } else if (is_buy && rsi < 30.0) || (!is_buy && rsi > 70.0) {
                 strength += 1.0;
             }
         }
 
         // Bollinger Band confirmation
         if let Some(percent_b) = indicators.bollinger_percent_b {
-            if is_buy && percent_b < 0.1 {
-                strength += 1.0;
-            } else if !is_buy && percent_b > 0.9 {
+            if (is_buy && percent_b < 0.1) || (!is_buy && percent_b > 0.9) {
                 strength += 1.0;
             }
         }
 
         // Stochastic confirmation
         if let Some(stoch_k) = indicators.stochastic_k {
-            if is_buy && stoch_k < 20.0 {
-                strength += 1.0;
-            } else if !is_buy && stoch_k > 80.0 {
+            if (is_buy && stoch_k < 20.0) || (!is_buy && stoch_k > 80.0) {
                 strength += 1.0;
             }
         }
@@ -99,10 +95,10 @@ impl RSIReversalStrategy {
         direction: Direction,
         price: f64,
         indicators: &IndicatorSnapshot,
-    ) -> (f64, f64) {
+    ) -> (f64, f64, Option<f64>) {
         let atr = indicators.atr.unwrap_or(price * 0.02);
 
-        match direction {
+        let (stop_loss, take_profit) = match direction {
             Direction::Buy => {
                 let stop_loss = price - (self.atr_sl_multiplier * atr);
                 let take_profit = price + (self.atr_tp_multiplier * atr);
@@ -113,13 +109,20 @@ impl RSIReversalStrategy {
                 let take_profit = price - (self.atr_tp_multiplier * atr);
                 (stop_loss, take_profit)
             }
-        }
+        };
+
+        let trailing_stop_distance = self.trailing_stop_pips.map(|pips| {
+            let pip_scale = if price > 50.0 { 0.01 } else { 0.0001 };
+            pips * pip_scale
+        });
+
+        (stop_loss, take_profit, trailing_stop_distance)
     }
 
     fn generate_buy_signal(&self, epic: &str, price: f64, indicators: &IndicatorSnapshot) -> Signal {
         let rsi = indicators.rsi.unwrap_or(0.0);
         let strength = self.calculate_signal_strength(indicators, true);
-        let (stop_loss, take_profit) = self.calculate_stops_and_targets(Direction::Buy, price, indicators);
+        let (stop_loss, take_profit, trailing_stop_distance) = self.calculate_stops_and_targets(Direction::Buy, price, indicators);
 
         Signal {
             id: Uuid::new_v4().to_string(),
@@ -131,6 +134,7 @@ impl RSIReversalStrategy {
             price,
             stop_loss,
             take_profit,
+            trailing_stop_distance,
             timestamp: Utc::now(),
         }
     }
@@ -138,7 +142,7 @@ impl RSIReversalStrategy {
     fn generate_sell_signal(&self, epic: &str, price: f64, indicators: &IndicatorSnapshot) -> Signal {
         let rsi = indicators.rsi.unwrap_or(0.0);
         let strength = self.calculate_signal_strength(indicators, false);
-        let (stop_loss, take_profit) = self.calculate_stops_and_targets(Direction::Sell, price, indicators);
+        let (stop_loss, take_profit, trailing_stop_distance) = self.calculate_stops_and_targets(Direction::Sell, price, indicators);
 
         Signal {
             id: Uuid::new_v4().to_string(),
@@ -150,6 +154,7 @@ impl RSIReversalStrategy {
             price,
             stop_loss,
             take_profit,
+            trailing_stop_distance,
             timestamp: Utc::now(),
         }
     }
@@ -217,13 +222,13 @@ mod tests {
 
     #[test]
     fn test_rsi_reversal_creation() {
-        let strategy = RSIReversalStrategy::new(14, 70.0, 30.0, 1.0, true, 2.0, 3.0);
+        let strategy = RSIReversalStrategy::new(14, 70.0, 30.0, 1.0, true, 2.0, 3.0, Some(12.0));
         assert_eq!(strategy.name(), "RSI_Reversal");
     }
 
     #[test]
     fn test_warmup_period() {
-        let strategy = RSIReversalStrategy::new(14, 70.0, 30.0, 1.0, true, 2.0, 3.0);
+        let strategy = RSIReversalStrategy::new(14, 70.0, 30.0, 1.0, true, 2.0, 3.0, Some(12.0));
         assert_eq!(strategy.warmup_period(), 64);
     }
 }

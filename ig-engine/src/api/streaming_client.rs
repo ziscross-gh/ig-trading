@@ -22,7 +22,7 @@ pub enum StateUpdate {
 
 /// IG OPU (Open Position Update) — subset of fields we care about
 /// Arrives as JSON string inside the TRADE subscription's OPU field.
-struct OPU {
+struct Opu {
     deal_id: String,
     epic: String,
     direction: Direction,
@@ -476,7 +476,7 @@ pub fn parse_market_state_from_update(update: &ItemUpdate) -> Option<MarketState
 }
 
 /// Helper to parse the JSON string payload of an OPU update
-fn parse_opu(payload: &str) -> Option<OPU> {
+fn parse_opu(payload: &str) -> Option<Opu> {
     let json: serde_json::Value = serde_json::from_str(payload).ok()?;
     
     let deal_id = json.get("dealId")?.as_str()?.to_string();
@@ -497,7 +497,7 @@ fn parse_opu(payload: &str) -> Option<OPU> {
     // We try 'profitAndLoss' first, otherwise default to 0.0 (the server doesn't always send the final PnL strictly in the OPU payload; in production you'd reconcile this with account/trade history).
     let pnl = json.get("profitAndLoss").and_then(|v| v.as_f64()).unwrap_or(0.0);
     
-    Some(OPU {
+    Some(Opu {
         deal_id,
         epic,
         direction,

@@ -15,6 +15,8 @@ pub struct EngineEvent {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", content = "data")]
+#[allow(clippy::large_enum_variant)]
+// TODO: box large variants (IndicatorUpdate) when IndicatorSnapshot size is a concern
 pub enum EventVariant {
     StatusChange {
         old: String,

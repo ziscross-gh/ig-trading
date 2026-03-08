@@ -105,7 +105,7 @@ pub fn kelly_fraction(win_rate: f64, avg_win: f64, avg_loss: f64) -> f64 {
     let kelly = (b * win_rate - loss_rate) / b;
 
     // Ensure kelly is between 0 and 1
-    kelly.max(0.0).min(1.0)
+    kelly.clamp(0.0, 1.0)
 }
 
 /// Apply sizing method to raw position size

@@ -17,23 +17,25 @@ pub struct BollingerStrategy {
     pub atr_sl_multiplier: f64,
     #[allow(dead_code)]
     pub atr_tp_multiplier: f64, // reserved for future ATR-based TP; currently uses middle-band TP
+    pub trailing_stop_pips: Option<f64>,
 }
 
 impl BollingerStrategy {
-    pub fn new(period: usize, std_dev: f64, weight: f64, atr_sl_multiplier: f64, atr_tp_multiplier: f64) -> Self {
+    pub fn new(period: usize, std_dev: f64, weight: f64, atr_sl_multiplier: f64, atr_tp_multiplier: f64, trailing_stop_pips: Option<f64>) -> Self {
         Self {
             period,
             std_dev,
             weight,
             atr_sl_multiplier,
             atr_tp_multiplier,
+            trailing_stop_pips,
         }
     }
 }
 
 impl Default for BollingerStrategy {
     fn default() -> Self {
-        Self::new(20, 2.0, 1.0, 1.5, 3.0)
+        Self::new(20, 2.0, 1.0, 1.5, 3.0, Some(10.0))
     }
 }
 
@@ -43,18 +45,14 @@ impl BollingerStrategy {
 
         // RSI confirmation
         if let Some(rsi) = indicators.rsi {
-            if is_buy && rsi < 35.0 {
-                strength += 1.0;
-            } else if !is_buy && rsi > 65.0 {
+            if (is_buy && rsi < 35.0) || (!is_buy && rsi > 65.0) {
                 strength += 1.0;
             }
         }
 
         // Stochastic confirmation
         if let Some(stoch_k) = indicators.stochastic_k {
-            if is_buy && stoch_k < 20.0 {
-                strength += 1.0;
-            } else if !is_buy && stoch_k > 80.0 {
+            if (is_buy && stoch_k < 20.0) || (!is_buy && stoch_k > 80.0) {
                 strength += 1.0;
             }
         }
@@ -76,10 +74,10 @@ impl BollingerStrategy {
         price: f64,
         indicators: &IndicatorSnapshot,
         middle_band: f64,
-    ) -> (f64, f64) {
+    ) -> (f64, f64, Option<f64>) {
         let atr = indicators.atr.unwrap_or(price * 0.02);
 
-        match direction {
+        let (stop_loss, take_profit) = match direction {
             Direction::Buy => {
                 let stop_loss = price - (self.atr_sl_multiplier * atr);
                 // Target is middle band for mean reversion
@@ -91,7 +89,14 @@ impl BollingerStrategy {
                 let take_profit = middle_band;
                 (stop_loss, take_profit)
             }
-        }
+        };
+
+        let trailing_stop_distance = self.trailing_stop_pips.map(|pips| {
+            let pip_scale = if price > 50.0 { 0.01 } else { 0.0001 };
+            pips * pip_scale
+        });
+
+        (stop_loss, take_profit, trailing_stop_distance)
     }
 }
 
@@ -117,7 +122,7 @@ impl Strategy for BollingerStrategy {
                 strength += 0.5;
             }
 
-            let (stop_loss, take_profit) = self.calculate_stops_and_targets(
+            let (stop_loss, take_profit, trailing_stop_distance) = self.calculate_stops_and_targets(
                 Direction::Buy,
                 price,
                 indicators,
@@ -139,6 +144,7 @@ impl Strategy for BollingerStrategy {
                 price,
                 stop_loss,
                 take_profit,
+                trailing_stop_distance,
                 timestamp: Utc::now(),
             });
         }
@@ -152,7 +158,7 @@ impl Strategy for BollingerStrategy {
                 strength += 0.5;
             }
 
-            let (stop_loss, take_profit) = self.calculate_stops_and_targets(
+            let (stop_loss, take_profit, trailing_stop_distance) = self.calculate_stops_and_targets(
                 Direction::Sell,
                 price,
                 indicators,
@@ -174,6 +180,7 @@ impl Strategy for BollingerStrategy {
                 price,
                 stop_loss,
                 take_profit,
+                trailing_stop_distance,
                 timestamp: Utc::now(),
             });
         }
@@ -192,7 +199,7 @@ mod tests {
 
     #[test]
     fn test_bollinger_creation() {
-        let strategy = BollingerStrategy::new(20, 2.0, 1.0, 1.5, 2.0);
+        let strategy = BollingerStrategy::new(20, 2.0, 1.0, 1.5, 2.0, Some(10.0));
         assert_eq!(strategy.name(), "Bollinger_Bands");
         assert_eq!(strategy.period, 20);
         assert_eq!(strategy.std_dev, 2.0);
@@ -200,13 +207,13 @@ mod tests {
 
     #[test]
     fn test_warmup_period() {
-        let strategy = BollingerStrategy::new(20, 2.0, 1.0, 1.5, 2.0);
+        let strategy = BollingerStrategy::new(20, 2.0, 1.0, 1.5, 2.0, Some(10.0));
         assert_eq!(strategy.warmup_period(), 70); // 20 + 50
     }
 
     #[test]
     fn test_squeeze_detection() {
-        let strategy = BollingerStrategy::new(20, 2.0, 1.0, 1.5, 2.0);
+        let strategy = BollingerStrategy::new(20, 2.0, 1.0, 1.5, 2.0, Some(10.0));
 
         let mut indicators = IndicatorSnapshot {
             bollinger_bandwidth: Some(0.005),

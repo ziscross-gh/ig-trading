@@ -173,14 +173,14 @@ impl AdaptiveWeightManager {
     /// Compute raw multiplier from win rate and profit factor.
     ///
     /// Win rate contribution (70% of signal):
-    ///   > 60% → boost (1.0–1.3)
-    ///   40–60% → neutral (0.8–1.0)
-    ///   < 40% → penalise (0.5–0.8)
+    ///   - `>= 60%` → boost (1.0–1.3)
+    ///   - `40–60%` → neutral (0.8–1.0)
+    ///   - `< 40%`  → penalise (0.5–0.8)
     ///
     /// Profit factor contribution (30% of signal):
-    ///   > 1.5 → boost
-    ///   0.8–1.5 → neutral
-    ///   < 0.8 → penalise
+    ///   - `>= 1.5` → boost
+    ///   - `0.8–1.5` → neutral
+    ///   - `< 0.8`  → penalise
     fn compute_multiplier(win_rate: f64, profit_factor: f64) -> f64 {
         let wr_score = if win_rate >= 0.6 {
             1.0 + (win_rate - 0.6) * 0.75  // 0.6→1.0, 0.8→1.15, 1.0→1.3

@@ -14,6 +14,8 @@ use crate::ipc::events::EngineEvent;
 use crate::notifications::telegram::TelegramNotifier;
 
 /// Analyze one or more markets and potentially execute trades
+#[allow(clippy::too_many_arguments)]
+// TODO: bundle args into an AnalysisContext struct to reduce parameter count
 pub async fn analyze_market(
     state: &Arc<RwLock<EngineState>>,
     client: &mut IGRestClient,
@@ -148,6 +150,17 @@ pub async fn analyze_market(
                 }
             }
 
+            // ── ML Regime signal multipliers (Phase 8.4) ──────────────────────────
+            // Read the latest regime from data/regime_latest.json (written hourly by
+            // scripts/run_regime_classifier.py). If fresh, scale signal strengths so
+            // the dominant strategy family gets a consensus boost and the other is muted.
+            // Returns None silently when the file is missing or stale — no-op in that case.
+            if let Some(regime) = crate::regime::read_regime(epic.as_str()) {
+                crate::regime::apply_regime_multipliers(&mut signals, &regime);
+            } else {
+                debug!("No fresh regime data for {} — using unweighted signals", epic);
+            }
+
             if let Some(ensemble_signal) = ensemble.vote(&signals) {
                 info!(
                     "Ensemble consensus signal: {} {} strength={}",
@@ -191,6 +204,7 @@ pub async fn analyze_market(
                         ensemble_signal.price,
                         ensemble_signal.stop_loss,
                         ensemble_signal.take_profit,
+                        ensemble_signal.trailing_stop_distance,
                         &account_info,
                         &open_positions,
                         &ensemble_signal.strategy,
@@ -321,6 +335,8 @@ pub async fn analyze_market(
 }
 
 /// Manually trigger a trade for a specific epic and direction
+#[allow(clippy::too_many_arguments)]
+// TODO: bundle args into an AnalysisContext struct to reduce parameter count
 pub async fn execute_manual_trigger(
     state: &Arc<RwLock<EngineState>>,
     client: &mut IGRestClient,
@@ -409,6 +425,7 @@ pub async fn execute_manual_trigger(
         price,
         stop_loss,
         take_profit,
+        None,
         &account_info,
         &open_positions,
         "ManualTrigger",
@@ -584,6 +601,7 @@ fn read_gold_sentiment(
         price:      mid_price,
         stop_loss,
         take_profit,
+        trailing_stop_distance: None,
         timestamp:  Utc::now(),
     })
 }
