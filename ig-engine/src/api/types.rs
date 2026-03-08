@@ -146,6 +146,7 @@ pub struct IGTradeRequest {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub trailing_stop: Option<bool>,
     pub force_open: Option<bool>,
+    pub expiry: String,
 }
 
 /// Deal status enumeration
@@ -165,7 +166,7 @@ pub enum DealStatus {
 #[serde(rename_all = "camelCase")]
 pub struct IGTradeResponse {
     pub deal_reference: String,
-    pub deal_status: String,
+    pub deal_status: Option<String>,
     pub reason: Option<String>,
 }
 
@@ -186,8 +187,8 @@ pub struct IGConfirmResponse {
     pub deal_status: String,
     pub epic: String,
     pub direction: String,
-    pub size: f64,
-    pub level: f64,
+    pub size: Option<f64>,
+    pub level: Option<f64>,
     pub stop_level: Option<f64>,
     pub stop_distance: Option<f64>,
     pub limit_level: Option<f64>,

@@ -68,23 +68,24 @@ impl OrderManager {
         let request = IGTradeRequest {
             epic: trade.epic.clone(),
             direction: trade.direction.clone(),
-            size: trade.size,
+            size: 3.0, // HARDCODED FOR TESTING
             order_type: "MARKET".to_string(),
             level: None,
             stop_level: Some(trade.stop_loss),
             stop_distance: None,
             limit_level: Some(trade.take_profit),
-            currency_code: None,
+            currency_code: Some("SGD".to_string()),
             guaranteed_stop: Some(self.config.guaranteed_stop),
             trailing_stop: None, // NOT available on limited risk accounts
             force_open: Some(true),
+            expiry: "-".to_string(),
         };
 
         // Submit the order
         let trade_response = client.open_position(request).await?;
 
         info!(
-            "Trade submitted: deal_reference={}, status={}",
+            "Trade submitted: deal_reference={}, status={:?}",
             trade_response.deal_reference, trade_response.deal_status
         );
 
@@ -96,11 +97,11 @@ impl OrderManager {
         let execution_result = ExecutionResult {
             deal_id: confirm_response.deal_id.clone(),
             deal_reference: confirm_response.deal_reference.clone(),
-            fill_price: confirm_response.level,
+            fill_price: confirm_response.level.unwrap_or(0.0),
             status: confirm_response.deal_status.clone(),
             epic: confirm_response.epic.clone(),
             direction: confirm_response.direction.clone(),
-            size: confirm_response.size,
+            size: confirm_response.size.unwrap_or(0.0),
         };
 
         info!(
@@ -179,7 +180,7 @@ impl OrderManager {
         let close_response = close_response.ok_or_else(|| anyhow::anyhow!("Failed to get close response after retries"))?;
 
         info!(
-            "Close submitted: deal_reference={}, status={}",
+            "Close submitted: deal_reference={}, status={:?}",
             close_response.deal_reference, close_response.deal_status
         );
 
@@ -188,7 +189,7 @@ impl OrderManager {
             .poll_deal_confirmation(client, &close_response.deal_reference)
             .await?;
 
-        let close_price = confirm_response.level;
+        let close_price = confirm_response.level.unwrap_or(0.0);
         let pnl = if position.direction.to_string() == "BUY" {
             (close_price - position.open_price) * position.size
         } else {

@@ -110,10 +110,17 @@ pub async fn run(
         let epics_clone = config.markets.epics.clone();
         let acct_id_clone = acct_id.clone();
         let state_clone = state.clone();
-        let event_tx_clone = event_tx.clone();
         let mut spawn_event_rx = event_tx.subscribe();
         let streaming_shutdown = Arc::new(tokio::sync::Notify::new());
         let loop_shutdown = streaming_shutdown.clone();
+
+        // Spawn the state-update worker ONCE — it outlives all reconnect attempts.
+        // Passing clones of update_tx into each new IGStreamingClient means the
+        // single worker task processes all incoming ticks regardless of reconnects.
+        let update_tx = crate::api::streaming_client::spawn_state_worker(
+            state.clone(),
+            event_tx.clone(),
+        );
 
         tokio::spawn(async move {
             loop {
@@ -141,12 +148,12 @@ pub async fn run(
                             return;
                         }
 
-                        match IGStreamingClient::new(&ls_endpoint, &acct_id_clone, &cst_token, &sec_token, state_clone.clone(), event_tx_clone.clone()) {
+                        match IGStreamingClient::new(&ls_endpoint, &acct_id_clone, &cst_token, &sec_token, update_tx.clone()) {
                             Ok(mut streaming) => {
                                 streaming.subscribe_prices(&epics_clone);
                                 streaming.subscribe_account(&acct_id_clone);
                                 streaming.subscribe_trades(&acct_id_clone);
-                                
+
                                 // Share the shutdown notify with the client
                                 streaming.set_shutdown_notify(loop_shutdown.clone());
 
@@ -160,7 +167,7 @@ pub async fn run(
                                 error!("Failed to create Lightstreamer client: {}. Retrying in 5s...", e);
                             }
                         }
-                        
+
                         tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
                     } => {}
                 }
@@ -226,31 +233,53 @@ pub async fn run(
         }
     }
 
+    if let Some(mtf_cfg) = &config.strategies.multi_timeframe {
+        if mtf_cfg.enabled {
+            strategies.push(Box::new(crate::strategy::multi_timeframe::MultiTimeframeStrategy::new(
+                mtf_cfg.trend_tf.clone(),
+                mtf_cfg.signal_tf.clone(),
+                mtf_cfg.entry_tf.clone(),
+                mtf_cfg.weight,
+                config.strategies.default_atr_sl_multiplier,
+                config.strategies.default_atr_tp_multiplier,
+            )));
+            info!("Multi-Timeframe strategy enabled");
+        }
+    }
+
     let mut ensemble = EnsembleVoter::new(
         config.strategies.min_consensus,
         config.strategies.min_avg_strength,
     );
 
+    // Strategy weight keys MUST match the string returned by each strategy's name() method.
     if let Some(ma_cfg) = &config.strategies.ma_crossover {
         if ma_cfg.enabled {
-            ensemble.set_strategy_weight("MACrossover".to_string(), ma_cfg.weight);
+            ensemble.set_strategy_weight("MA_Crossover".to_string(), ma_cfg.weight);
         }
     }
     if let Some(rsi_cfg) = &config.strategies.rsi_divergence {
         if rsi_cfg.enabled {
-            ensemble.set_strategy_weight("RSIReversal".to_string(), rsi_cfg.weight);
+            ensemble.set_strategy_weight("RSI_Reversal".to_string(), rsi_cfg.weight);
         }
     }
     if let Some(macd_cfg) = &config.strategies.macd_momentum {
         if macd_cfg.enabled {
-            ensemble.set_strategy_weight("MACDMomentum".to_string(), macd_cfg.weight);
+            ensemble.set_strategy_weight("MACD_Momentum".to_string(), macd_cfg.weight);
         }
     }
     if let Some(bollinger_cfg) = &config.strategies.bollinger_reversion {
         if bollinger_cfg.enabled {
-            ensemble.set_strategy_weight("Bollinger".to_string(), bollinger_cfg.weight);
+            ensemble.set_strategy_weight("Bollinger_Bands".to_string(), bollinger_cfg.weight);
         }
     }
+    if let Some(mtf_cfg) = &config.strategies.multi_timeframe {
+        if mtf_cfg.enabled {
+            ensemble.set_strategy_weight("Multi_Timeframe".to_string(), mtf_cfg.weight);
+        }
+    }
+    // Gold sentiment signal — starts at weight 1.0; adaptive manager may tune over time
+    ensemble.set_strategy_weight("Gold_Sentiment".to_string(), 1.0);
 
     info!("Ensemble voter configured with {} strategies", strategies.len());
  
@@ -341,9 +370,11 @@ pub async fn run(
                 let mut s = state.write().await;
                 s.markets.history.warm_up(epic, "HOUR", candles.clone());
                 
-                if let Some(indicator_set) = s.markets.indicators.get_mut(epic) {
-                    for candle in &candles {
-                        indicator_set.update(candle);
+                if let Some(indicator_set_map) = s.markets.indicators.get_mut(epic) {
+                    if let Some(indicator_set) = indicator_set_map.get_mut("HOUR") {
+                        for candle in &candles {
+                            indicator_set.update(candle);
+                        }
                     }
                     info!("  ✓ {} warmed up — {} candles loaded", epic, candles.len());
                 }
@@ -360,8 +391,11 @@ pub async fn run(
     let mut daily_reset_interval = interval(Duration::from_secs(60));
     let mut heartbeat_interval = interval(Duration::from_secs(config.general.heartbeat_interval_secs));
     let mut daily_summary_interval = interval(Duration::from_secs(60));
-    let mut candle_refresh_interval = interval(Duration::from_secs(15 * 60));
     let mut last_summary_date = String::new();
+    // Track the most recent bar-start timestamp per epic that we ran analysis on.
+    // Strategy evaluation only runs when indicators have actually advanced (new bar closed),
+    // avoiding hundreds of redundant evaluations on intra-bar ticks.
+    let mut last_analyzed_bar_ts: HashMap<String, i64> = HashMap::new();
 
     info!("Engine event loop started");
 
@@ -381,6 +415,24 @@ pub async fn run(
                 match event.event {
                     crate::ipc::events::EventVariant::MarketUpdate { state: market_state } => {
                         let epic = market_state.epic.clone();
+
+                        // Only run full strategy analysis when a new bar has closed for this epic.
+                        // The bar_ts advances once per hour; intra-bar ticks carry no new indicator data.
+                        let current_bar_ts = {
+                            let s = state.read().await;
+                            s.markets.bar_accumulator.current_bar_ts(&epic)
+                        };
+                        let should_analyze = match current_bar_ts {
+                            Some(ts) => last_analyzed_bar_ts.get(&epic).copied() != Some(ts),
+                            None => false, // No bar yet — wait for first bar close
+                        };
+                        if !should_analyze {
+                            continue;
+                        }
+                        if let Some(ts) = current_bar_ts {
+                            last_analyzed_bar_ts.insert(epic.clone(), ts);
+                        }
+
                         if let Err(e) = analyze_market(
                             &state,
                             &mut client,
@@ -399,6 +451,21 @@ pub async fn run(
                     crate::ipc::events::EventVariant::Shutdown { reason } => {
                         info!("Shutdown signal received: {}. Terminating event loop...", reason);
                         break;
+                    }
+                    crate::ipc::events::EventVariant::TriggerTrade { epic, direction } => {
+                        if let Err(e) = crate::engine::event_loop::analysis::execute_manual_trigger(
+                            &state,
+                            &mut client,
+                            &mut risk_manager,
+                            &order_manager,
+                            &event_tx,
+                            &config,
+                            &telegram,
+                            epic,
+                            direction,
+                        ).await {
+                            warn!("Manual trigger failed: {}", e);
+                        }
                     }
                     _ => {}
                 }
@@ -441,7 +508,9 @@ pub async fn run(
             _ = daily_summary_interval.tick() => {
                 let now_sgt = {
                     let utc = Utc::now();
-                    let sgt_offset = chrono::FixedOffset::east_opt(8 * 3600).unwrap();
+                    // SAFETY: 8 * 3600 = 28800, always within the valid range (-86399..=86399)
+                let sgt_offset = chrono::FixedOffset::east_opt(8 * 3600)
+                    .expect("SGT offset 28800 is always valid");
                     utc.with_timezone(&sgt_offset)
                 };
                 let today = now_sgt.format("%Y-%m-%d").to_string();
@@ -472,48 +541,6 @@ pub async fn run(
                 let _ = event_tx.send(EngineEvent::heartbeat(uptime_secs, positions_count));
             }
 
-            _ = candle_refresh_interval.tick() => {
-                debug!("Running 15-minute candle refresh for {} markets", config.markets.epics.len());
-                let epics = config.markets.epics.clone();
-                for epic in epics {
-                    match client.get_price_history(&epic, "HOUR", 250).await {
-                        Ok(price_response) => {
-                            let candles: Vec<Candle> = price_response
-                                .prices
-                                .iter()
-                                .map(|p| {
-                                    let timestamp = chrono::NaiveDateTime::parse_from_str(
-                                        &p.snapshot_time, 
-                                        "%Y/%m/%d %H:%M:%S"
-                                    ).map(|dt| dt.and_utc().timestamp())
-                                    .unwrap_or_else(|_| Utc::now().timestamp());
-
-                                    Candle {
-                                        timestamp,
-                                        open: p.open_price.bid,
-                                        high: p.high_price.bid,
-                                        low: p.low_price.bid,
-                                        close: p.close_price.bid,
-                                        volume: p.last_traded_volume.unwrap_or(0.0) as u64,
-                                    }
-                                })
-                                .collect();
-
-                            let mut s = state.write().await;
-                            s.markets.history.warm_up(&epic, "HOUR", candles.clone());
-                            
-                            let mut new_indicator_set = crate::indicators::IndicatorSet::default_config();
-                            for candle in &candles {
-                                new_indicator_set.update(candle);
-                            }
-                            s.markets.indicators.insert(epic.clone(), new_indicator_set);
-                        }
-                        Err(e) => {
-                            warn!("Failed to refresh price history for {}: {}", epic, e);
-                        }
-                    }
-                }
-            }
         }
     }
 

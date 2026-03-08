@@ -56,6 +56,13 @@ async fn main() -> Result<()> {
     info!("Configuration loaded from {}", config_path);
     info!("Mode: {:?}, Markets: {}", config.general.mode, config.markets.epics.len());
 
+    // Write PID file so weekly_reoptimise.sh can send SIGUSR1 for hot-reload
+    let pid = std::process::id();
+    match std::fs::write("ig-engine.pid", pid.to_string()) {
+        Ok(_)  => info!("PID {} written to ig-engine.pid", pid),
+        Err(e) => tracing::warn!("Could not write ig-engine.pid: {}", e),
+    }
+
     // Create shared state
     let state = Arc::new(RwLock::new(EngineState::new(config.clone())));
 
@@ -72,6 +79,43 @@ async fn main() -> Result<()> {
             error!("API server error: {}", e);
         }
     });
+
+    // Spawn SIGUSR1 handler — hot-reloads non-risk strategy config in place.
+    // Triggered by weekly_reoptimise.sh after auto-applying improved parameters.
+    // Only updates instrument_overrides and consensus thresholds; risk params
+    // require a full restart and are never changed by this handler.
+    #[cfg(unix)]
+    {
+        let state_reload      = state.clone();
+        let config_path_reload = config_path.clone();
+        tokio::spawn(async move {
+            use tokio::signal::unix::{signal, SignalKind};
+            let mut usr1 = match signal(SignalKind::user_defined1()) {
+                Ok(s)  => s,
+                Err(e) => {
+                    tracing::error!("Failed to register SIGUSR1 handler: {}", e);
+                    return;
+                }
+            };
+            loop {
+                usr1.recv().await;
+                info!("SIGUSR1 received — reloading strategy configuration...");
+                match EngineConfig::load(&config_path_reload) {
+                    Ok(new_config) => {
+                        let mut s = state_reload.write().await;
+                        s.reload_strategy_config(new_config.strategies);
+                        info!("Strategy config hot-reloaded successfully via SIGUSR1");
+                    }
+                    Err(e) => {
+                        tracing::error!(
+                            "Config reload failed — keeping existing config: {}",
+                            e
+                        );
+                    }
+                }
+            }
+        });
+    }
 
     // Run the main engine loop with graceful shutdown handling
     info!("Starting engine event loop...");

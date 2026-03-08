@@ -38,13 +38,71 @@ max_weekly_drawdown_pct = 5.0     # Weekly circuit breaker
 max_open_positions = 2            # Focus: 2 high-conviction positions
 max_correlated_positions = 1      # Max positions in correlated pairs
 max_margin_usage_pct = 20.0       # Never use more than 20% margin
-min_risk_reward = 2.0             # Minimum 2:1 risk/reward
+min_risk_reward = 1.0             # Minimum 1:1 risk/reward
 sizing_method = "quarter_kelly"   # Quarter-Kelly: what serious funds use
 max_daily_trades = 20
 
 limited_risk_account = true
-use_trailing_stop = false
+use_trailing_stop = true
 allowed_sessions = ["Asia", "London", "UsOverlap"]
+trading_hours_utc = [0, 23]
+
+# ── Macro Event Blackout Calendar (Phase 8.5) ──────────────────────────────────
+# Per-event blackout windows supersede the legacy flat news_blackout_windows_utc.
+# blackout_mins = minutes blocked BEFORE and AFTER the event time (UTC).
+# Omit blackout_mins to fall back to the global news_blackout_mins default.
+
+# Legacy flat blackout (used only when macro_events array is empty)
+news_blackout_windows_utc = [[8, 30], [13, 30], [15, 0]]
+news_blackout_mins = 15
+
+[[risk.macro_events]]
+hour = 0
+minute = 30
+label = "AU CPI / Trade Balance"
+blackout_mins = 20
+
+[[risk.macro_events]]
+hour = 7
+minute = 0
+label = "EUR CPI / German Ifo / ZEW"
+blackout_mins = 20
+
+[[risk.macro_events]]
+hour = 8
+minute = 30
+label = "London Open / EU PMI / UK data"
+blackout_mins = 20
+
+[[risk.macro_events]]
+hour = 9
+minute = 0
+label = "ECB / Bank of England rate decisions"
+blackout_mins = 45
+
+[[risk.macro_events]]
+hour = 13
+minute = 30
+label = "NFP / CPI / Core PCE / Retail Sales / GDP"
+blackout_mins = 30
+
+[[risk.macro_events]]
+hour = 15
+minute = 0
+label = "US Open / ISM PMI / Factory Orders"
+blackout_mins = 20
+
+[[risk.macro_events]]
+hour = 19
+minute = 0
+label = "FOMC Rate Decision / Fed Statement"
+blackout_mins = 60
+
+[[risk.macro_events]]
+hour = 19
+minute = 30
+label = "FOMC Press Conference"
+blackout_mins = 45
 
 # INSTRUMENT SPECIFICATIONS (Externalized from code)
 [risk.instrument_specs."CS.D.EURUSD.CSD.IP"]
@@ -57,6 +115,17 @@ contract_size = 1.0
 margin_requirement_pct = 5.0
 size_decimals = 2
 min_guaranteed_stop_pips = 5.0
+
+[risk.instrument_specs."CS.D.USDJPY.CSD.IP"]
+epic = "CS.D.USDJPY.CSD.IP"
+min_deal_size = 0.02
+max_deal_size = 100.0
+pip_value = 0.81
+pip_scale = 0.01
+contract_size = 1.0
+margin_requirement_pct = 5.0
+size_decimals = 2
+min_guaranteed_stop_pips = 7.0
 
 [risk.instrument_specs."CS.D.CFIGOLD.CFI.IP"]
 epic = "CS.D.CFIGOLD.CFI.IP"
@@ -125,13 +194,30 @@ atr_sl_multiplier = 1.5
 atr_tp_multiplier = 2.5
 trailing_stop_pips = 10.0
 
+# ── Per-instrument strategy overrides ────────────────────────────────────────
+# Gold trends strongly — ADX range filter keeps RSI/Bollinger (mean-reversion)
+# from firing when Gold is trending hard. Gold-specific SL/TP live in risk.instrument_specs.
+# FX pairs range more — same ADX range filter prevents mean-reversion entries
+# during strong trend phases (e.g., USD rally, JPY intervention moves).
+[strategies.instrument_overrides."CS.D.CFIGOLD.CFI.IP"]
+adx_range_filter = true       # Skip RSI/Bollinger when ADX > adx_range_max
+adx_range_max    = 25.0       # Trending threshold (Gold often >25 in bull runs)
+
+[strategies.instrument_overrides."CS.D.EURUSD.CSD.IP"]
+adx_range_filter = true
+adx_range_max    = 25.0
+
+[strategies.instrument_overrides."CS.D.USDJPY.CSD.IP"]
+adx_range_filter = true
+adx_range_max    = 25.0
+
 # Multi-timeframe confirmation
 [strategies.multi_timeframe]
 enabled = true
 weight = 1.2
-trend_tf = "4H"
-signal_tf = "1H"
-entry_tf = "15MIN"
+trend_tf = "HOUR_4"
+signal_tf = "HOUR"
+entry_tf = "MINUTE_15"
 
 # ============================================
 # TRADING HOURS (UTC)

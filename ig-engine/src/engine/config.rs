@@ -55,6 +55,23 @@ pub struct StrategiesConfig {
     pub multi_timeframe: Option<MultiTimeframeConfig>,
     pub default_atr_sl_multiplier: f64,
     pub default_atr_tp_multiplier: f64,
+    /// Per-instrument strategy overrides keyed by IG epic string.
+    /// Allows Gold and FX pairs to use different strategy filtering and risk params.
+    #[serde(default)]
+    pub instrument_overrides: HashMap<String, InstrumentStrategyOverride>,
+}
+
+/// Per-instrument strategy configuration.
+/// Gold trends strongly → ADX range filter keeps mean-reversion signals rare.
+/// FX pairs range more → ADX range filter prevents false mean-reversion in trends.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct InstrumentStrategyOverride {
+    /// Skip RSI_Reversal and Bollinger_Bands signals when ADX > adx_range_max.
+    /// Prevents mean-reversion entries in strongly trending markets.
+    #[serde(default)]
+    pub adx_range_filter: bool,
+    /// ADX threshold above which mean-reversion strategies are suppressed (default 25.0).
+    pub adx_range_max: Option<f64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -203,6 +220,9 @@ impl Default for EngineConfig {
                     crate::engine::state::Session::London,
                     crate::engine::state::Session::UsOverlap,
                 ],
+                news_blackout_windows_utc: vec![(8, 30), (13, 30), (15, 0)],
+                news_blackout_mins: 15,
+                macro_events: vec![], // default.toml populates these via TOML; overridden on load
             },
             strategies: StrategiesConfig {
                 min_consensus: 2,
@@ -247,6 +267,21 @@ impl Default for EngineConfig {
                     atr_tp_multiplier: None,
                 }),
                 multi_timeframe: None,
+                instrument_overrides: {
+                    let mut m = HashMap::new();
+                    // Gold and FX all use ADX range filter (suppress mean-reversion in trends)
+                    for epic in &[
+                        "CS.D.CFIGOLD.CFI.IP",
+                        "CS.D.EURUSD.CSD.IP",
+                        "CS.D.USDJPY.CSD.IP",
+                    ] {
+                        m.insert(epic.to_string(), InstrumentStrategyOverride {
+                            adx_range_filter: true,
+                            adx_range_max: Some(25.0),
+                        });
+                    }
+                    m
+                },
             },
             trading_hours: TradingHoursConfig {
                 start: "07:00".to_string(),

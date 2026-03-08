@@ -102,6 +102,28 @@ pub struct CircuitBreakerConfig {
     pub daily_loss_warning_pct: f64,
 }
 
+/// A scheduled macro event with an optional per-event blackout window.
+///
+/// Events are checked in UTC. If `blackout_mins` is `None` the global
+/// `news_blackout_mins` default is used.
+///
+/// ```toml
+/// [[risk.macro_events]]
+/// hour = 13
+/// minute = 30
+/// label = "NFP / CPI / Core PCE"
+/// blackout_mins = 30
+/// ```
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MacroEvent {
+    pub hour: u32,
+    pub minute: u32,
+    pub label: String,
+    /// Override the global `news_blackout_mins` for this specific event (optional).
+    #[serde(default)]
+    pub blackout_mins: Option<u32>,
+}
+
 /// Risk management configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
@@ -122,6 +144,15 @@ pub struct RiskConfig {
     pub min_guaranteed_stop_distance: Option<f64>,
     pub use_trailing_stop: bool,
     pub allowed_sessions: Vec<crate::engine::state::Session>,
+    /// News blackout windows: list of (hour, minute) UTC times to block ±`news_blackout_mins` around
+    /// Kept for backward compatibility — superseded by `macro_events` when non-empty.
+    pub news_blackout_windows_utc: Vec<(u32, u32)>,
+    /// Global fallback blackout minutes (used when a MacroEvent has no per-event override).
+    pub news_blackout_mins: u32,
+    /// Structured macro event calendar (Phase 8.5).
+    /// When non-empty, replaces `news_blackout_windows_utc` with per-event durations.
+    #[serde(default)]
+    pub macro_events: Vec<MacroEvent>,
 }
 
 impl Default for RiskConfig {
@@ -151,6 +182,21 @@ impl Default for RiskConfig {
                 crate::engine::state::Session::Asia,
                 crate::engine::state::Session::London,
                 crate::engine::state::Session::UsOverlap,
+            ],
+            // Legacy fields — kept for backward compat with old configs that omit macro_events.
+            news_blackout_windows_utc: vec![(8, 30), (13, 30), (15, 0)],
+            news_blackout_mins: 15,
+            // Structured macro calendar (Phase 8.5) — per-event blackout durations.
+            // When non-empty these take priority over news_blackout_windows_utc.
+            macro_events: vec![
+                MacroEvent { hour:  0, minute: 30, label: "AU CPI / Trade Balance".into(),       blackout_mins: Some(20) },
+                MacroEvent { hour:  7, minute:  0, label: "EUR CPI / German data".into(),         blackout_mins: Some(20) },
+                MacroEvent { hour:  8, minute: 30, label: "London Open / EU data releases".into(), blackout_mins: Some(20) },
+                MacroEvent { hour:  9, minute:  0, label: "ECB / Bank of England meetings".into(), blackout_mins: Some(45) },
+                MacroEvent { hour: 13, minute: 30, label: "NFP / CPI / Core PCE / Retail Sales".into(), blackout_mins: Some(30) },
+                MacroEvent { hour: 15, minute:  0, label: "US Open / ISM PMI".into(),             blackout_mins: Some(20) },
+                MacroEvent { hour: 19, minute:  0, label: "FOMC Rate Decision / Fed Statement".into(), blackout_mins: Some(60) },
+                MacroEvent { hour: 19, minute: 30, label: "FOMC Press Conference".into(),         blackout_mins: Some(45) },
             ],
         }
     }
@@ -291,7 +337,7 @@ impl RiskManager {
             return RiskVerdict::Rejected(reason);
         }
 
-        // Layer 2: Trading Hours - Check if within configured trading hours
+        // Layer 2: Trading Hours
         if let Some((start_hour, end_hour)) = self.config.trading_hours_utc {
             let now = Utc::now();
             let current_hour = now.hour();
@@ -302,6 +348,48 @@ impl RiskManager {
                 );
                 warn!("{}", reason);
                 return RiskVerdict::Rejected(reason);
+            }
+        }
+
+        // Layer 2b: Macro Event Blackout Windows
+        {
+            let now      = Utc::now();
+            let now_mins = now.hour() * 60 + now.minute();
+
+            if !self.config.macro_events.is_empty() {
+                // Phase 8.5 path — per-event blackout durations
+                for event in &self.config.macro_events {
+                    let window_mins = event.hour * 60 + event.minute;
+                    let blackout    = event.blackout_mins.unwrap_or(self.config.news_blackout_mins);
+                    let start = window_mins.saturating_sub(blackout);
+                    let end   = window_mins + blackout;
+                    if now_mins >= start && now_mins < end {
+                        let reason = format!(
+                            "Macro event blackout: {} at {:02}:{:02} UTC ±{}min (now {:02}:{:02} UTC)",
+                            event.label, event.hour, event.minute, blackout,
+                            now.hour(), now.minute()
+                        );
+                        warn!("{}", reason);
+                        return RiskVerdict::Rejected(reason);
+                    }
+                }
+            } else if !self.config.news_blackout_windows_utc.is_empty() {
+                // Legacy fallback — flat global blackout duration
+                for (h, m) in &self.config.news_blackout_windows_utc {
+                    let window_mins = h * 60 + m;
+                    let blackout    = self.config.news_blackout_mins;
+                    let start = window_mins.saturating_sub(blackout);
+                    let end   = window_mins + blackout;
+                    if now_mins >= start && now_mins < end {
+                        let reason = format!(
+                            "News blackout window: {:02}:{:02} UTC ±{}min (now {:02}:{:02} UTC)",
+                            h, m, blackout,
+                            now.hour(), now.minute()
+                        );
+                        warn!("{}", reason);
+                        return RiskVerdict::Rejected(reason);
+                    }
+                }
             }
         }
 

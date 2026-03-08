@@ -5,7 +5,7 @@ use tracing::{info, warn, error, debug};
 use chrono::Utc;
 
 use crate::engine::config::{EngineConfig, EngineMode};
-use crate::engine::state::{EngineState, Direction, Position};
+use crate::engine::state::{EngineState, Direction, Position, Signal};
 use crate::api::rest_client::IGRestClient;
 use crate::risk::RiskManager;
 use crate::strategy::traits::Strategy;
@@ -33,10 +33,10 @@ pub async fn analyze_market(
     };
 
     for epic in &epics {
-        let (bid, offer, mid_price) = {
+        let (bid, offer, mid_price, mkt_state) = {
             let s = state.read().await;
             if let Some(ms) = s.markets.live.get(epic) {
-                (ms.bid, ms.ask, (ms.bid + ms.ask) / 2.0)
+                (ms.bid, ms.ask, (ms.bid + ms.ask) / 2.0, ms.market_state.clone())
             } else {
                 debug!("No market data yet for {} (waiting for Lightstreamer tick)", epic);
                 continue;
@@ -47,21 +47,69 @@ pub async fn analyze_market(
             continue;
         }
 
-        let snapshot = {
-            let s = state.read().await;
-            if let Some(indicator_set) = s.markets.indicators.get(epic) {
-                indicator_set.snapshot()
-            } else {
-                None
+        // Skip analysis when the market is not in a tradeable state (e.g., weekend "edit",
+        // auction, or offline). MARKET_STATE is None until IG sends the initial snapshot.
+        if let Some(ref state_str) = mkt_state {
+            if state_str != "TRADEABLE" {
+                debug!("Market {} not tradeable (MARKET_STATE={}), skipping analysis", epic, state_str);
+                continue;
             }
+        }
+
+        let indicator_set = {
+            let s = state.read().await;
+            s.markets.indicators.get(epic).cloned()
         };
 
-        if let Some(snapshot) = snapshot {
-            let _ = event_tx.send(EngineEvent::indicator_update(epic.clone(), snapshot.clone()));
+        if let Some(indicators_map) = indicator_set {
+            let mut snapshot_map = std::collections::HashMap::new();
+
+            // Indicators are updated on bar close via the BarAccumulator in the streaming
+            // client; here we only read the current snapshot.
+            for (tf, indicators) in &indicators_map {
+                if let Some(snap) = indicators.snapshot() {
+                    snapshot_map.insert(tf.clone(), snap);
+                }
+            }
+
+            // Emitting events - just using HOUR as default stream visualization for now
+            if let Some(snap_hour) = snapshot_map.get("HOUR") {
+                let _ = event_tx.send(EngineEvent::indicator_update(epic.clone(), snap_hour.clone()));
+            }
+
+            if snapshot_map.is_empty() {
+                continue; // no warmed up timeframes
+            }
+
+            // Read per-instrument override (ADX range filter)
+            let override_cfg = config.strategies.instrument_overrides.get(epic).cloned();
+            let adx_range_filter = override_cfg.as_ref().map(|o| o.adx_range_filter).unwrap_or(false);
+            let adx_range_max   = override_cfg.as_ref().and_then(|o| o.adx_range_max).unwrap_or(25.0);
+
+            // Read current ADX from HOUR indicators (used by range filter below)
+            let current_adx: Option<f64> = snapshot_map
+                .get("HOUR")
+                .and_then(|s| s.adx);
+
+            // Mean-reversion strategy names — suppressed when market is trending
+            const REVERSION_STRATEGIES: &[&str] = &["RSI_Reversal", "Bollinger_Bands"];
 
             let mut signals = Vec::new();
             for strategy in strategies {
-                if let Some(signal) = strategy.evaluate(epic, mid_price, &snapshot) {
+                // ADX range filter: skip mean-reversion strategies in trending markets
+                if adx_range_filter && REVERSION_STRATEGIES.contains(&strategy.name()) {
+                    if let Some(adx) = current_adx {
+                        if adx > adx_range_max {
+                            debug!(
+                                "ADX range filter: skipping {} for {} (ADX={:.1} > {:.1})",
+                                strategy.name(), epic, adx, adx_range_max
+                            );
+                            continue;
+                        }
+                    }
+                }
+
+                if let Some(signal) = strategy.evaluate(epic, mid_price, &snapshot_map) {
                     let _ = event_tx.send(EngineEvent::signal(
                         signal.epic.clone(),
                         signal.direction.to_string(),
@@ -70,6 +118,33 @@ pub async fn analyze_market(
                         false,
                     ));
                     signals.push(signal.clone());
+                }
+            }
+
+            // ── Gold sentiment signal ──────────────────────────────────────────────
+            // If this is the Gold epic and `scripts/sentiment_agent.py` has written a
+            // fresh JSON file, inject a sentiment-derived signal into the ensemble.
+            const GOLD_EPIC: &str = "CS.D.CFIGOLD.CFI.IP";
+            if epic.as_str() == GOLD_EPIC {
+                let atr = snapshot_map.get("HOUR").and_then(|s| s.atr);
+                if let Some(sent) = read_gold_sentiment(
+                    "data/gold_sentiment_latest.json",
+                    atr,
+                    mid_price,
+                    config,
+                ) {
+                    info!(
+                        "Gold sentiment signal injected: {} strength={:.1} — {}",
+                        sent.direction, sent.strength, sent.reason
+                    );
+                    let _ = event_tx.send(EngineEvent::signal(
+                        sent.epic.clone(),
+                        sent.direction.to_string(),
+                        sent.strategy.clone(),
+                        sent.strength,
+                        false,
+                    ));
+                    signals.push(sent);
                 }
             }
 
@@ -243,4 +318,272 @@ pub async fn analyze_market(
     }
 
     Ok(())
+}
+
+/// Manually trigger a trade for a specific epic and direction
+pub async fn execute_manual_trigger(
+    state: &Arc<RwLock<EngineState>>,
+    client: &mut IGRestClient,
+    risk_manager: &mut RiskManager,
+    order_manager: &crate::engine::order_manager::OrderManager,
+    event_tx: &broadcast::Sender<EngineEvent>,
+    config: &EngineConfig,
+    telegram: &TelegramNotifier,
+    epic: String,
+    direction: String,
+) -> Result<()> {
+    info!("Executing manual trigger for {} {}", epic, direction);
+
+    let (_bid, _ask, price) = {
+        let s = state.read().await;
+        if let Some(ms) = s.markets.live.get(&epic) {
+            (ms.bid, ms.ask, (ms.bid + ms.ask) / 2.0)
+        } else {
+            return Err(anyhow::anyhow!("No market data available for {} to execute manual trigger", epic));
+        }
+    };
+
+    let dir = match direction.to_lowercase().as_str() {
+        "buy" | "long" => crate::engine::state::Direction::Buy,
+        "sell" | "short" => crate::engine::state::Direction::Sell,
+        _ => return Err(anyhow::anyhow!("Invalid direction: {}", direction)),
+    };
+
+    // Calculate default SL/TP based on ATR if available, else use a fixed distance
+    let indicators = {
+        let s = state.read().await;
+        s.markets.indicators.get(&epic).and_then(|m| m.get("HOUR")).and_then(|i| i.snapshot())
+    };
+
+    let (stop_loss, take_profit) = if let Some(snap) = indicators {
+        if let Some(atr) = snap.atr {
+            let sl_dist = atr * config.strategies.default_atr_sl_multiplier;
+            let tp_dist = atr * config.strategies.default_atr_tp_multiplier;
+            match dir {
+                crate::engine::state::Direction::Buy => (price - sl_dist, price + tp_dist),
+                crate::engine::state::Direction::Sell => (price + sl_dist, price - tp_dist),
+            }
+        } else {
+            // Fallback: 50 pips (rough estimation)
+            let dist = price * 0.005; 
+            match dir {
+                crate::engine::state::Direction::Buy => (price - dist, price + dist * 2.0),
+                crate::engine::state::Direction::Sell => (price + dist, price - dist * 2.0),
+            }
+        }
+    } else {
+        // Fallback: 50 pips (rough estimation)
+        let dist = price * 0.005; 
+        match dir {
+            crate::engine::state::Direction::Buy => (price - dist, price + dist * 2.0),
+            crate::engine::state::Direction::Sell => (price + dist, price - dist * 2.0),
+        }
+    };
+
+    let account_info = {
+        let s = state.read().await;
+        crate::risk::AccountInfo {
+            balance: s.account.balance,
+            equity: s.account.equity,
+            available_margin: s.account.available,
+        }
+    };
+
+    let open_positions = {
+        let s = state.read().await;
+        s.trades.active.iter()
+            .map(|p| crate::risk::OpenPosition {
+                epic: p.epic.clone(),
+                direction: p.direction.to_string(),
+                size: p.size,
+                entry_price: p.open_price,
+                stop_loss: p.stop_loss.unwrap_or(0.0),
+                take_profit: p.take_profit.unwrap_or(0.0),
+            })
+            .collect::<Vec<_>>()
+    };
+
+    let verdict = risk_manager.check_trade(
+        &epic,
+        &dir.to_string(),
+        price,
+        stop_loss,
+        take_profit,
+        &account_info,
+        &open_positions,
+        "ManualTrigger",
+    );
+
+    match verdict {
+        crate::risk::RiskVerdict::Approved(adjusted_trade) => {
+            info!("Manual trigger APPROVED: {} {} @ {}", epic, dir, price);
+            if config.general.mode != EngineMode::Paper {
+                match order_manager.execute_trade(client, &adjusted_trade).await {
+                    Ok(execution) => {
+                        let mut s = state.write().await;
+                        let pos = Position {
+                            deal_id: execution.deal_id.clone(),
+                            deal_reference: execution.deal_reference.clone(),
+                            epic: epic.clone(),
+                            direction: dir.clone(),
+                            size: adjusted_trade.size,
+                            open_price: execution.fill_price,
+                            stop_loss: Some(adjusted_trade.stop_loss),
+                            take_profit: Some(adjusted_trade.take_profit),
+                            trailing_stop: adjusted_trade.trailing_stop_distance,
+                            current_price: execution.fill_price,
+                            opened_at: Utc::now(),
+                            pnl: 0.0,
+                            strategy: "ManualTrigger".into(),
+                            is_virtual: false,
+                        };
+                        s.trades.active.push(pos);
+                        
+                        let _ = event_tx.send(EngineEvent::trade_executed(
+                            execution.deal_id,
+                            epic.clone(),
+                            dir.to_string(),
+                            adjusted_trade.size,
+                            execution.fill_price,
+                        ));
+                        
+                        let _ = telegram.send_trade_alert(
+                            &epic, 
+                            &dir.to_string(), 
+                            adjusted_trade.size, 
+                            execution.fill_price,
+                            adjusted_trade.stop_loss,
+                            Some(adjusted_trade.take_profit)
+                        ).await;
+                    }
+                    Err(e) => error!("Failed to execute manual trade: {}", e),
+                }
+            } else {
+                // Paper mode: Create virtual position
+                let mut s = state.write().await;
+                let pos = Position {
+                    deal_id: format!("v-{}", Utc::now().timestamp_millis()),
+                    deal_reference: "manual-paper".into(),
+                    epic: epic.clone(),
+                    direction: dir.clone(),
+                    size: adjusted_trade.size,
+                    open_price: price,
+                    stop_loss: Some(adjusted_trade.stop_loss),
+                    take_profit: Some(adjusted_trade.take_profit),
+                    trailing_stop: adjusted_trade.trailing_stop_distance,
+                    current_price: price,
+                    opened_at: Utc::now(),
+                    pnl: 0.0,
+                    strategy: "ManualTrigger".into(),
+                    is_virtual: true,
+                };
+                s.trades.active.push(pos);
+                info!("Paper Trade (Manual): Created virtual position for {}", epic);
+            }
+        }
+        crate::risk::RiskVerdict::Rejected(reason) => {
+            warn!("Manual trigger REJECTED by risk manager: {}", reason);
+            let _ = event_tx.send(EngineEvent::risk_alert(
+                format!("Manual trigger for {} rejected: {}", epic, reason),
+                "high".into(),
+            ));
+        }
+    }
+
+    Ok(())
+}
+
+// ── Gold sentiment reader ──────────────────────────────────────────────────────
+
+/// Read the Gold news sentiment JSON written by `scripts/sentiment_agent.py`.
+///
+/// Returns a `Signal` when all conditions are met:
+///   - File exists and is valid JSON
+///   - `timestamp` is within the last 30 minutes (not stale)
+///   - `|score|` ≥ 0.55 (strong enough to influence the ensemble)
+///
+/// Returns `None` on any I/O/parse error, stale data, or neutral/weak signal.
+fn read_gold_sentiment(
+    file_path: &str,
+    atr: Option<f64>,
+    mid_price: f64,
+    config: &EngineConfig,
+) -> Option<Signal> {
+    // ── Read & parse ──────────────────────────────────────────────────────────
+    let raw  = std::fs::read_to_string(file_path).ok()?;
+    let json: serde_json::Value = serde_json::from_str(&raw).ok()?;
+
+    let ts         = json["timestamp"].as_i64()?;
+    let score      = json["score"].as_f64()?;
+    let confidence = json["confidence"].as_f64().unwrap_or(0.5);
+    let mode       = json["mode"].as_str().unwrap_or("unknown").to_string();
+    let drivers: Vec<String> = json["key_drivers"]
+        .as_array()
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.as_str().map(String::from))
+                .take(4)
+                .collect()
+        })
+        .unwrap_or_default();
+
+    // ── Stale check: reject if older than 30 minutes ──────────────────────────
+    let age_secs = Utc::now().timestamp() - ts;
+    if age_secs > 1800 {
+        debug!("Gold sentiment file is stale ({} s old) — skipping", age_secs);
+        return None;
+    }
+
+    // ── Score threshold gate ───────────────────────────────────────────────────
+    const THRESHOLD: f64 = 0.55;
+    let direction = if score >= THRESHOLD {
+        Direction::Buy
+    } else if score <= -THRESHOLD {
+        Direction::Sell
+    } else {
+        debug!("Gold sentiment score {:.3} below threshold ±{} — skipping", score, THRESHOLD);
+        return None;
+    };
+
+    // ── Signal strength: 6.0 (min consensus) + confidence bonus up to +3.5 ───
+    let strength = (6.0_f64 + confidence * 3.5).min(9.5);
+
+    // ── SL / TP from ATR, falling back to 0.5 % distance ─────────────────────
+    let sl_mult = config.strategies.default_atr_sl_multiplier;
+    let tp_mult = config.strategies.default_atr_tp_multiplier;
+
+    let (stop_loss, take_profit) = match (atr, &direction) {
+        (Some(a), Direction::Buy)  => (mid_price - a * sl_mult, mid_price + a * tp_mult),
+        (Some(a), Direction::Sell) => (mid_price + a * sl_mult, mid_price - a * tp_mult),
+        (None, Direction::Buy)  => {
+            let d = mid_price * 0.005;
+            (mid_price - d, mid_price + d * 2.0)
+        }
+        (None, Direction::Sell) => {
+            let d = mid_price * 0.005;
+            (mid_price + d, mid_price - d * 2.0)
+        }
+    };
+
+    let reason = format!(
+        "score={:.3} conf={:.2} mode={} age={}s drivers=[{}]",
+        score,
+        confidence,
+        mode,
+        age_secs,
+        drivers.join(", "),
+    );
+
+    Some(Signal {
+        id:         uuid::Uuid::new_v4().to_string(),
+        epic:       "CS.D.CFIGOLD.CFI.IP".to_string(),
+        direction,
+        strength,
+        strategy:   "Gold_Sentiment".to_string(),
+        reason,
+        price:      mid_price,
+        stop_loss,
+        take_profit,
+        timestamp:  Utc::now(),
+    })
 }

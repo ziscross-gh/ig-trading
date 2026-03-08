@@ -278,8 +278,11 @@ impl TraderAPI for IGRestClient {
             "limitLevel": request.limit_level,
             "currencyCode": request.currency_code,
             "guaranteedStop": request.guaranteed_stop.unwrap_or(false),
-            "forceOpen": request.force_open.unwrap_or(false)
+            "forceOpen": request.force_open.unwrap_or(false),
+            "expiry": request.expiry
         });
+
+        info!("open_position payload: {}", serde_json::to_string(&body).unwrap_or_default());
 
         self.post_request::<IGTradeResponse>(&url, body).await
     }
@@ -307,7 +310,36 @@ impl TraderAPI for IGRestClient {
         deal_reference: &str,
     ) -> Result<IGConfirmResponse, anyhow::Error> {
         let url = format!("{}/confirms/{}", self.base_url, deal_reference);
-        self.get_request::<IGConfirmResponse>(&url).await
+        let mut retry_count = 0;
+        loop {
+            self.apply_rate_limit().await;
+            
+            let mut request = self.client.get(&url)
+                .header("X-IG-API-KEY", &self.api_key)
+                .header("Version", "1")
+                .header("Content-Type", "application/json")
+                .header("Accept", "application/json");
+                
+            if let Some(cst) = &self.cst {
+                request = request.header("CST", cst);
+            }
+            if let Some(security_token) = &self.security_token {
+                request = request.header("X-SECURITY-TOKEN", security_token);
+            }
+            
+            let response = request.send().await?;
+            match self.handle_response::<IGConfirmResponse>(response).await {
+                Ok(data) => return Ok(data),
+                Err(e) if e.to_string().contains("UNAUTHORIZED") && retry_count < 1 => {
+                    warn!("Session expired. Re-authenticating and retrying... (confirms)");
+                    let id = self.identifier.clone();
+                    let pw = self.password.clone();
+                    self.authenticate(&id, &pw).await?;
+                    retry_count += 1;
+                }
+                Err(e) => return Err(e),
+            }
+        }
     }
 
     /// Update an open position

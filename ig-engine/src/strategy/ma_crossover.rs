@@ -107,7 +107,10 @@ impl Strategy for MACrossoverStrategy {
         "MA_Crossover"
     }
 
-    fn evaluate(&self, epic: &str, price: f64, indicators: &IndicatorSnapshot) -> Option<Signal> {
+    fn evaluate(&self, epic: &str, price: f64, indicators_map: &std::collections::HashMap<String, IndicatorSnapshot>) -> Option<Signal> {
+        // Fallback to "HOUR" timeframe for single-TF backward compatibility
+        let indicators = indicators_map.get("HOUR")?;
+
         // Check if we have the required indicators
         let ema_short = indicators.ema_short?;
         let ema_long = indicators.ema_long?;

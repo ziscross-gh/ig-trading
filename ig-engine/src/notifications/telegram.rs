@@ -7,23 +7,28 @@ use serde_json::json;
 use std::error::Error;
 use tracing::{error, info, warn};
 
-/// Get human-readable instrument name from epic code
+/// Get human-readable instrument name from epic code.
+/// Single source of truth — used by http_server.rs, handlers.rs, and Telegram alerts.
+/// Covers both demo (*.CSD.IP / *.CFI.IP) and live (*.CFD) epic variants.
 pub fn get_instrument_name(epic: &str) -> String {
     match epic {
-        "IX.D.SUNGOLD.CFI.IP" => "Weekend Spot Gold".to_string(),
-        "CS.D.GBPUSD.CSD.IP" => "GBP/USD".to_string(),
-        "CS.D.EURUSD.CSD.IP" => "EUR/USD".to_string(),
-        "CS.D.USDJPY.CSD.IP" => "USD/JPY".to_string(),
-        "CS.D.AUDUSD.CSD.IP" => "AUD/USD".to_string(),
+        // Gold variants
         "CS.D.CFIGOLD.CFI.IP" => "Spot Gold (SGD1)".to_string(),
         "CS.D.CFDGOLD.CMG.IP" => "Spot Gold ($1)".to_string(),
-        "CS.D.GOL.CFD" => "Spot Gold".to_string(),
+        "CS.D.GOL.CFD"        => "Spot Gold".to_string(),
         "CS.D.XAUUSD.CFD" | "CS.D.GOLDUSD.CFD" => "Gold (XAU/USD)".to_string(),
+        "IX.D.SUNGOLD.CFI.IP" => "Weekend Spot Gold".to_string(),
+        // Forex — demo (*.CSD.IP) and live (*.CFD) variants
+        "CS.D.EURUSD.CSD.IP" | "CS.D.EURUSD.CFD" => "EUR/USD".to_string(),
+        "CS.D.GBPUSD.CSD.IP" | "CS.D.GBPUSD.CFD" => "GBP/USD".to_string(),
+        "CS.D.USDJPY.CSD.IP" | "CS.D.USDJPY.CFD" => "USD/JPY".to_string(),
+        "CS.D.AUDUSD.CSD.IP" | "CS.D.AUDUSD.CFD" => "AUD/USD".to_string(),
         _ => {
+            // Fallback: extract pair from epic segment (e.g., "CS.D.GBPUSD.CSD.IP" → "GBP/USD")
             let parts: Vec<&str> = epic.split('.').collect();
             if parts.len() >= 3 {
                 let pair = parts[2];
-                if pair.len() == 6 {
+                if pair.len() == 6 && pair.chars().all(|c| c.is_ascii_uppercase()) {
                     format!("{}/{}", &pair[0..3], &pair[3..6])
                 } else {
                     pair.to_string()

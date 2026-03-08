@@ -1,11 +1,12 @@
 #![allow(dead_code)]
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use chrono::{DateTime, Utc};
 
 use crate::engine::config::EngineConfig;
 use crate::indicators::IndicatorSet;
 use crate::data::candle_store::CandleStore;
+use crate::data::bar_accumulator::BarAccumulator;
 use crate::learning::adaptive_weights::{WeightAdjustment, AdaptiveWeightManager};
 use crate::learning::scorecard::StrategyScorecard;
 
@@ -136,8 +137,10 @@ pub struct AccountState {
 
 pub struct MarketStateContainer {
     pub live: HashMap<String, MarketState>,
-    pub indicators: HashMap<String, IndicatorSet>,
+    pub indicators: HashMap<String, HashMap<String, IndicatorSet>>, // Epic -> Timeframe -> IndicatorSet
     pub history: CandleStore,
+    /// Accumulates WS ticks into OHLCV bars; pushes completed bars to history + indicators.
+    pub bar_accumulator: BarAccumulator,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -149,14 +152,17 @@ pub struct MarketState {
     pub high: f64,
     pub low: f64,
     pub change_pct: f64,
+    /// IG MARKET_STATE field: "TRADEABLE", "EDIT", "OFFLINE", "CLOSED", etc.
+    /// None means the field has not yet arrived from Lightstreamer.
+    pub market_state: Option<String>,
     pub last_update: DateTime<Utc>,
 }
 
 pub struct TradeState {
     pub active: Vec<Position>,
-    pub signals: Vec<Signal>,
-    pub signal_records: Vec<SignalRecord>,
-    pub history: Vec<ClosedTrade>,
+    pub signals: VecDeque<Signal>,
+    pub signal_records: VecDeque<SignalRecord>,
+    pub history: VecDeque<ClosedTrade>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -234,7 +240,19 @@ impl EngineState {
     pub fn new(config: EngineConfig) -> Self {
         let mut indicators = HashMap::new();
         for epic in &config.markets.epics {
-            indicators.insert(epic.clone(), IndicatorSet::default_config());
+            let mut tf_map = HashMap::new();
+            tf_map.insert("HOUR".to_string(), IndicatorSet::default_config());
+            
+            // If multi-timeframe is enabled, initialize those timeframes as well
+            if let Some(mtf) = &config.strategies.multi_timeframe {
+                if mtf.enabled {
+                    tf_map.insert(mtf.trend_tf.clone(), IndicatorSet::default_config());
+                    tf_map.insert(mtf.signal_tf.clone(), IndicatorSet::default_config());
+                    tf_map.insert(mtf.entry_tf.clone(), IndicatorSet::default_config());
+                }
+            }
+            
+            indicators.insert(epic.clone(), tf_map);
         }
 
         let is_paper = config.general.mode == crate::engine::config::EngineMode::Paper;
@@ -259,12 +277,13 @@ impl EngineState {
                 live: HashMap::new(),
                 indicators,
                 history: CandleStore::new(),
+                bar_accumulator: BarAccumulator::new(3600), // 1-hour bars
             },
             trades: TradeState {
                 active: Vec::new(),
-                signals: Vec::new(),
-                signal_records: Vec::new(),
-                history: Vec::new(),
+                signals: VecDeque::new(),
+                signal_records: VecDeque::new(),
+                history: VecDeque::new(),
             },
             metrics: MetricsState {
                 daily: DailyStats {
@@ -289,6 +308,18 @@ impl EngineState {
 
     pub fn can_trade(&self) -> bool {
         self.status == EngineStatus::Running && !self.metrics.circuit_breaker_active
+    }
+
+    /// Hot-reload non-risk strategy parameters (triggered by SIGUSR1).
+    ///
+    /// Only updates: `instrument_overrides`, `min_consensus`, `min_avg_strength`.
+    /// Risk parameters (`max_risk_per_trade`, `max_daily_loss_pct`, etc.) are
+    /// intentionally never modified by hot-reload — those require a full restart.
+    pub fn reload_strategy_config(&mut self, new_strategies: crate::engine::config::StrategiesConfig) {
+        self.config.strategies.instrument_overrides = new_strategies.instrument_overrides;
+        self.config.strategies.min_consensus        = new_strategies.min_consensus;
+        self.config.strategies.min_avg_strength     = new_strategies.min_avg_strength;
+        tracing::info!("Strategy config hot-reloaded: instrument_overrides + consensus thresholds updated");
     }
 
     pub fn check_daily_reset(&mut self) {
@@ -331,27 +362,27 @@ impl EngineState {
     }
 
     pub fn add_signal(&mut self, signal: Signal) {
-        self.trades.signals.push(signal);
+        self.trades.signals.push_back(signal);
         if self.trades.signals.len() > 200 {
-            self.trades.signals.remove(0);
+            self.trades.signals.pop_front();
         }
     }
 
     pub fn add_signal_record(&mut self, signal: Signal, was_executed: bool, rejection_reason: Option<String>) {
-        self.trades.signal_records.push(SignalRecord {
+        self.trades.signal_records.push_back(SignalRecord {
             signal,
             was_executed,
             rejection_reason,
         });
         if self.trades.signal_records.len() > 200 {
-            self.trades.signal_records.remove(0);
+            self.trades.signal_records.pop_front();
         }
     }
 
     pub fn add_closed_trade(&mut self, trade: ClosedTrade) {
-        self.trades.history.push(trade);
+        self.trades.history.push_back(trade);
         if self.trades.history.len() > 500 {
-            self.trades.history.remove(0);
+            self.trades.history.pop_front();
         }
     }
 }

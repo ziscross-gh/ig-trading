@@ -129,6 +129,13 @@ Items scored using: **Priority = (Impact + Risk) × (6 − Effort)**
 7. 🏗️ Run bundle analysis and remove unused shadcn/ui components
 8. ✅ Add module-level and function-level documentation
 9. ✅ Fix Critical Bug: Indicators were not updating with new data after engine startup (implemented periodic 15min candle refresh)
+10. ✅ Fix ESLint warnings: 39 → 0 across 17 files (unused vars, exhaustive-deps, optional catch)
+11. ✅ Clean up Rust `#[allow(dead_code)]` suppressions: removed stale ones, standardized to field-level
+12. ✅ Fix Telegram notifications silent for 2+ days: empty env var bug, HTTP error swallowing, startup ping added
+13. ✅ Consolidate instrument name mapping: single `get_instrument_name()` in `telegram.rs`, removed duplicate from `http_server.rs`
+14. ✅ Add `name` field to all API endpoints (positions, trades, signals, equity curve, market analysis, prices)
+15. ✅ Fix EnginePanel showing raw epic codes instead of instrument names
+16. ✅ Add demo + live epic variant coverage to both Rust and frontend name mappings
 
 ### Phase 5 — Advanced Strategy Features (active)
 

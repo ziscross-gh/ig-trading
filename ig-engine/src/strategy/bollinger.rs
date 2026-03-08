@@ -100,7 +100,10 @@ impl Strategy for BollingerStrategy {
         "Bollinger_Bands"
     }
 
-    fn evaluate(&self, epic: &str, price: f64, indicators: &IndicatorSnapshot) -> Option<Signal> {
+    fn evaluate(&self, epic: &str, price: f64, indicators_map: &std::collections::HashMap<String, IndicatorSnapshot>) -> Option<Signal> {
+        // Fallback to "HOUR" timeframe for single-TF backward compatibility
+        let indicators = indicators_map.get("HOUR")?;
+
         let percent_b = indicators.bollinger_percent_b?;
         let rsi = indicators.rsi?;
         let middle_band = indicators.bollinger_middle?;

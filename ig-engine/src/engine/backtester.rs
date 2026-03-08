@@ -112,7 +112,9 @@ impl BacktestEngine {
             // 2. Check for new signals if no active trade
             if active_trade.is_none() {
                 if let Some(snapshot) = indicators.snapshot() {
-                    if let Some(signal) = strategy.evaluate(epic, candle.close, &snapshot) {
+                    let mut snaps = std::collections::HashMap::new();
+                    snaps.insert("HOUR".to_string(), snapshot);
+                    if let Some(signal) = strategy.evaluate(epic, candle.close, &snaps) {
                         // Calculate size based on risk
                         let risk_amount = self.current_balance * (self.risk_per_trade_pct / 100.0);
                         let stop_loss_dist = candle.close * (self.stop_loss_pct / 100.0);
@@ -136,18 +138,19 @@ impl BacktestEngine {
 
         // Close any remaining open trade at last price
         if let Some(mut trade) = active_trade {
-            let last_candle = candles.last().unwrap();
-            trade.exit_price = Some(last_candle.close);
-            trade.exit_time = Some(last_candle.timestamp);
-            let pnl_pct = if trade.direction == Direction::Buy {
-                (last_candle.close - trade.entry_price) / trade.entry_price * 100.0
-            } else {
-                (trade.entry_price - last_candle.close) / trade.entry_price * 100.0
-            };
-            let trade_pnl = trade.size * (pnl_pct / 100.0) * trade.entry_price;
-            trade.pnl = Some(trade_pnl);
-            self.current_balance += trade_pnl;
-            trades.push(trade);
+            if let Some(last_candle) = candles.last() {
+                trade.exit_price = Some(last_candle.close);
+                trade.exit_time = Some(last_candle.timestamp);
+                let pnl_pct = if trade.direction == Direction::Buy {
+                    (last_candle.close - trade.entry_price) / trade.entry_price * 100.0
+                } else {
+                    (trade.entry_price - last_candle.close) / trade.entry_price * 100.0
+                };
+                let trade_pnl = trade.size * (pnl_pct / 100.0) * trade.entry_price;
+                trade.pnl = Some(trade_pnl);
+                self.current_balance += trade_pnl;
+                trades.push(trade);
+            }
         }
 
         // Calculate final stats

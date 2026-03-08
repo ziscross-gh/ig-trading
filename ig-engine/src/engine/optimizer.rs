@@ -67,7 +67,7 @@ impl Optimizer {
         }
 
         // Sort by PnL descending
-        runs.sort_by(|a, b| b.result.total_pnl.partial_cmp(&a.result.total_pnl).unwrap());
+        runs.sort_by(|a, b| b.result.total_pnl.partial_cmp(&a.result.total_pnl).unwrap_or(std::cmp::Ordering::Equal));
 
         // Keep top 10
         let top_runs = runs.iter().take(10).cloned().collect::<Vec<_>>();

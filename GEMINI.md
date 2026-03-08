@@ -1,11 +1,11 @@
-# CLAUDE.md — IG Trading Engine (Claude-specific)
+# GEMINI.md — IG Trading Engine (Gemini-specific)
 
 > **Start here:** Read `AGENTS.md` first — it contains the full shared project reference for all AI tools.
-> This file only adds Claude / Cowork-specific behaviour on top of that.
+> This file only adds Gemini / Antigravity-specific behaviour on top of that.
 
 ---
 
-## How Claude Should Orient in Each Session
+## How Gemini Should Orient in Each Session
 
 1. Read `AGENTS.md` — project overview, layout, conventions, active work
 2. Read `TASK_TRACKER.md` — know what's in progress before suggesting anything
@@ -14,42 +14,43 @@
 
 ---
 
-## Claude-Specific Notes
+## Gemini-Specific Notes
 
-- **Cowork mode** auto-loads this file at session start via the project context system.
-- The IG API is unreachable from sandboxed/proxied environments (`ProxyError: 403`). When running test scripts, explain this clearly rather than retrying.
 - When editing Rust, flag any new `.unwrap()` or `println!` — both violate project conventions.
 - When editing TypeScript, confirm `noImplicitAny: true` is respected — no bare `any` types.
-- Prefer `Edit` over `Write` for existing files.
-- When completing any task, update `TASK_TRACKER.md` (🏗️ → ✅).
+- Use browser tools to visually verify frontend changes when possible.
+- When completing a task, update `TASK_TRACKER.md` (🏗️ → ✅).
 
 ---
 
-## Assigned Tasks (Claude's Focus)
+## Assigned Tasks (Gemini's Focus)
 
 > ⚠️ **Current focus: Bot engine + Telegram only.** All dashboard/frontend work is paused.
 
-Claude owns the **Rust bot engine and Telegram notification** work. Refer to `TASK_TRACKER.md` for full details.
+Gemini supports **bot-side Rust work and Telegram notification refinement**. Refer to `TASK_TRACKER.md` for full details.
 
 ### Active
 
 | # | Task | Phase |
 |---|------|-------|
-| 5.1 | Trailing Stop Loss logic | Phase 5 |
-| 5.2 | Session-specific filters (news exclusion) | Phase 5 |
-| 4.6 | WebSocket push migration (Rust streaming side) | Phase 4 |
+| 5.1 | Trailing Stop Loss logic (support / review) | Phase 5 |
+| 5.2 | Session-specific filters (support / review) | Phase 5 |
 
 ### Planned (Phase 6)
 
 | # | Task |
 |---|------|
-| 6.1 | Multi-timeframe analysis |
-| 6.4 | Fix remaining `unwrap()` panics (optimizer, backtester) |
+| 6.5 | Live mode pre-flight checklist (bot-side validation) |
 
-### Bug Fixes
+### Paused (Dashboard — Resume Later)
 
-- **Low:** `optimizer.rs:70` — NaN panic on `partial_cmp`
-- **Low:** `backtester.rs:139` — `candles.last()` without empty guard
+| # | Task |
+|---|------|
+| 4.7 | Bundle analysis + remove unused shadcn/ui components |
+| 5.3 | Strategy Lab historical backtesting UI |
+| 5.5 | Equity Curve visualization on dashboard |
+| 6.3 | Bundle tree-shake unused shadcn/ui components |
+| 6.6 | Trade journal export (CSV/PDF) |
 
 ---
 

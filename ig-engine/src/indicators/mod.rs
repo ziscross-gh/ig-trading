@@ -183,7 +183,7 @@ impl RingBuffer {
 }
 
 /// Full indicator set that maintains state across candle updates
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct IndicatorSet {
     // Configuration
     pub short_period: usize,

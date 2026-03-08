@@ -117,7 +117,7 @@ impl TraderAPI for MockTraderClient {
 
         Ok(IGTradeResponse {
             deal_reference,
-            deal_status: "ACCEPTED".to_string(),
+            deal_status: Some("ACCEPTED".to_string()),
             reason: None,
         })
     }
@@ -131,7 +131,7 @@ impl TraderAPI for MockTraderClient {
         if self.positions.remove(deal_id).is_some() {
             Ok(IGTradeResponse {
                 deal_reference: Uuid::new_v4().to_string(),
-                deal_status: "ACCEPTED".to_string(),
+                deal_status: Some("ACCEPTED".to_string()),
                 reason: None,
             })
         } else {
@@ -146,7 +146,7 @@ impl TraderAPI for MockTraderClient {
     ) -> Result<IGTradeResponse, anyhow::Error> {
         Ok(IGTradeResponse {
             deal_reference: Uuid::new_v4().to_string(),
-            deal_status: "ACCEPTED".to_string(),
+            deal_status: Some("ACCEPTED".to_string()),
             reason: None,
         })
     }
@@ -161,8 +161,8 @@ impl TraderAPI for MockTraderClient {
             deal_status: "ACCEPTED".to_string(),
             epic: "MOCK_EPIC".to_string(),
             direction: "BUY".to_string(),
-            size: 1.0,
-            level: 1.18,
+            size: Some(1.0),
+            level: Some(1.18),
             stop_level: None,
             stop_distance: None,
             limit_level: None,

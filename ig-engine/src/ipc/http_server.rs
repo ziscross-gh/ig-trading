@@ -91,6 +91,12 @@ pub struct BacktestRequest {
     pub risk_pct: f64,
 }
 
+#[derive(Debug, Deserialize)]
+pub struct TriggerRequest {
+    pub epic: String,
+    pub direction: String, // "buy" | "sell"
+}
+
 #[derive(Debug, Serialize)]
 pub struct StatusResponse {
     mode: String,
@@ -181,6 +187,7 @@ pub async fn start(
         .route("/api/backtest", post(post_backtest))
         .route("/api/optimizer/results", get(get_optimizer_results))
         .route("/api/control", post(post_control))
+        .route("/api/trigger", post(post_trigger))
         .route("/api/config", put(put_config))
         .route("/api/ws", get(ws_handler))
         .layer(CorsLayer::permissive())
@@ -645,8 +652,8 @@ async fn get_indicators(
     let state = app_state.engine_state.read().await;
 
     match state.markets.indicators.get(&params.epic) {
-        Some(indicator_set) => {
-            match indicator_set.snapshot() {
+        Some(indicator_set_map) => {
+            match indicator_set_map.get("HOUR").and_then(|i| i.snapshot()) {
                 Some(snap) => Json(json!({
                     "epic": params.epic,
                     "available": true,
@@ -811,7 +818,7 @@ async fn get_scan(
             let market_state = state.markets.live.get(epic)?;
 
             // Get indicators for this market
-            let indicators = state.markets.indicators.get(epic)?.snapshot()?;
+            let indicators = state.markets.indicators.get(epic)?.get("HOUR")?.snapshot()?;
 
             // Calculate trend and strength
             let price = market_state.bid;
@@ -1299,6 +1306,23 @@ async fn post_backtest(
         "epic": epic,
         "result": result,
         "candle_count": candles.len(),
+        "timestamp": Utc::now().to_rfc3339(),
+    }))
+}
+
+/// Trigger endpoint: manually request a trade for an epic
+async fn post_trigger(
+    State(app_state): State<AppState>,
+    Json(payload): Json<TriggerRequest>,
+) -> Json<Value> {
+    info!("Manual trigger received for {} {}", payload.epic, payload.direction);
+
+    let event = EngineEvent::trigger_trade(payload.epic.clone(), payload.direction.clone());
+    let _ = app_state.event_tx.send(event);
+
+    Json(json!({
+        "success": true,
+        "message": format!("Trigger request for {} {} sent to engine", payload.epic, payload.direction),
         "timestamp": Utc::now().to_rfc3339(),
     }))
 }

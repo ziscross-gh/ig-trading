@@ -30,6 +30,10 @@ pub async fn handle_position_monitoring(
             .map(|(epic, ms)| (epic.clone(), (ms.bid + ms.ask) / 2.0))
             .collect();
 
+        // Clone the small instrument_specs map so we can hold it alongside a
+        // mutable borrow of s.trades.active without a borrow conflict.
+        let instrument_specs = s.config.risk.instrument_specs.clone();
+
         for (idx, position) in s.trades.active.iter_mut().enumerate() {
             if let Some(&current_price) = price_map.get(&position.epic) {
                 position.current_price = current_price;
@@ -41,13 +45,20 @@ pub async fn handle_position_monitoring(
                 };
 
                 if let Some(trail_dist) = position.trailing_stop {
+                    // Reduce API spam by requiring SL to move by at least 5 pips
+                    let spec = instrument_specs.get(&position.epic)
+                        .cloned()
+                        .or_else(|| crate::risk::InstrumentSpec::from_epic_fallback(&position.epic));
+                    let min_step = spec.map(|sp| sp.pip_scale * 5.0).unwrap_or(0.0005);
+
                     let new_sl = match position.direction {
                         Direction::Buy => current_price - trail_dist,
                         Direction::Sell => current_price + trail_dist,
                     };
+                    
                     let should_update = match position.direction {
-                        Direction::Buy => position.stop_loss.map_or(true, |sl| new_sl > sl),
-                        Direction::Sell => position.stop_loss.map_or(true, |sl| new_sl < sl),
+                        Direction::Buy => position.stop_loss.map_or(true, |sl| new_sl >= sl + min_step),
+                        Direction::Sell => position.stop_loss.map_or(true, |sl| new_sl <= sl - min_step),
                     };
                     if should_update {
                         debug!(
@@ -161,28 +172,6 @@ pub async fn handle_position_monitoring(
 
         match order_manager.close_position(client, &position).await {
             Ok(close_result) => {
-                {
-                    let mut s = state.write().await;
-                    s.record_trade_result(close_result.pnl);
-
-                    s.add_closed_trade(ClosedTrade {
-                        deal_id: close_result.deal_id.clone(),
-                        epic: position.epic.clone(),
-                        direction: position.direction.clone(),
-                        size: position.size,
-                        entry_price: position.open_price,
-                        exit_price: close_result.close_price,
-                        stop_loss: position.stop_loss.unwrap_or(0.0),
-                        take_profit: position.take_profit,
-                        pnl: close_result.pnl,
-                        strategy: position.strategy.clone(),
-                        status: reason.to_lowercase().replace(' ', "_"),
-                        opened_at: position.opened_at,
-                        closed_at: Utc::now(),
-                        is_virtual: position.is_virtual,
-                    });
-                }
-
                 let closed_trade = ClosedTrade {
                     deal_id: close_result.deal_id.clone(),
                     epic: position.epic.clone(),
@@ -199,6 +188,12 @@ pub async fn handle_position_monitoring(
                     closed_at: Utc::now(),
                     is_virtual: position.is_virtual,
                 };
+
+                {
+                    let mut s = state.write().await;
+                    s.record_trade_result(close_result.pnl);
+                    s.add_closed_trade(closed_trade.clone());
+                }
 
                 {
                     let mut s = state.write().await;

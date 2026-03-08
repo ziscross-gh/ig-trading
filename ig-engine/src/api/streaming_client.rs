@@ -1,21 +1,35 @@
 #![allow(dead_code)]
 use std::sync::Arc;
 use tokio::sync::{Notify, RwLock, broadcast, mpsc};
-use tracing::{info, error};
+use tracing::{info, warn, error};
+use chrono::Utc;
 
 use lightstreamer_client::ls_client::{LightstreamerClient, LogType, Transport};
 use lightstreamer_client::subscription::{Subscription, SubscriptionMode, Snapshot};
 use lightstreamer_client::subscription_listener::SubscriptionListener;
 use lightstreamer_client::item_update::ItemUpdate;
 
-use crate::engine::state::{EngineState, MarketState};
+use crate::engine::state::{EngineState, MarketState, ClosedTrade, Direction};
 use crate::ipc::events::EngineEvent;
+use crate::notifications::telegram::{TelegramNotifier, get_instrument_name};
 
 /// Internal event for the state worker
 pub enum StateUpdate {
     Market(MarketState),
     Account(serde_json::Value),
     Trade(serde_json::Value),
+}
+
+/// IG OPU (Open Position Update) — subset of fields we care about
+/// Arrives as JSON string inside the TRADE subscription's OPU field.
+struct OPU {
+    deal_id: String,
+    epic: String,
+    direction: Direction,
+    level: f64,      // close price
+    size: f64,
+    status: String,  // "DELETED" = closed
+    pnl: f64,
 }
 
 /// IG Lightstreamer streaming price data fields
@@ -41,7 +55,7 @@ impl SubscriptionListener for StreamingListener {
         let tx = self.tx.clone();
         let name = self.name.clone();
         let update_clone = update.clone();
-        tracing::info!("Raw LS update [{}]: {:?}", name, update_clone);
+        tracing::trace!("Raw LS update [{}]: {:?}", name, update_clone);
 
         tokio::spawn(async move {
             match name.as_str() {
@@ -89,24 +103,186 @@ impl ItemUpdateExt for ItemUpdate {
     }
 }
 
+/// Spawn the state-update worker task **once**, shared across all reconnect attempts.
+///
+/// Previously the worker was spawned inside `IGStreamingClient::new()`, which caused
+/// a new task (and a new mpsc channel) to be created on every reconnect. During
+/// market closure the reconnect loop cycles every ~5 s, leaking task handles.
+///
+/// Callers should invoke this function once before the reconnect loop, then pass
+/// clones of the returned `Sender` into each `IGStreamingClient::new()` call.
+pub fn spawn_state_worker(
+    state: Arc<RwLock<EngineState>>,
+    event_tx: broadcast::Sender<EngineEvent>,
+) -> mpsc::Sender<StateUpdate> {
+    let (update_tx, mut update_rx) = mpsc::channel::<StateUpdate>(100);
+    let state_worker = state;
+    let event_tx_worker = event_tx;
+
+    tokio::spawn(async move {
+        info!("State update worker started");
+        while let Some(update) = update_rx.recv().await {
+            match update {
+                StateUpdate::Market(mut market_state) => {
+                    let mid = (market_state.bid + market_state.ask) / 2.0;
+                    let now_ts = Utc::now().timestamp();
+
+                    let mut s = state_worker.write().await;
+
+                    // Preserve market_state from previous update when not included in this tick.
+                    // Lightstreamer Merge mode only sends changed fields, so MARKET_STATE may
+                    // arrive on the snapshot and then not repeat on subsequent price ticks.
+                    if market_state.market_state.is_none() {
+                        if let Some(prev) = s.markets.live.get(&market_state.epic) {
+                            market_state.market_state = prev.market_state.clone();
+                        }
+                    }
+
+                    // Accumulate tick into the current OHLCV bar.
+                    // When the bar boundary flips, push the completed candle to history
+                    // and advance each indicator set with a proper OHLCV bar.
+                    if let Some(completed) = s.markets.bar_accumulator.update(&market_state.epic, mid, now_ts) {
+                        s.markets.history.push(&market_state.epic, "HOUR", completed.clone());
+
+                        if let Some(tf_map) = s.markets.indicators.get_mut(&market_state.epic) {
+                            for indicator_set in tf_map.values_mut() {
+                                indicator_set.update(&completed);
+                            }
+                        }
+
+                        info!(
+                            "Bar closed for {} @ {}: O={:.5} H={:.5} L={:.5} C={:.5}",
+                            market_state.epic,
+                            completed.timestamp,
+                            completed.open,
+                            completed.high,
+                            completed.low,
+                            completed.close
+                        );
+                    }
+
+                    s.markets.live.insert(market_state.epic.clone(), market_state.clone());
+                    let _ = event_tx_worker.send(EngineEvent::market_update(market_state));
+                }
+                StateUpdate::Account(fields) => {
+                    let mut s = state_worker.write().await;
+                    // Map LS fields to AccountState
+                    if let Some(val) = fields.get("FUNDS").and_then(|v| v.as_str()).and_then(|v| v.parse::<f64>().ok()) {
+                        s.account.balance = val;
+                    }
+                    if let Some(val) = fields.get("AVAILABLE_TO_DEAL").and_then(|v| v.as_str()).and_then(|v| v.parse::<f64>().ok()) {
+                        s.account.available = val;
+                    }
+                    if let Some(val) = fields.get("EQUITY_USED").and_then(|v| v.as_str()).and_then(|v| v.parse::<f64>().ok()) {
+                        s.account.margin = val;
+                    }
+                    if let Some(val) = fields.get("PNL").and_then(|v| v.as_str()).and_then(|v| v.parse::<f64>().ok()) {
+                        s.account.pnl = val;
+                    }
+                }
+                StateUpdate::Trade(fields) => {
+                    // Parse OPU (Open Position Update) — sent when IG closes a position server-side
+                    // e.g. stop loss hit, take profit hit, manual close in app
+                    if let Some(opu_str) = fields.get("OPU").and_then(|v| v.as_str()) {
+                        match parse_opu(opu_str) {
+                            Some(opu) if opu.status == "DELETED" => {
+                                info!("OPU: position closed server-side: deal_id={}, epic={}, pnl={:.2}", opu.deal_id, opu.epic, opu.pnl);
+
+                                let (closed_position, close_reason) = {
+                                    let mut s = state_worker.write().await;
+
+                                    // Find and remove the position from active list
+                                    let pos_idx = s.trades.active.iter().position(|p| p.deal_id == opu.deal_id);
+                                    if let Some(idx) = pos_idx {
+                                        let pos = s.trades.active.remove(idx);
+
+                                        // Record in closed trade history
+                                        s.add_closed_trade(ClosedTrade {
+                                            deal_id: opu.deal_id.clone(),
+                                            epic: opu.epic.clone(),
+                                            direction: opu.direction.clone(),
+                                            size: pos.size,
+                                            entry_price: pos.open_price,
+                                            exit_price: opu.level,
+                                            stop_loss: pos.stop_loss.unwrap_or(0.0),
+                                            take_profit: pos.take_profit,
+                                            pnl: opu.pnl,
+                                            strategy: pos.strategy.clone(),
+                                            status: "closed_server_side".to_string(),
+                                            opened_at: pos.opened_at,
+                                            closed_at: Utc::now(),
+                                            is_virtual: pos.is_virtual,
+                                        });
+
+                                        s.record_trade_result(opu.pnl);
+                                        (Some(pos), "Server-side close (SL/TP/manual)")
+                                    } else {
+                                        warn!("OPU DELETED for unknown deal_id={} — may have been closed by engine already", opu.deal_id);
+                                        (None, "")
+                                    }
+                                };
+
+                                if let Some(pos) = closed_position {
+                                    let _ = event_tx_worker.send(EngineEvent::position_closed(
+                                        opu.deal_id.clone(),
+                                        opu.pnl,
+                                    ));
+
+                                    // Telegram notification
+                                    let tg = TelegramNotifier::new();
+                                    let name = get_instrument_name(&opu.epic);
+                                    let dir = format!("{}", pos.direction);
+                                    let pnl = opu.pnl;
+                                    let reason = close_reason.to_string();
+                                    tokio::spawn(async move {
+                                        let msg = format!(
+                                            "{} <b>POSITION CLOSED (stream)</b>\n\n<b>Instrument:</b> {} ({})\n<b>Direction:</b> {}\n<b>Reason:</b> {}\n<b>P&amp;L:</b> {:.2}",
+                                            if pnl >= 0.0 { "✅" } else { "❌" },
+                                            name, opu.epic, dir, reason, pnl
+                                        );
+                                        let _ = tg.send_message(&msg).await;
+                                    });
+                                }
+                            }
+                            Some(opu) => {
+                                info!("OPU: status={} for deal_id={} (not a close, ignoring)", opu.status, opu.deal_id);
+                            }
+                            None => {
+                                warn!("OPU: failed to parse OPU payload: {}", opu_str);
+                            }
+                        }
+                    } else if fields.get("CONFIRMS").and_then(|v| v.as_str()).is_some() {
+                        // CONFIRMS are already handled by order_manager polling — safe to ignore here
+                        info!("Trade CONFIRM received via stream (order_manager handles this)");
+                    }
+                }
+            }
+        }
+        info!("State update worker stopped");
+    });
+
+    update_tx
+}
+
 /// Streaming client for IG Lightstreamer market data
 pub struct IGStreamingClient {
     ls_client: LightstreamerClient,
     shutdown: Arc<Notify>,
-    state: Arc<RwLock<EngineState>>,
-    event_tx: broadcast::Sender<EngineEvent>,
     update_tx: mpsc::Sender<StateUpdate>,
 }
 
 impl IGStreamingClient {
-    /// Create a new streaming client using credentials from the REST client
+    /// Create a new streaming client.
+    ///
+    /// `update_tx` is the sender half of the state-update channel created by
+    /// [`spawn_state_worker`].  The same channel is reused across reconnects so
+    /// no new worker task is spawned here.
     pub fn new(
         lightstreamer_endpoint: &str,
         account_id: &str,
         cst: &str,
         security_token: &str,
-        state: Arc<RwLock<EngineState>>,
-        event_tx: broadcast::Sender<EngineEvent>,
+        update_tx: mpsc::Sender<StateUpdate>,
     ) -> Result<Self, anyhow::Error> {
         // IG wants the password as "CST-{cst}|XST-{security_token}"
         let ls_password = format!("CST-{}|XST-{}", cst, security_token);
@@ -128,57 +304,14 @@ impl IGStreamingClient {
 
         let shutdown = Arc::new(Notify::new());
 
-        // Create update worker
-        let (update_tx, mut update_rx) = mpsc::channel(100);
-        let state_worker = state.clone();
-        let event_tx_worker = event_tx.clone();
-
-        tokio::spawn(async move {
-            info!("State update worker started");
-            while let Some(update) = update_rx.recv().await {
-                match update {
-                    StateUpdate::Market(market_state) => {
-                        let mut s = state_worker.write().await;
-                        s.markets.live.insert(market_state.epic.clone(), market_state.clone());
-                        let _ = event_tx_worker.send(EngineEvent::market_update(market_state));
-                    }
-                    StateUpdate::Account(fields) => {
-                        let mut s = state_worker.write().await;
-                        // Map LS fields to AccountState
-                        if let Some(val) = fields.get("FUNDS").and_then(|v| v.as_str()).and_then(|v| v.parse::<f64>().ok()) {
-                            s.account.balance = val;
-                        }
-                        if let Some(val) = fields.get("AVAILABLE_TO_DEAL").and_then(|v| v.as_str()).and_then(|v| v.parse::<f64>().ok()) {
-                            s.account.available = val;
-                        }
-                        if let Some(val) = fields.get("EQUITY_USED").and_then(|v| v.as_str()).and_then(|v| v.parse::<f64>().ok()) {
-                            s.account.margin = val;
-                        }
-                        if let Some(val) = fields.get("PNL").and_then(|v| v.as_str()).and_then(|v| v.parse::<f64>().ok()) {
-                            s.account.pnl = val;
-                        }
-                        // Optionally broadcast account heartbeat
-                    }
-                    StateUpdate::Trade(fields) => {
-                        info!("Trade update received: {:?}", fields);
-                        // Confirms, OPU (Open Position Update), WOU (Working Order Update)
-                        // Trigger a positions refresh if something changed
-                    }
-                }
-            }
-            info!("State update worker stopped");
-        });
-
         info!(
             "Lightstreamer client created for endpoint: {}",
             full_endpoint
         );
 
-        Ok(Self { 
-            ls_client, 
+        Ok(Self {
+            ls_client,
             shutdown,
-            state,
-            event_tx,
             update_tx,
         })
     }
@@ -312,9 +445,18 @@ pub fn parse_market_state_from_update(update: &ItemUpdate) -> Option<MarketState
             .and_then(|v| v.parse::<f64>().ok())
     };
 
+    // String-valued field extractor (e.g. MARKET_STATE = "TRADEABLE" / "EDIT" / "OFFLINE")
+    let get_string_field = |name: &str| -> Option<String> {
+        update
+            .changed_fields
+            .get(name)
+            .cloned()
+            .or_else(|| update.fields.get(name).and_then(|v| v.clone()))
+    };
+
     let bid = get_field("BID");
     let offer = get_field("OFFER");
-    
+
     // If we have neither bid nor offer, skip this update as it might be high/low only
     if bid.is_none() && offer.is_none() {
         return None;
@@ -328,6 +470,40 @@ pub fn parse_market_state_from_update(update: &ItemUpdate) -> Option<MarketState
         high: get_field("HIGH").unwrap_or(0.0),
         low: get_field("LOW").unwrap_or(0.0),
         change_pct: get_field("CHANGE_PCT").unwrap_or(0.0),
+        market_state: get_string_field("MARKET_STATE"),
         last_update: chrono::Utc::now(),
+    })
+}
+
+/// Helper to parse the JSON string payload of an OPU update
+fn parse_opu(payload: &str) -> Option<OPU> {
+    let json: serde_json::Value = serde_json::from_str(payload).ok()?;
+    
+    let deal_id = json.get("dealId")?.as_str()?.to_string();
+    let epic = json.get("epic")?.as_str()?.to_string();
+    
+    let dir_str = json.get("direction")?.as_str()?;
+    let direction = match dir_str {
+        "BUY" => Direction::Buy,
+        "SELL" => Direction::Sell,
+        _ => return None,
+    };
+    
+    let level = json.get("level")?.as_f64()?;
+    let size = json.get("size")?.as_f64()?;
+    let status = json.get("status")?.as_str()?.to_string();
+    
+    // OPU pnl is often absent until closed/deleted, or inside a nested field depending on the version.
+    // We try 'profitAndLoss' first, otherwise default to 0.0 (the server doesn't always send the final PnL strictly in the OPU payload; in production you'd reconcile this with account/trade history).
+    let pnl = json.get("profitAndLoss").and_then(|v| v.as_f64()).unwrap_or(0.0);
+    
+    Some(OPU {
+        deal_id,
+        epic,
+        direction,
+        level,
+        size,
+        status,
+        pnl,
     })
 }

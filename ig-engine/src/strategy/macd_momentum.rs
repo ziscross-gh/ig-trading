@@ -94,7 +94,10 @@ impl Strategy for MACDMomentumStrategy {
         "MACD_Momentum"
     }
 
-    fn evaluate(&self, epic: &str, price: f64, indicators: &IndicatorSnapshot) -> Option<Signal> {
+    fn evaluate(&self, epic: &str, price: f64, indicators_map: &std::collections::HashMap<String, IndicatorSnapshot>) -> Option<Signal> {
+        // Fallback to "HOUR" timeframe for single-TF backward compatibility
+        let indicators = indicators_map.get("HOUR")?;
+
         let histogram = indicators.macd_histogram?;
         let prev_histogram = indicators.prev_macd_histogram?;
         let adx = indicators.adx?;

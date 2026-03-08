@@ -59,6 +59,10 @@ pub enum EventVariant {
     Shutdown {
         reason: String,
     },
+    TriggerTrade {
+        epic: String,
+        direction: String,
+    },
 }
 
 impl EngineEvent {
@@ -156,6 +160,13 @@ impl EngineEvent {
         Self {
             timestamp: Utc::now(),
             event: EventVariant::ConfigChanged { field },
+        }
+    }
+
+    pub fn trigger_trade(epic: String, direction: String) -> Self {
+        Self {
+            timestamp: Utc::now(),
+            event: EventVariant::TriggerTrade { epic, direction },
         }
     }
 }
