@@ -33,6 +33,7 @@ pub async fn handle_position_monitoring(
         // Clone the small instrument_specs map so we can hold it alongside a
         // mutable borrow of s.trades.active without a borrow conflict.
         let instrument_specs = s.config.risk.instrument_specs.clone();
+        let trailing_stop_min_pips = s.config.risk.trailing_stop_min_pips;
 
         for (idx, position) in s.trades.active.iter_mut().enumerate() {
             if let Some(&current_price) = price_map.get(&position.epic) {
@@ -45,11 +46,11 @@ pub async fn handle_position_monitoring(
                 };
 
                 if let Some(trail_dist) = position.trailing_stop {
-                    // Reduce API spam by requiring SL to move by at least 5 pips
+                    // Reduce API spam by requiring SL to move by at least X pips
                     let spec = instrument_specs.get(&position.epic)
                         .cloned()
                         .or_else(|| crate::risk::InstrumentSpec::from_epic_fallback(&position.epic));
-                    let min_step = spec.map(|sp| sp.pip_scale * 5.0).unwrap_or(0.0005);
+                    let min_step = spec.map(|sp| sp.pip_scale * trailing_stop_min_pips).unwrap_or(0.0005);
 
                     let new_sl = match position.direction {
                         Direction::Buy => current_price - trail_dist,

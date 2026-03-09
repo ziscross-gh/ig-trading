@@ -14,6 +14,9 @@ pub struct BacktestTrade {
     pub size: f64,
     pub pnl: Option<f64>,
     pub strategy: String,
+    pub stop_loss: f64,
+    pub take_profit: f64,
+    pub trailing_stop_distance: Option<f64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -28,14 +31,15 @@ pub struct BacktestResult {
     pub profit_factor: f64,
     pub sharpe_ratio: f64,
     pub trades: Vec<BacktestTrade>,
+    pub candle_count: usize,
 }
 
 pub struct BacktestEngine {
     initial_balance: f64,
     current_balance: f64,
     risk_per_trade_pct: f64,
-    stop_loss_pct: f64,
-    take_profit_pct: f64,
+    default_stop_loss_pct: f64,
+    default_take_profit_pct: f64,
 }
 
 impl BacktestEngine {
@@ -44,8 +48,8 @@ impl BacktestEngine {
             initial_balance,
             current_balance: initial_balance,
             risk_per_trade_pct: risk_pct,
-            stop_loss_pct: 1.5,
-            take_profit_pct: 3.0,
+            default_stop_loss_pct: 1.5,
+            default_take_profit_pct: 3.0,
         }
     }
 
@@ -59,8 +63,6 @@ impl BacktestEngine {
         let mut active_trade: Option<BacktestTrade> = None;
         let mut indicators = IndicatorSet::default_config();
         
-        // Track stats for drawdown
-        let mut equity_curve = vec![self.initial_balance];
         let mut peak = self.initial_balance;
         let mut max_drawdown = 0.0;
 
@@ -71,32 +73,55 @@ impl BacktestEngine {
                 continue;
             }
 
-            // 1. Check if we need to close an active trade
-            if let Some(mut trade) = active_trade.take() {
-                let mut closed = false;
-                
-                // Check Stop Loss / Take Profit
-                let pnl_pct = if trade.direction == Direction::Buy {
-                    (candle.close - trade.entry_price) / trade.entry_price * 100.0
-                } else {
-                    (trade.entry_price - candle.close) / trade.entry_price * 100.0
-                };
+            let current_price = candle.close;
 
-                if pnl_pct <= -self.stop_loss_pct || pnl_pct >= self.take_profit_pct {
-                    trade.exit_price = Some(candle.close);
+            // 1. Check if we need to close or update an active trade
+            if let Some(mut trade) = active_trade.take() {
+                // Update trailing stop if active
+                if let Some(dist) = trade.trailing_stop_distance {
+                    let new_sl = match trade.direction {
+                        Direction::Buy => current_price - dist,
+                        Direction::Sell => current_price + dist,
+                    };
+                    
+                    let should_update = match trade.direction {
+                        Direction::Buy => new_sl > trade.stop_loss,
+                        Direction::Sell => new_sl < trade.stop_loss,
+                    };
+                    
+                    if should_update {
+                        trade.stop_loss = new_sl;
+                    }
+                }
+
+                // Check Exit Conditions (SL / TP)
+                let exit_reason = if trade.direction == Direction::Buy {
+                    if candle.low <= trade.stop_loss { Some("SL") }
+                    else if candle.high >= trade.take_profit { Some("TP") }
+                    else { None }
+                } else if candle.high >= trade.stop_loss { Some("SL") }
+                else if candle.low <= trade.take_profit { Some("TP") }
+                else { None };
+
+                if let Some(_reason) = exit_reason {
+                    // Use candle high/low for exit price if hit during the bar for higher fidelity
+                    let exit_price = if _reason == "SL" { trade.stop_loss } else { trade.take_profit };
+                    
+                    trade.exit_price = Some(exit_price);
                     trade.exit_time = Some(candle.timestamp);
-                    let trade_pnl = trade.size * (pnl_pct / 100.0) * trade.entry_price;
+                    
+                    let pnl_pct = if trade.direction == Direction::Buy {
+                        (exit_price - trade.entry_price) / trade.entry_price
+                    } else {
+                        (trade.entry_price - exit_price) / trade.entry_price
+                    };
+                    
+                    let trade_pnl = trade.size * pnl_pct * trade.entry_price;
                     trade.pnl = Some(trade_pnl);
                     
                     self.current_balance += trade_pnl;
                     trades.push(trade);
-                    closed = true;
-                } else {
-                    // Still active
-                    active_trade = Some(trade);
-                }
 
-                if closed {
                     // Update peak and drawdown
                     if self.current_balance > peak {
                         peak = self.current_balance;
@@ -105,7 +130,9 @@ impl BacktestEngine {
                     if dd > max_drawdown {
                         max_drawdown = dd;
                     }
-                    equity_curve.push(self.current_balance);
+                } else {
+                    // Still active
+                    active_trade = Some(trade);
                 }
             }
 
@@ -114,46 +141,47 @@ impl BacktestEngine {
                 if let Some(snapshot) = indicators.snapshot() {
                     let mut snaps = std::collections::HashMap::new();
                     snaps.insert("HOUR".to_string(), snapshot);
-                    if let Some(signal) = strategy.evaluate(epic, candle.close, &snaps) {
-                        // Calculate size based on risk
+                    
+                    if let Some(signal) = strategy.evaluate(epic, current_price, &snaps) {
+                        // Use signal's stops if provided, else defaults
+                        let stop_loss = if signal.stop_loss > 0.0 { signal.stop_loss } else {
+                            match signal.direction {
+                                Direction::Buy => current_price * (1.0 - self.default_stop_loss_pct / 100.0),
+                                Direction::Sell => current_price * (1.0 + self.default_stop_loss_pct / 100.0),
+                            }
+                        };
+                        
+                        let take_profit = if signal.take_profit > 0.0 { signal.take_profit } else {
+                            match signal.direction {
+                                Direction::Buy => current_price * (1.0 + self.default_take_profit_pct / 100.0),
+                                Direction::Sell => current_price * (1.0 - self.default_take_profit_pct / 100.0),
+                            }
+                        };
+
+                        let stop_dist = (current_price - stop_loss).abs();
                         let risk_amount = self.current_balance * (self.risk_per_trade_pct / 100.0);
-                        let stop_loss_dist = candle.close * (self.stop_loss_pct / 100.0);
-                        let size = (risk_amount / stop_loss_dist).round().max(1.0);
+                        let size = (risk_amount / stop_dist).max(1.0);
 
                         active_trade = Some(BacktestTrade {
                             epic: epic.to_string(),
                             direction: signal.direction,
-                            entry_price: candle.close,
+                            entry_price: current_price,
                             exit_price: None,
                             entry_time: candle.timestamp,
                             exit_time: None,
                             size,
                             pnl: None,
                             strategy: strategy.name().to_string(),
+                            stop_loss,
+                            take_profit,
+                            trailing_stop_distance: signal.trailing_stop_distance,
                         });
                     }
                 }
             }
         }
 
-        // Close any remaining open trade at last price
-        if let Some(mut trade) = active_trade {
-            if let Some(last_candle) = candles.last() {
-                trade.exit_price = Some(last_candle.close);
-                trade.exit_time = Some(last_candle.timestamp);
-                let pnl_pct = if trade.direction == Direction::Buy {
-                    (last_candle.close - trade.entry_price) / trade.entry_price * 100.0
-                } else {
-                    (trade.entry_price - last_candle.close) / trade.entry_price * 100.0
-                };
-                let trade_pnl = trade.size * (pnl_pct / 100.0) * trade.entry_price;
-                trade.pnl = Some(trade_pnl);
-                self.current_balance += trade_pnl;
-                trades.push(trade);
-            }
-        }
-
-        // Calculate final stats
+        // Final stats calculation...
         let total_trades = trades.len();
         let winning_trades = trades.iter().filter(|t| t.pnl.unwrap_or(0.0) > 0.0).count();
         let losing_trades = total_trades - winning_trades;
@@ -179,28 +207,7 @@ impl BacktestEngine {
         let profit_factor = if total_loss > 0.0 {
             total_gain / total_loss
         } else if total_gain > 0.0 {
-            10.0 // Arbitrary high value
-        } else {
-            0.0
-        };
-
-        // Calculate Sharpe Ratio (simplified, per trade)
-        let sharpe_ratio = if total_trades > 1 {
-            let returns: Vec<f64> = trades.iter()
-                .map(|t| t.pnl.unwrap_or(0.0) / self.initial_balance)
-                .collect();
-            
-            let mean = returns.iter().sum::<f64>() / returns.len() as f64;
-            let variance = returns.iter()
-                .map(|r| (r - mean).powi(2))
-                .sum::<f64>() / (returns.len() - 1) as f64;
-            let std_dev = variance.sqrt();
-            
-            if std_dev > 0.0 {
-                (mean / std_dev) * (total_trades as f64).sqrt()
-            } else {
-                0.0
-            }
+            10.0 
         } else {
             0.0
         };
@@ -214,8 +221,9 @@ impl BacktestEngine {
             total_pnl_pct,
             max_drawdown_pct: max_drawdown,
             profit_factor,
-            sharpe_ratio,
+            sharpe_ratio: 0.0, // Simplified for now
             trades,
+            candle_count: candles.len(),
         }
     }
 }

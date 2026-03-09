@@ -220,6 +220,7 @@ impl Default for EngineConfig {
                 limited_risk_account: true,
                 min_guaranteed_stop_distance: None,
                 use_trailing_stop: false,
+                trailing_stop_min_pips: 5.0,
                 allowed_sessions: vec![
                     crate::engine::state::Session::Asia,
                     crate::engine::state::Session::London,

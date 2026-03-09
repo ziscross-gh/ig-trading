@@ -143,6 +143,7 @@ pub struct RiskConfig {
     pub limited_risk_account: bool,
     pub min_guaranteed_stop_distance: Option<f64>,
     pub use_trailing_stop: bool,
+    pub trailing_stop_min_pips: f64,
     pub allowed_sessions: Vec<crate::engine::state::Session>,
     /// News blackout windows: list of (hour, minute) UTC times to block ±`news_blackout_mins` around
     /// Kept for backward compatibility — superseded by `macro_events` when non-empty.
@@ -178,6 +179,7 @@ impl Default for RiskConfig {
             limited_risk_account: true,
             min_guaranteed_stop_distance: None,
             use_trailing_stop: false,
+            trailing_stop_min_pips: 5.0,
             allowed_sessions: vec![
                 crate::engine::state::Session::Asia,
                 crate::engine::state::Session::London,
