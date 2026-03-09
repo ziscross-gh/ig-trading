@@ -74,10 +74,8 @@ impl OrderManager {
             stop_level: Some(trade.stop_loss),
             stop_distance: None,
             limit_level: Some(trade.take_profit),
-            currency_code: Some(if trade.epic.contains("EURUSD") || trade.epic.contains("GBPUSD") { 
+            currency_code: Some(if trade.epic.contains("EURUSD") || trade.epic.contains("GBPUSD") || trade.epic.contains("USDJPY") { 
                 "USD".to_string() 
-            } else if trade.epic.contains("USDJPY") {
-                "JPY".to_string()
             } else {
                 "SGD".to_string()
             }),
