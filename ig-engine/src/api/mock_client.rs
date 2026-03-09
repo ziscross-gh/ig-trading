@@ -7,6 +7,7 @@ use uuid::Uuid;
 
 pub struct MockTraderClient {
     pub positions: HashMap<String, Position>,
+    pub position_epics: HashMap<String, String>,  // deal_id → epic
     pub account_balance: f64,
     pub next_prices: HashMap<String, f64>,
 }
@@ -15,6 +16,7 @@ impl MockTraderClient {
     pub fn new(initial_balance: f64) -> Self {
         Self {
             positions: HashMap::new(),
+            position_epics: HashMap::new(),
             account_balance: initial_balance,
             next_prices: HashMap::new(),
         }
@@ -91,18 +93,26 @@ impl TraderAPI for MockTraderClient {
     }
 
     async fn get_positions(&mut self) -> Result<IGPositionsResponse, anyhow::Error> {
-        let positions: Vec<Position> = self.positions.values().cloned().collect();
+        let positions: Vec<PositionWrapper> = self.positions.iter().map(|(deal_id, pos)| {
+            let epic = self.position_epics.get(deal_id).cloned().unwrap_or_default();
+            PositionWrapper {
+                position: pos.clone(),
+                market: MarketData {
+                    epic,
+                    instrument_name: None,
+                    expiry: None,
+                },
+            }
+        }).collect();
         Ok(IGPositionsResponse { positions })
     }
 
     async fn open_position(&mut self, request: IGTradeRequest) -> Result<IGTradeResponse, anyhow::Error> {
         let deal_reference = Uuid::new_v4().to_string();
         let deal_id = format!("DIA_{}", deal_reference);
-        
+
         let position = Position {
             deal_id: deal_id.clone(),
-            deal_reference: deal_reference.clone(),
-            epic: request.epic.clone(),
             direction: request.direction.clone(),
             size: request.size,
             level: request.level.unwrap_or(1.18),
@@ -110,10 +120,10 @@ impl TraderAPI for MockTraderClient {
             stop_level: request.stop_level,
             created_date: Utc::now().to_rfc3339(),
             currency: request.currency_code.clone().unwrap_or("USD".to_string()),
-            pnl: 0.0,
         };
 
         self.positions.insert(deal_id.clone(), position);
+        self.position_epics.insert(deal_id.clone(), request.epic.clone());
 
         Ok(IGTradeResponse {
             deal_reference,
@@ -128,6 +138,7 @@ impl TraderAPI for MockTraderClient {
         _direction: &str,
         _size: f64,
     ) -> Result<IGTradeResponse, anyhow::Error> {
+        self.position_epics.remove(deal_id);
         if self.positions.remove(deal_id).is_some() {
             Ok(IGTradeResponse {
                 deal_reference: Uuid::new_v4().to_string(),

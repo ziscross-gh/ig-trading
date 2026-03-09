@@ -101,23 +101,35 @@ pub struct IGPriceValue {
 #[serde(rename_all = "camelCase")]
 pub struct Position {
     pub deal_id: String,
-    pub deal_reference: String,
-    pub epic: String,
+    pub created_date: String,
     pub direction: String,
     pub size: f64,
     pub level: f64,
     pub stop_level: Option<f64>,
     pub limit_level: Option<f64>,
-    pub pnl: f64,
     pub currency: String,
-    pub created_date: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MarketData {
+    pub epic: String,
+    pub instrument_name: Option<String>,
+    pub expiry: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PositionWrapper {
+    pub position: Position,
+    pub market: MarketData,
 }
 
 /// Positions response containing list of positions
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct IGPositionsResponse {
-    pub positions: Vec<Position>,
+    pub positions: Vec<PositionWrapper>,
 }
 
 /// Trade request for opening a position
@@ -134,17 +146,23 @@ pub struct IGTradeRequest {
     pub direction: String,
     pub size: f64,
     pub order_type: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub level: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub stop_level: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub stop_distance: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub limit_level: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub currency_code: Option<String>,
     /// REQUIRED for limited risk accounts — must be true
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub guaranteed_stop: Option<bool>,
     /// NOT available on limited risk accounts — always None
     #[serde(skip_serializing_if = "Option::is_none")]
     pub trailing_stop: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub force_open: Option<bool>,
     pub expiry: String,
 }

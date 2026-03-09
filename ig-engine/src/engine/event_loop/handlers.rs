@@ -156,15 +156,14 @@ pub async fn handle_position_monitoring(
             // Send Telegram notification for virtual position close
             let tg = telegram.clone();
             let v_name = get_instrument_name(&position.epic);
-            let v_epic = position.epic.clone();
             let v_direction = format!("{}", position.direction);
             let v_pnl = close_pnl;
             let v_reason = reason.to_string();
             tokio::spawn(async move {
                 let msg = format!(
-                    "{} <b>VIRTUAL POSITION CLOSED</b>\n\n<b>Instrument:</b> {} ({})\n<b>Direction:</b> {}\n<b>Reason:</b> {}\n<b>P&amp;L:</b> {:.2}",
+                    "{} <b>VIRTUAL POSITION CLOSED</b>\n\n<b>Instrument:</b> {}\n<b>Direction:</b> {}\n<b>Reason:</b> {}\n<b>P&amp;L:</b> {:.2}",
                     if v_pnl >= 0.0 { "✅" } else { "❌" },
-                    v_name, v_epic, v_direction, v_reason, v_pnl
+                    v_name, v_direction, v_reason, v_pnl
                 );
                 let _ = tg.send_message(&msg).await;
             });
@@ -232,15 +231,14 @@ pub async fn handle_position_monitoring(
 
                 let tg = telegram.clone();
                 let name = get_instrument_name(&position.epic);
-                let epic = position.epic.clone();
                 let direction = format!("{}", position.direction);
                 let pnl_val = close_result.pnl;
                 let reason_str = reason.to_string();
                 tokio::spawn(async move {
                     let msg = format!(
-                        "{} <b>POSITION CLOSED</b>\n\n<b>Instrument:</b> {} ({})\n<b>Direction:</b> {}\n<b>Reason:</b> {}\n<b>P&amp;L:</b> {:.2}",
+                        "{} <b>POSITION CLOSED</b>\n\n<b>Instrument:</b> {}\n<b>Direction:</b> {}\n<b>Reason:</b> {}\n<b>P&amp;L:</b> {:.2}",
                         if pnl_val >= 0.0 { "✅" } else { "❌" },
-                        name, epic, direction, reason_str, pnl_val
+                        name, direction, reason_str, pnl_val
                     );
                     let _ = tg.send_message(&msg).await;
                 });

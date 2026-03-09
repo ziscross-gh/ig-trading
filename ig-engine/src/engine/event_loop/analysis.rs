@@ -11,7 +11,7 @@ use crate::risk::RiskManager;
 use crate::strategy::traits::Strategy;
 use crate::strategy::ensemble::EnsembleVoter;
 use crate::ipc::events::EngineEvent;
-use crate::notifications::telegram::TelegramNotifier;
+use crate::notifications::telegram::{TelegramNotifier, get_instrument_name};
 
 /// Analyze one or more markets and potentially execute trades
 #[allow(clippy::too_many_arguments)]
@@ -314,6 +314,24 @@ pub async fn analyze_market(
                                     position.size,
                                     position.open_price,
                                 ));
+
+                                let tg = telegram.clone();
+                                let t_epic = position.epic.clone();
+                                let t_dir = position.direction.to_string();
+                                let t_size = position.size;
+                                let t_price = position.open_price;
+                                let t_sl = position.stop_loss;
+                                let t_tp = position.take_profit;
+                                tokio::spawn(async move {
+                                    let mut msg = format!(
+                                        "<b>VIRTUAL TRADE OPENED</b>\n\n<b>Instrument:</b> {}\n<b>Direction:</b> {}\n<b>Size:</b> {}\n<b>Entry Price:</b> {}\n<b>Stop Loss:</b> {}",
+                                        get_instrument_name(&t_epic), t_dir, t_size, t_price, t_sl.unwrap_or(0.0)
+                                    );
+                                    if let Some(tp) = t_tp {
+                                        msg.push_str(&format!("\n<b>Take Profit:</b> {}", tp));
+                                    }
+                                    let _ = tg.send_message(&msg).await;
+                                });
                             }
                         }
                         crate::risk::RiskVerdict::Rejected(reason) => {
@@ -500,10 +518,14 @@ pub async fn execute_manual_trigger(
         }
         crate::risk::RiskVerdict::Rejected(reason) => {
             warn!("Manual trigger REJECTED by risk manager: {}", reason);
+            let alert_msg = format!("Manual trigger for {} rejected: {}", epic, reason);
+            
             let _ = event_tx.send(EngineEvent::risk_alert(
-                format!("Manual trigger for {} rejected: {}", epic, reason),
+                alert_msg.clone(),
                 "high".into(),
             ));
+
+            let _ = telegram.send_instrument_risk_alert(&epic, &reason).await;
         }
     }
 

@@ -68,14 +68,20 @@ impl OrderManager {
         let request = IGTradeRequest {
             epic: trade.epic.clone(),
             direction: trade.direction.clone(),
-            size: 3.0, // HARDCODED FOR TESTING
+            size: trade.size,
             order_type: "MARKET".to_string(),
             level: None,
             stop_level: Some(trade.stop_loss),
             stop_distance: None,
             limit_level: Some(trade.take_profit),
-            currency_code: Some("SGD".to_string()),
-            guaranteed_stop: Some(self.config.guaranteed_stop),
+            currency_code: Some(if trade.epic.contains("EURUSD") || trade.epic.contains("GBPUSD") { 
+                "USD".to_string() 
+            } else if trade.epic.contains("USDJPY") {
+                "JPY".to_string()
+            } else {
+                "SGD".to_string()
+            }),
+            guaranteed_stop: Some(true),
             trailing_stop: None, // NOT available on limited risk accounts
             force_open: Some(true),
             expiry: "-".to_string(),

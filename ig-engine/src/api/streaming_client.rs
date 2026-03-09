@@ -229,16 +229,16 @@ pub fn spawn_state_worker(
                                     ));
 
                                     // Telegram notification
-                                    let tg = TelegramNotifier::new();
+                                    let tg = TelegramNotifier::new(&None);
                                     let name = get_instrument_name(&opu.epic);
                                     let dir = format!("{}", pos.direction);
                                     let pnl = opu.pnl;
                                     let reason = close_reason.to_string();
                                     tokio::spawn(async move {
                                         let msg = format!(
-                                            "{} <b>POSITION CLOSED (stream)</b>\n\n<b>Instrument:</b> {} ({})\n<b>Direction:</b> {}\n<b>Reason:</b> {}\n<b>P&amp;L:</b> {:.2}",
+                                            "{} <b>POSITION CLOSED (stream)</b>\n\n<b>Instrument:</b> {}\n<b>Direction:</b> {}\n<b>Reason:</b> {}\n<b>P&amp;L:</b> {:.2}",
                                             if pnl >= 0.0 { "✅" } else { "❌" },
-                                            name, opu.epic, dir, reason, pnl
+                                            name, dir, reason, pnl
                                         );
                                         let _ = tg.send_message(&msg).await;
                                     });

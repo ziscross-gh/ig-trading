@@ -55,7 +55,7 @@ pub async fn run(
     }
     info!("✅ Config validation passed");
 
-    let telegram = TelegramNotifier::new();
+    let telegram = TelegramNotifier::new(&config.notifications.telegram);
 
     let api_key = std::env::var("IG_API_KEY")
         .map(|v| v.trim().to_string())
@@ -97,6 +97,13 @@ pub async fn run(
     let mode_str = format!("{:?}", config.general.mode);
     telegram.send_startup_ping(&mode_str, &config.markets.epics).await;
 
+    // Spawn Telegram command listener for /status and /positions
+    let tg_listener = telegram.clone();
+    let state_listener = state.clone();
+    tokio::spawn(async move {
+        tg_listener.start_listener(state_listener).await;
+    });
+
     let ls_endpoint = client.lightstreamer_endpoint().unwrap_or("").to_string();
     let acct_id = client.account_id().unwrap_or("").to_string();
 
@@ -110,7 +117,7 @@ pub async fn run(
         let epics_clone = config.markets.epics.clone();
         let acct_id_clone = acct_id.clone();
         let state_clone = state.clone();
-        let mut spawn_event_rx = event_tx.subscribe();
+        let _spawn_event_rx = event_tx.subscribe();
         let streaming_shutdown = Arc::new(tokio::sync::Notify::new());
         let loop_shutdown = streaming_shutdown.clone();
 
@@ -124,53 +131,45 @@ pub async fn run(
 
         tokio::spawn(async move {
             loop {
-                // Check for shutdown signal before attempting reconnect
-                tokio::select! {
-                    Ok(event) = spawn_event_rx.recv() => {
-                        if let crate::ipc::events::EventVariant::Shutdown { .. } = event.event {
-                            info!("Lightstreamer reconnection loop received shutdown. Terminating.");
-                            loop_shutdown.notify_one();
-                            break;
+                // 1. Get tokens
+                let (cst_token, sec_token) = {
+                    let s = state_clone.read().await;
+                    (
+                        s.session.ig_session_token.clone().unwrap_or_default(),
+                        s.session.ig_security_token.clone().unwrap_or_default()
+                    )
+                };
+
+                if cst_token.is_empty() || sec_token.is_empty() {
+                    warn!("Missing IG tokens, waiting before Lightstreamer reconnect...");
+                    tokio::time::sleep(tokio::time::Duration::from_secs(10)).await;
+                    continue;
+                }
+
+                // 2. Connect
+                match IGStreamingClient::new(&ls_endpoint, &acct_id_clone, &cst_token, &sec_token, update_tx.clone()) {
+                    Ok(mut streaming) => {
+                        streaming.subscribe_prices(&epics_clone);
+                        streaming.subscribe_account(&acct_id_clone);
+                        streaming.subscribe_trades(&acct_id_clone);
+
+                        // Share the shutdown notify with the client
+                        streaming.set_shutdown_notify(loop_shutdown.clone());
+
+                        info!("Connecting to IG Lightstreamer...");
+                        if let Err(e) = streaming.connect().await {
+                            error!("Lightstreamer connection error or stream ended: {}. Reconnecting in 10s...", e);
+                        } else {
+                            warn!("Lightstreamer connection ended cleanly. Reconnecting in 10s...");
                         }
                     }
-                    _ = async {
-                        let (cst_token, sec_token) = {
-                            let s = state_clone.read().await;
-                            (
-                                s.session.ig_session_token.clone().unwrap_or_default(),
-                                s.session.ig_security_token.clone().unwrap_or_default()
-                            )
-                        };
-
-                        if cst_token.is_empty() || sec_token.is_empty() {
-                            warn!("Missing IG tokens, waiting before Lightstreamer reconnect...");
-                            tokio::time::sleep(tokio::time::Duration::from_secs(10)).await;
-                            return;
-                        }
-
-                        match IGStreamingClient::new(&ls_endpoint, &acct_id_clone, &cst_token, &sec_token, update_tx.clone()) {
-                            Ok(mut streaming) => {
-                                streaming.subscribe_prices(&epics_clone);
-                                streaming.subscribe_account(&acct_id_clone);
-                                streaming.subscribe_trades(&acct_id_clone);
-
-                                // Share the shutdown notify with the client
-                                streaming.set_shutdown_notify(loop_shutdown.clone());
-
-                                if let Err(e) = streaming.connect().await {
-                                    error!("Lightstreamer connection error or stream ended: {}. Reconnecting in 5s...", e);
-                                } else {
-                                    warn!("Lightstreamer connection ended cleanly.");
-                                }
-                            }
-                            Err(e) => {
-                                error!("Failed to create Lightstreamer client: {}. Retrying in 5s...", e);
-                            }
-                        }
-
-                        tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
-                    } => {}
+                    Err(e) => {
+                        error!("Failed to create Lightstreamer client: {}. Retrying in 10s...", e);
+                    }
                 }
+
+                // 3. Mandatory sleep between reconnect attempts to prevent tight loops
+                tokio::time::sleep(tokio::time::Duration::from_secs(10)).await;
             }
         });
         info!("Lightstreamer streaming task spawned for {} markets (with auto-reconnect)", config.markets.epics.len());
@@ -339,6 +338,50 @@ pub async fn run(
         }
         Err(e) => {
             warn!("Failed to fetch account info on startup: {}. Balance will be 0 until next refresh.", e);
+        }
+    }
+
+    // --- Sync existing positions from IG ---
+    match client.get_positions().await {
+        Ok(pos_resp) => {
+            let mut s = state.write().await;
+            for wrapper in pos_resp.positions {
+                let ig_pos = wrapper.position;
+                let ig_market = wrapper.market;
+
+                let direction = match ig_pos.direction.to_uppercase().as_str() {
+                    "BUY" => crate::engine::state::Direction::Buy,
+                    _ => crate::engine::state::Direction::Sell,
+                };
+                
+                let position = crate::engine::state::Position {
+                    deal_id: ig_pos.deal_id,
+                    deal_reference: "".to_string(), // Not available in list response
+                    epic: ig_market.epic,
+                    direction,
+                    size: ig_pos.size,
+                    open_price: ig_pos.level,
+                    current_price: ig_pos.level,
+                    stop_loss: ig_pos.stop_level,
+                    take_profit: ig_pos.limit_level,
+                    trailing_stop: None,
+                    pnl: 0.0, // Updated by monitor loop later
+                    strategy: "Existing".to_string(),
+                    opened_at: {
+                        let date_str = ig_pos.created_date.replace("T", " ");
+                        let clean_date = date_str.split('.').next().unwrap_or(&date_str);
+                        chrono::NaiveDateTime::parse_from_str(clean_date, "%Y-%m-%d %H:%M:%S")
+                            .map(|dt| dt.and_utc())
+                            .unwrap_or_else(|_| chrono::Utc::now())
+                    },
+                    is_virtual: false,
+                };
+                s.trades.active.push(position);
+            }
+            info!("📥 Synced {} existing positions from IG", s.trades.active.len());
+        }
+        Err(e) => {
+            warn!("Failed to sync existing positions on startup: {}", e);
         }
     }
 

@@ -33,10 +33,10 @@ async fn test_mock_trade_execution() {
     // 3. Verify position exists in mock state
     let positions = mock.get_positions().await.expect("Failed to get positions");
     assert_eq!(positions.positions.len(), 1);
-    assert_eq!(positions.positions[0].epic, "CS.D.EURUSD.CFD.IP");
-    
+    assert_eq!(positions.positions[0].market.epic, "CS.D.EURUSD.CFD.IP");
+
     // 4. Close the position
-    let deal_id = &positions.positions[0].deal_id;
+    let deal_id = &positions.positions[0].position.deal_id;
     mock.close_position(deal_id, "SELL", 1.0).await.expect("Failed to close mock position");
     
     // 5. Verify position is gone

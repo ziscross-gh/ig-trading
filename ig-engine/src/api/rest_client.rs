@@ -268,19 +268,7 @@ impl TraderAPI for IGRestClient {
     async fn open_position(&mut self, request: IGTradeRequest) -> Result<IGTradeResponse, anyhow::Error> {
         let url = format!("{}/positions/otc", self.base_url);
 
-        let body = serde_json::json!({
-            "epic": request.epic,
-            "direction": request.direction,
-            "size": request.size,
-            "orderType": request.order_type,
-            "level": request.level,
-            "stopLevel": request.stop_level,
-            "limitLevel": request.limit_level,
-            "currencyCode": request.currency_code,
-            "guaranteedStop": request.guaranteed_stop.unwrap_or(false),
-            "forceOpen": request.force_open.unwrap_or(false),
-            "expiry": request.expiry
-        });
+        let body = serde_json::to_value(&request)?;
 
         info!("open_position payload: {}", serde_json::to_string(&body).unwrap_or_default());
 
