@@ -98,7 +98,7 @@ mod tests {
         assert!(acc.update("EPIC", 1.05, base + 120).is_none());
         // Still in the same bar — no completed candle yet
         let bars = &acc.bars;
-        let b = bars.get("EPIC").unwrap();
+        let b = bars.get("EPIC").expect("Epic should be in bars");
         assert_eq!(b.open, 1.10);
         assert!((b.high - 1.15).abs() < 1e-10);
         assert!((b.low  - 1.05).abs() < 1e-10);
@@ -114,8 +114,8 @@ mod tests {
         // Tick in the next hour — should complete the previous bar
         let completed = acc.update("EPIC", 1.30, base + 3600);
         assert!(completed.is_some());
-        let c = completed.unwrap();
-        assert_eq!(c.timestamp, acc.bars.get("EPIC").unwrap().bar_ts - 3600);
+        let c = completed.expect("Should have returned a completed candle");
+        assert_eq!(c.timestamp, acc.bars.get("EPIC").expect("Epic should be in bars").bar_ts - 3600);
         assert!((c.open  - 1.10).abs() < 1e-10);
         assert!((c.high  - 1.20).abs() < 1e-10);
         assert!((c.close - 1.20).abs() < 1e-10);

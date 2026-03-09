@@ -196,7 +196,7 @@ These apply regardless of which AI tool is being used:
 
 1. **Never call `open_position()` without going through `RiskManager`** — no exceptions.
 2. **Never commit `.env`** — secrets stay local.
-3. **No `.unwrap()` on user-facing paths** — use `?` or return a proper error.
+3. **Zero `.unwrap()` Policy:** Strictly forbidden in the codebase. Use `?`, `.expect("reason")`, or proper error handling. In tests, `.expect("context")` is mandatory over `.unwrap()` to provide failure rationale.
 4. **Never hardcode pip values or instrument specs** — they live in `config/default.toml → [risk.instrument_specs]`.
 5. **Never use `println!` in Rust** — use `tracing` macros (`info!`, `warn!`, `error!`).
 6. **Hold `Arc<RwLock<EngineState>>` locks minimally** — always drop before `.await`.

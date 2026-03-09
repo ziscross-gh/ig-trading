@@ -18,7 +18,7 @@
 
 - **Tool:** Claude Code CLI (terminal)
 - The IG API is unreachable from sandboxed/proxied environments (`ProxyError: 403`). When running test scripts, explain this clearly rather than retrying.
-- When editing Rust, flag any new `.unwrap()` or `println!` — both violate project conventions.
+- When editing Rust, flag any new `.unwrap()` or `println!` — both are banned. Use `.expect("reason")` or `?` instead of `.unwrap()`.
 - `cargo clippy -- -D warnings` must exit 0 — zero warnings policy.
 - Prefer `Edit` over `Write` for existing files.
 - Dashboard (`src/`) is **archived** — do not modify frontend code.

@@ -18,7 +18,7 @@
 
 - **Tool:** Gemini CLI (terminal, no browser tools available)
 - Use `read_file`, `run_shell_command`, and `write_file` for all work
-- When editing Rust, flag any new `.unwrap()` or `println!` — both violate project conventions
+- When editing Rust, flag any new `.unwrap()` or `println!` — both are banned. Use `.expect("reason")` or `?` instead of `.unwrap()`.
 - `cargo clippy -- -D warnings` must exit 0 — zero warnings policy.
 - Prefer editing existing files over creating new ones
 - Dashboard (`src/`) is **archived** — do not modify frontend code.
