@@ -50,7 +50,7 @@ pub fn is_squeeze(bandwidth_history: &[f64], threshold_percentile: f64) -> bool 
         return false;
     }
     let mut sorted = bandwidth_history.to_vec();
-    sorted.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    sorted.sort_by(|a, b| a.total_cmp(b));
     let idx = ((threshold_percentile / 100.0) * sorted.len() as f64) as usize;
     let threshold = sorted[idx.min(sorted.len() - 1)];
     *bandwidth_history.last().unwrap_or(&0.0) <= threshold

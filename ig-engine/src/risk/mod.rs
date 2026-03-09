@@ -507,7 +507,9 @@ impl RiskManager {
             "Guaranteed stop widened for {}: raw distance {:.5} < min allowed {:.5}. Shifted stop from {:.5} to {:.5}.",
             epic, current_stop_distance, req_min_stop_distance_points, old_stop, adjusted_stop_loss
         ));
-        info!("{}", warning_note.as_ref().unwrap());
+        if let Some(ref note) = warning_note {
+            info!("{}", note);
+        }
     }
 
     // Validate take profit

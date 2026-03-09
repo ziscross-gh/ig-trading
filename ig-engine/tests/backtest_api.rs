@@ -68,18 +68,18 @@ async fn test_backtest_endpoint() {
                         "initial_balance": 10000.0,
                         "risk_pct": 1.0
                     }))
-                    .unwrap(),
+                    .expect("JSON serialization failed"),
                 ))
-                .unwrap(),
+                .expect("Request builder failed"),
         )
         .await
-        .unwrap();
+        .expect("Oneshot call failed");
 
     // 4. Assert
     assert_eq!(response.status(), StatusCode::OK);
     
-    let body = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
-    let body: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX).await.expect("Failed to read body");
+    let body: serde_json::Value = serde_json::from_slice(&body).expect("Failed to parse body JSON");
     
     assert_eq!(body["success"], true);
     assert_eq!(body["epic"], "CS.D.EURUSD.CSD.IP");
@@ -142,17 +142,17 @@ async fn test_backtest_endpoint_filtering() {
                         "from": base_ts + (20 * 3600),
                         "to": base_ts + (79 * 3600)
                     }))
-                    .unwrap(),
+                    .expect("JSON serialization failed"),
                 ))
-                .unwrap(),
+                .expect("Request builder failed"),
         )
         .await
-        .unwrap();
+        .expect("Oneshot call failed");
 
     assert_eq!(response.status(), StatusCode::OK);
     
-    let body = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
-    let body: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX).await.expect("Failed to read body");
+    let body: serde_json::Value = serde_json::from_slice(&body).expect("Failed to parse body JSON");
     
     assert_eq!(body["success"], true);
     assert_eq!(body["candle_count"], 60);

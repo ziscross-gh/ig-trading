@@ -19,8 +19,9 @@
 - **Tool:** Gemini CLI (terminal, no browser tools available)
 - Use `read_file`, `run_shell_command`, and `write_file` for all work
 - When editing Rust, flag any new `.unwrap()` or `println!` — both violate project conventions
-- When editing TypeScript, confirm `noImplicitAny: true` is respected — no bare `any` types
+- `cargo clippy -- -D warnings` must exit 0 — zero warnings policy.
 - Prefer editing existing files over creating new ones
+- Dashboard (`src/`) is **archived** — do not modify frontend code.
 - When completing a task, update `TASK_TRACKER.md` (🏗️ → ✅)
 - If a task needs Claude to continue, add it to `CLAUDE.md` under "Active"
 
@@ -28,31 +29,22 @@
 
 ## Assigned Tasks (Gemini's Focus)
 
-> ⚠️ **Current focus: Bot engine + Telegram only.** All dashboard/frontend work is paused.
-> Phases 5, 6, 8.1–8.5 are all complete. See `TASK_TRACKER.md` for full history.
+> All phases 1–8.7 complete. Dashboard archived. Engine production-ready.
 
-### Active — Pick up in next session
+Gemini owns **Rust engine hardening, backtesting, and ML pipeline validation** work.
+
+### Completed
 
 | # | Task | Phase | Notes |
 |---|------|-------|-------|
-| 7.5 | Backtest HTTP endpoint | Phase 7 | Add `POST /backtest { epic, from, to }` on port 9090 in `ig-engine/src/ipc/http_server.rs`. Calls `backtester.rs` directly. No dashboard needed — curl / Telegram command is enough. |
-| 8.4-test | Regime classifier smoke test | Phase 8 | Run `python scripts/fetch_historical_data.py` then `python scripts/train_regime_classifier.py` then `python scripts/run_regime_classifier.py`. Verify `data/regime_latest.json` is written with sensible TRENDING/RANGING/VOLATILE labels. Report label distribution. |
+| 7.5 | Backtest HTTP endpoint | Phase 7 | ✅ `POST /backtest` on port 9090 |
+| 8.4-test | Regime classifier smoke test | Phase 8 | ✅ Verified TRENDING/RANGING/VOLATILE labels |
 
-### Planned (needs 3+ months live data)
+### Long-term (needs 3+ months live data)
 
 | # | Task | Notes |
 |---|------|-------|
 | 8.6 | RL position sizing | PPO agent on live trade outcomes. Do not start until 3 months of `logs/trades.jsonl` data accumulated. |
-
-### Paused (Dashboard — Resume Later)
-
-| # | Task |
-|---|------|
-| 4.7 | Bundle analysis + remove unused shadcn/ui components |
-| 5.3 | Strategy Lab historical backtesting UI |
-| 5.5 | Equity Curve visualization on dashboard |
-| 6.3 | Bundle tree-shake unused shadcn/ui components |
-| 6.6 | Trade journal export (CSV/PDF) |
 
 ---
 

@@ -135,12 +135,15 @@ async fn main() -> Result<()> {
             #[cfg(unix)]
             {
                 use tokio::signal::unix::{signal, SignalKind};
-                let mut term = signal(SignalKind::terminate()).unwrap();
-                term.recv().await;
+                if let Ok(mut term) = signal(SignalKind::terminate()) {
+                    term.recv().await;
+                } else {
+                    let _ = tokio::signal::ctrl_c().await;
+                }
             }
             #[cfg(not(unix))]
             {
-                tokio::signal::ctrl_c().await.unwrap();
+                let _ = tokio::signal::ctrl_c().await;
             }
         } => {
             info!("SIGTERM received. Initiating graceful shutdown...");

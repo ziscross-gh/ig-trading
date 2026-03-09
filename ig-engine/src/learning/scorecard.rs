@@ -203,7 +203,7 @@ mod tests {
         let opened = Utc::now()
             .date_naive()
             .and_hms_opt(hour, 0, 0)
-            .unwrap()
+            .expect("Invalid time")
             .and_utc();
         ClosedTrade {
             deal_id: "test".into(),
@@ -233,7 +233,7 @@ mod tests {
             sc.update(&make_trade("MA_Crossover", "EURUSD", pnl, 10));
         }
 
-        let perf = sc.get_performance("MA_Crossover").unwrap();
+        let perf = sc.get_performance("MA_Crossover").expect("MA performance should exist");
         assert_eq!(perf.total_trades, 10);
         assert_eq!(perf.wins, 7);
         assert!((perf.win_rate - 0.7).abs() < 0.01);
@@ -273,10 +273,10 @@ mod tests {
             sc.update(&make_trade("MACD", "EURUSD", -15.0, 10));
         }
 
-        let asia = sc.get_session_performance("MACD", Session::Asia).unwrap();
+        let asia = sc.get_session_performance("MACD", Session::Asia).expect("Asia performance should exist");
         assert!((asia.win_rate - 1.0).abs() < 0.01);
 
-        let london = sc.get_session_performance("MACD", Session::London).unwrap();
+        let london = sc.get_session_performance("MACD", Session::London).expect("London performance should exist");
         assert!((london.win_rate - 0.0).abs() < 0.01);
     }
 
@@ -287,7 +287,7 @@ mod tests {
         for pnl in pnls {
             sc.update(&make_trade("BB", "USDJPY", pnl, 12));
         }
-        let perf = sc.get_performance("BB").unwrap();
+        let perf = sc.get_performance("BB").expect("BB performance should exist");
         assert_eq!(perf.max_consecutive_losses, 3);
     }
 }

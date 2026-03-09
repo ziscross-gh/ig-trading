@@ -256,7 +256,7 @@ impl IndicatorSet {
         let max_period = *[short_period, long_period, trend_period, bb_period, adx_period, stoch_period, 200]
             .iter()
             .max()
-            .unwrap();
+            .unwrap_or(&200);
 
         Self {
             short_period,

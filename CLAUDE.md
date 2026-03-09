@@ -19,8 +19,9 @@
 - **Tool:** Claude Code CLI (terminal)
 - The IG API is unreachable from sandboxed/proxied environments (`ProxyError: 403`). When running test scripts, explain this clearly rather than retrying.
 - When editing Rust, flag any new `.unwrap()` or `println!` — both violate project conventions.
-- When editing TypeScript, confirm `noImplicitAny: true` is respected — no bare `any` types.
+- `cargo clippy -- -D warnings` must exit 0 — zero warnings policy.
 - Prefer `Edit` over `Write` for existing files.
+- Dashboard (`src/`) is **archived** — do not modify frontend code.
 - When completing any task, update `TASK_TRACKER.md` (🏗️ → ✅).
 - If a task needs Gemini to continue, add it to `GEMINI.md` under "Active".
 
@@ -28,19 +29,14 @@
 
 ## Assigned Tasks (Claude's Focus)
 
-> ⚠️ **Current focus: Bot engine + Telegram only.** All dashboard/frontend work is paused.
-> Phases 5, 6, 8.1–8.5 are all complete. See `TASK_TRACKER.md` for full history.
+> All phases 1–8.7 complete. Dashboard archived. Engine production-ready.
 
 Claude owns the **Rust bot engine, Python ML pipeline, and Telegram notification** work.
 
-### Active
+### Status
 
-All current active tasks have been handed to Gemini CLI. See `GEMINI.md`.
-
-### Bug Fixes (low priority)
-
-- **Low:** `optimizer.rs:70` — NaN panic on `partial_cmp`
-- **Low:** `backtester.rs:139` — `candles.last()` without empty guard
+- All known bugs fixed (optimizer NaN ✅, backtester guard ✅, Bollinger NaN ✅)
+- Only long-term item: 8.6 RL position sizing (needs 3+ months live trade data in `logs/trades.jsonl`)
 
 ---
 

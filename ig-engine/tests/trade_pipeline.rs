@@ -7,7 +7,7 @@ async fn test_mock_trade_execution() {
     let mut mock = MockTraderClient::new(10000.0);
     
     // 1. Check initial state
-    let accounts = mock.get_accounts().await.unwrap();
+    let accounts = mock.get_accounts().await.expect("Failed to get accounts");
     assert_eq!(accounts.accounts[0].balance.balance, 10000.0);
     
     // 2. Open a "Buy" position
@@ -31,7 +31,7 @@ async fn test_mock_trade_execution() {
     assert!(resp.deal_reference.len() > 0);
     
     // 3. Verify position exists in mock state
-    let positions = mock.get_positions().await.unwrap();
+    let positions = mock.get_positions().await.expect("Failed to get positions");
     assert_eq!(positions.positions.len(), 1);
     assert_eq!(positions.positions[0].epic, "CS.D.EURUSD.CFD.IP");
     
@@ -40,6 +40,6 @@ async fn test_mock_trade_execution() {
     mock.close_position(deal_id, "SELL", 1.0).await.expect("Failed to close mock position");
     
     // 5. Verify position is gone
-    let final_positions = mock.get_positions().await.unwrap();
+    let final_positions = mock.get_positions().await.expect("Failed to get final positions");
     assert_eq!(final_positions.positions.len(), 0);
 }

@@ -6,8 +6,8 @@ Currently active agents on this project:
 
 | Agent | Tool | Entry point |
 |-------|------|-------------|
-| Claude | Anthropic Cowork | Auto-loads `CLAUDE.md` → reads this file |
-| Gemini | Google Antigravity | Auto-loads this file directly |
+| Claude | Claude Code CLI | Auto-loads `CLAUDE.md` → reads this file |
+| Gemini | Gemini CLI | Auto-loads `GEMINI.md` → reads this file |
 
 For deeper references, read on demand:
 - `PROJECT_ARCHITECTURE.md` — module breakdown, interfaces, concurrency model
@@ -19,10 +19,12 @@ For deeper references, read on demand:
 ## Project Overview
 
 An autonomous algorithmic trading system for **IG Markets**, built with:
-- **Rust engine** (`ig-engine/`) — trading logic, risk management, IG API integration
-- **Next.js 16 / React 19 dashboard** (`src/`) — live monitoring and control UI
+- **Rust engine** (`ig-engine/`) — trading logic, risk management, IG API integration, AI/ML layers
+- **Telegram notifications** — trade alerts, daily P&L, risk events
 
-**Current status:** Phase 5 active. Demo mode fully operational. Live mode in preparation.
+> 📦 A Next.js dashboard exists in `src/` but is **archived** — not maintained. Focus is bot engine + Telegram only.
+
+**Current status:** Phases 1–8.7 complete. Demo mode fully operational. Ready for live demo session.
 
 ---
 
@@ -58,18 +60,7 @@ ig-trading/
 │   │   └── notifications/      # Telegram alerts
 │   └── Cargo.toml
 │
-├── src/                        # Next.js 16 frontend (App Router)
-│   ├── app/
-│   │   ├── page.tsx            # Main dashboard
-│   │   ├── error.tsx           # Global error boundary
-│   │   └── api/engine/[...path]/route.ts  # Proxy → port 9090
-│   ├── components/dashboard/   # EnginePanel, MarketOverview, PriceChart,
-│   │                           # TradeHistory, LearningPanel, EquityCurvePanel,
-│   │                           # StrategyLab, setup-panel + setup/
-│   ├── context/EngineContext.tsx
-│   ├── hooks/useEngine.ts      # Facade → useEngineAPI, useEngineWebSocket,
-│   │                           #          useEngineControl, useEngineConfig
-│   └── types/ig.ts
+├── src/                        # [ARCHIVED] Next.js dashboard — not maintained
 │
 ├── config/default.toml         # All runtime config (mode, markets, risk, strategies)
 ├── AGENTS.md                   # ← You are here (shared AI instructions)
@@ -160,13 +151,10 @@ RUST_LOG=info
 ## How to Run
 
 ```bash
-# Frontend only
-bun install && bun dev              # http://localhost:3000
-
-# Rust engine only
+# Rust engine (main)
 cd ig-engine && cargo run --release # http://localhost:9090
 
-# Full stack
+# Docker
 docker-compose up --build           # Engine + PostgreSQL + Redis
 ```
 
@@ -194,16 +182,10 @@ docker-compose up --build           # Engine + PostgreSQL + Redis
 ## Testing
 
 ```bash
-# Rust
 cd ig-engine
-cargo test
-cargo clippy -- -D warnings
+cargo test                       # 66 tests (63 unit + 3 integration)
+cargo clippy -- -D warnings      # must exit 0
 cargo fmt --check
-
-# Frontend
-npx tsc --noEmit
-npm run lint
-npm test                # vitest
 ```
 
 ---
@@ -217,22 +199,14 @@ These apply regardless of which AI tool is being used:
 3. **No `.unwrap()` on user-facing paths** — use `?` or return a proper error.
 4. **Never hardcode pip values or instrument specs** — they live in `config/default.toml → [risk.instrument_specs]`.
 5. **Never use `println!` in Rust** — use `tracing` macros (`info!`, `warn!`, `error!`).
-6. **Never use raw `fetch()` in frontend components** — always go through `useEngine()` / `EngineContext`.
-7. **TypeScript `any` is banned** — `noImplicitAny: true` is enforced.
-8. **Hold `Arc<RwLock<EngineState>>` locks minimally** — always drop before `.await`.
-9. **`test_ig_trade*.py` files are debugging artefacts** — do not modify or treat as production code.
-10. **Do not modify `config/default.toml` defaults when working on features** — use a local override instead.
+6. **Hold `Arc<RwLock<EngineState>>` locks minimally** — always drop before `.await`.
+7. **`test_ig_trade*.py` files are debugging artefacts** — do not modify or treat as production code.
+8. **Do not modify `config/default.toml` defaults when working on features** — use a local override instead.
+9. **`cargo clippy -- -D warnings` must exit 0** — zero warnings policy enforced since Phase 8.7.
 
 ---
 
-## Active Work (Phase 5)
+## Current Status
 
-| Item | Status | File(s) |
-|------|--------|---------|
-| Trailing Stop Loss | 🏗️ In Progress | `event_loop/handlers.rs` |
-| Session filters / news exclusion | 🏗️ In Progress | `event_loop/validation.rs` |
-| Equity Curve panel | 🏗️ In Progress | `EquityCurvePanel.tsx` |
-| WebSocket market data (replace polling) | 🏗️ In Progress | `useMarketData.ts`, `streaming_client.rs` |
-| Strategy Lab backtesting UI | 🏗️ In Progress | `StrategyLab.tsx` |
-
-See `TASK_TRACKER.md` for full details and backlog.
+All phases 1–8.7 complete. Only 8.6 (RL position sizing) remains long-term.
+See `TASK_TRACKER.md` for full details.

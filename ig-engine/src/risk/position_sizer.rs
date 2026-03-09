@@ -166,7 +166,7 @@ mod tests {
 
     #[test]
     fn test_instrument_spec_gold() {
-        let spec = InstrumentSpec::from_epic_fallback("CS.D.CFIGOLD.CFI.IP").unwrap();
+        let spec = InstrumentSpec::from_epic_fallback("CS.D.CFIGOLD.CFI.IP").expect("Gold spec should exist");
         assert_eq!(spec.pip_value, 1.0);       // SGD$1 per point
         assert_eq!(spec.pip_scale, 1.0);       // 1 point = $1/Troy Ounce
         assert_eq!(spec.min_deal_size, 3.0);  // IG verified minimum
@@ -175,7 +175,7 @@ mod tests {
 
     #[test]
     fn test_instrument_spec_eurusd() {
-        let spec = InstrumentSpec::from_epic_fallback("CS.D.EURUSD.CFD").unwrap();
+        let spec = InstrumentSpec::from_epic_fallback("CS.D.EURUSD.CFD").expect("EURUSD spec should exist");
         assert_eq!(spec.pip_value, 1.27);      // USD 1 ≈ SGD$1.27 (IG verified)
         assert_eq!(spec.min_deal_size, 0.02);  // IG verified minimum
     }
@@ -239,7 +239,7 @@ mod tests {
 
     #[test]
     fn test_clamp_to_instrument_limits() {
-        let spec = InstrumentSpec::from_epic_fallback("CS.D.EURUSD.CFD").unwrap();
+        let spec = InstrumentSpec::from_epic_fallback("CS.D.EURUSD.CFD").expect("EURUSD spec should exist");
 
         // Clamp high
         let clamped = clamp_to_instrument_limits(150.0, &spec);

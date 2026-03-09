@@ -1,7 +1,7 @@
 # PROJECT_ARCHITECTURE.md — IG Trading Engine
 
-**Last updated:** 2026-03-08
-**Scope:** Full system — Rust engine + Next.js dashboard
+**Last updated:** 2026-03-09
+**Scope:** Rust engine (`ig-engine/`) — bot + Telegram only (dashboard archived)
 
 ---
 
@@ -10,7 +10,9 @@
 The IG Trading Engine is an autonomous trading system composed of two layers:
 
 1. **Rust Engine (`ig-engine/`)** — Core trading logic. Connects to IG Markets APIs, runs technical analysis, enforces risk rules, executes trades, and exposes an internal HTTP + WebSocket API.
-2. **Next.js Dashboard (`src/`)** — Web UI. Reads from and controls the Rust engine via its internal API. Displays live prices, positions, strategy signals, and adaptive learning state.
+2. **Telegram Notifications** — Trade alerts, risk events, daily P&L summary.
+
+> 📦 A Next.js dashboard exists in `src/` but is **archived** — not maintained.
 
 ---
 
@@ -64,13 +66,7 @@ IG Markets (REST + Lightstreamer)
          │
          │  HTTP + WebSocket  (localhost:9090)
          ▼
-┌──────────────────────────────────────────┐
-│   Next.js Dashboard (port 3000)           │
-│                                           │
-│   /api/engine/[...path] → proxy to 9090  │
-│   useEngine() via EngineContext           │
-│   Recharts + shadcn/ui components         │
-└──────────────────────────────────────────┘
+   External consumers (curl, Telegram, archived dashboard)
 ```
 
 ---
@@ -171,47 +167,6 @@ Circuit breaker triggers: reduces position size after 3 consecutive losses; paus
 
 ---
 
-## Next.js Frontend — Component Breakdown
-
-### Data Flow
-
-```
-Rust Engine (localhost:9090)
-        │
-        ▼
-/api/engine/[...path]        ← Next.js proxy (avoids CORS, single origin)
-        │
-        ▼
-useEngineAPI.ts              ← REST fetchers for all endpoints
-useEngineWebSocket.ts        ← WebSocket subscriber, dispatches events
-useEngineControl.ts          ← start / stop / pause / manual trigger
-useEngineConfig.ts           ← Config read + write
-        │
-        ▼
-useEngine.ts                 ← Facade hook: composes all sub-hooks + auto-refresh
-        │
-        ▼
-EngineContext.tsx             ← React Context: exposes engine state to all components
-        │
-        ▼
-Dashboard components         ← Consume via useEngine() or EngineContext
-```
-
-### Dashboard Components
-
-| Component | What it shows |
-|-----------|---------------|
-| `EnginePanel.tsx` | Mode, status, start/stop/pause controls, daily P&L, win rate |
-| `MarketOverview.tsx` | Live bid/ask price tiles per epic |
-| `PriceChart.tsx` | Candlestick chart + indicator overlay (Recharts) |
-| `TradeHistory.tsx` | Paginated table of closed trades |
-| `LearningPanel.tsx` | Per-strategy adaptive weight bars, win rate, profit factor |
-| `EquityCurvePanel.tsx` | Running equity curve over trade history |
-| `StrategyLab.tsx` | Backtest runner: pick strategy + date range + params, view P&L results |
-| `setup-panel.tsx` | Multi-step wizard: PreFlightChecks → EngineSettings → RiskSettings |
-
----
-
 ## State Management
 
 ### Rust — `EngineState` partitions
@@ -226,10 +181,6 @@ Dashboard components         ← Consume via useEngine() or EngineContext
 | `SessionState` | IG CST + security tokens (refreshed every 50 min) |
 
 **Concurrency rule:** Acquire `Arc<RwLock<EngineState>>`, do minimal synchronous work, drop lock, then do async I/O. Never hold the lock across an `.await`.
-
-### Frontend — `EngineState` (TypeScript)
-
-Lives in `useEngine()` via `useState`. Populated by REST fetchers on mount; kept live via the WebSocket event stream. Distributed tree-wide via `EngineContext`.
 
 ---
 
@@ -295,14 +246,12 @@ All runtime behaviour lives in `config/default.toml`. Never hardcode values in s
 
 ### Local Dev
 ```bash
-cd ig-engine && cargo run         # Engine on :9090
-bun dev                           # Dashboard on :3000
+cd ig-engine && cargo run --release  # Engine on :9090
 ```
 
-### Docker (Recommended for demo/live)
+### Docker
 ```bash
-docker-compose up --build
-# Starts: Rust engine + PostgreSQL + Redis
+docker-compose up --build            # Engine + PostgreSQL + Redis
 ```
 
 ### Environment Variables

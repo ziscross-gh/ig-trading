@@ -293,7 +293,7 @@ mod tests {
             size: 0.5,
         };
 
-        let json = serde_json::to_string(&result).unwrap();
+        let json = serde_json::to_string(&result).expect("Serialization failed");
         assert!(json.contains("deal_id"));
         assert!(json.contains("1234.56"));
     }

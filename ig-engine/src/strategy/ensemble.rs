@@ -269,7 +269,7 @@ mod tests {
         let result = voter.vote(&signals);
         assert!(result.is_some());
 
-        let combined = result.unwrap();
+        let combined = result.expect("Ensemble should have reached consensus");
         assert_eq!(combined.epic, "EUR/USD");
         assert_eq!(combined.direction, Direction::Buy);
         assert_eq!(combined.strength, 7.0);
@@ -290,7 +290,7 @@ mod tests {
         let result = voter.vote(&signals);
         assert!(result.is_some());
 
-        let combined = result.unwrap();
+        let combined = result.expect("Weighted average vote failed");
         // Weighted average: (6.0 * 2.0 + 9.0 * 1.0) / (2.0 + 1.0) = 21/3 = 7.0
         assert_eq!(combined.strength, 7.0);
     }
@@ -307,7 +307,7 @@ mod tests {
         let result = voter.vote(&signals);
         assert!(result.is_some());
 
-        let combined = result.unwrap();
+        let combined = result.expect("Best stop loss test failed");
         // For buys, we want the highest stop loss (1.0950 > 1.0900)
         assert_eq!(combined.stop_loss, 1.0950);
     }
@@ -324,7 +324,7 @@ mod tests {
         let result = voter.vote(&signals);
         assert!(result.is_some());
 
-        let combined = result.unwrap();
+        let combined = result.expect("Most conservative take profit test failed");
         // For buys, we want the lowest take profit (most conservative)
         assert_eq!(combined.take_profit, 1.1100);
     }
@@ -345,7 +345,7 @@ mod tests {
         let result = voter.vote(&signals);
         assert!(result.is_some(), "Expected signal despite conflict (strength still above threshold after penalty)");
 
-        let combined = result.unwrap();
+        let combined = result.expect("Conflict test sell failed");
         assert_eq!(combined.direction, Direction::Sell);
         // Verify conflict penalty was applied (penalised strength < raw strength)
         assert!(combined.strength < 9.0, "Conflict penalty should reduce strength below 9.0");

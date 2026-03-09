@@ -247,7 +247,7 @@ mod tests {
         let result = mgr.maybe_recalculate(&sc);
         // Either None (no change) or Some with weight still ~1.0
         if let Some(weights) = result {
-            let w = weights.get("MA").unwrap();
+            let w = weights.get("MA").expect("MA weight should exist");
             assert!((*w - 1.0).abs() < 0.01, "Should not adjust with only 10 trades");
         }
     }
@@ -270,7 +270,7 @@ mod tests {
 
         let result = mgr.maybe_recalculate(&sc);
         assert!(result.is_some(), "Should have recalculated");
-        let w = result.unwrap().get("MA").unwrap().clone();
+        let w = result.expect("Recalculation failed").get("MA").expect("MA weight should exist").clone();
         assert!(w > 1.0, "Winning strategy should have weight > 1.0, got {}", w);
     }
 
@@ -292,7 +292,7 @@ mod tests {
 
         let result = mgr.maybe_recalculate(&sc);
         assert!(result.is_some());
-        let w = result.unwrap().get("BAD").unwrap().clone();
+        let w = result.expect("Recalculation failed").get("BAD").expect("BAD weight should exist").clone();
         assert!(w < 1.0, "Losing strategy should have weight < 1.0, got {}", w);
     }
 
