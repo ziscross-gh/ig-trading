@@ -1,6 +1,6 @@
 pub mod position_sizer;
 
-use chrono::{DateTime, Timelike, Utc};
+use chrono::{DateTime, Datelike, Timelike, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use tracing::{debug, info, warn};
@@ -154,6 +154,10 @@ pub struct RiskConfig {
     /// When non-empty, replaces `news_blackout_windows_utc` with per-event durations.
     #[serde(default)]
     pub macro_events: Vec<MacroEvent>,
+    /// Allow trading on weekends. Default false — regular spot markets are closed.
+    /// Set true only when weekend-specific epics (e.g. IG weekend gold) are in use.
+    #[serde(default)]
+    pub allow_weekend_trading: bool,
 }
 
 impl Default for RiskConfig {
@@ -200,6 +204,7 @@ impl Default for RiskConfig {
                 MacroEvent { hour: 19, minute:  0, label: "FOMC Rate Decision / Fed Statement".into(), blackout_mins: Some(60) },
                 MacroEvent { hour: 19, minute: 30, label: "FOMC Press Conference".into(),         blackout_mins: Some(45) },
             ],
+            allow_weekend_trading: false, // weekday spot only — enable when weekend epics are active
         }
     }
 }
@@ -340,6 +345,31 @@ impl RiskManager {
             let reason = format!("Trading not allowed in session: {:?}", current_session);
             warn!("{}", reason);
             return RiskVerdict::Rejected(reason);
+        }
+
+        // Layer 1.6: Weekday Guard
+        // Regular spot epics are closed Saturday 06:00 SGT (22:00 UTC Fri) to
+        // Sunday 23:00 UTC. Weekend-specific epics (e.g. weekend gold) bypass
+        // this check via the config flag `weekend_epic = true`.
+        {
+            use chrono::Weekday;
+            let now = Utc::now();
+            let weekday = now.weekday();
+            let hour = now.hour();
+
+            let is_weekend_closed =
+                weekday == Weekday::Sat                           // all day Saturday
+                || (weekday == Weekday::Fri && hour >= 22)       // Fri 22:00+ UTC = Sat 06:00 SGT
+                || (weekday == Weekday::Sun && hour < 23);       // Sun before 23:00 UTC = Mon 07:00 SGT
+
+            if is_weekend_closed && !self.config.allow_weekend_trading {
+                let reason = format!(
+                    "Weekend market closed. UTC: {} {:02}:00. Regular spot markets reopen Mon 23:00 UTC.",
+                    weekday, hour
+                );
+                warn!("{}", reason);
+                return RiskVerdict::Rejected(reason);
+            }
         }
 
         // Layer 2: Trading Hours
@@ -709,7 +739,6 @@ impl RiskManager {
 
     /// Check if a new ISO week has started and reset weekly PnL
     fn check_weekly_reset(&mut self) {
-        use chrono::Datelike;
         let now = Utc::now();
         if now.iso_week() != self.week_start.iso_week() || now.year() != self.week_start.year() {
             info!(

@@ -229,6 +229,7 @@ impl Default for EngineConfig {
                 news_blackout_windows_utc: vec![(8, 30), (13, 30), (15, 0)],
                 news_blackout_mins: 15,
                 macro_events: vec![], // default.toml populates these via TOML; overridden on load
+                allow_weekend_trading: false,
             },
             strategies: StrategiesConfig {
                 min_consensus: 2,

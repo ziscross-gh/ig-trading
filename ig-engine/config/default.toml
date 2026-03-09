@@ -46,7 +46,8 @@ limited_risk_account = true
 use_trailing_stop = true
 trailing_stop_min_pips = 5.0
 allowed_sessions = ["Asia", "London", "UsOverlap"]
-trading_hours_utc = [0, 23]
+trading_hours_utc = [0, 21]          # 00:00–21:00 UTC = 08:00–05:00 SGT (stops before daily maintenance)
+allow_weekend_trading = false        # true only when weekend epics (e.g. IG weekend gold) are active
 
 # ── Macro Event Blackout Calendar (Phase 8.5) ──────────────────────────────────
 # Per-event blackout windows supersede the legacy flat news_blackout_windows_utc.
@@ -56,6 +57,12 @@ trading_hours_utc = [0, 23]
 # Legacy flat blackout (used only when macro_events array is empty)
 news_blackout_windows_utc = [[8, 30], [13, 30], [15, 0]]
 news_blackout_mins = 15
+
+[[risk.macro_events]]
+hour = 21
+minute = 0
+label = "Daily market maintenance window (Gold + FX)"
+blackout_mins = 60                # 21:00–22:00 UTC = 05:00–06:00 SGT — IG daily break
 
 [[risk.macro_events]]
 hour = 0
@@ -224,9 +231,12 @@ trailing_stop_pips = 15.0
 # ============================================
 # TRADING HOURS (UTC)
 # ============================================
+# Gold weekday session: Mon 23:00 UTC (07:00 SGT) → Fri 22:00 UTC (Sat 06:00 SGT)
+# Daily maintenance break: 21:00–22:00 UTC (05:00–06:00 SGT) — see macro_events below
+# Engine starts catching candles from 00:00 UTC (08:00 SGT); stops at 21:00 UTC before break.
 [trading_hours]
 start = "00:00"                   # 08:00 SGT — Asia open
-end = "16:00"                     # 00:00 SGT — after US close
+end = "21:00"                     # 05:00 SGT — stop before daily maintenance window
 timezone = "UTC"
 
 # ============================================
