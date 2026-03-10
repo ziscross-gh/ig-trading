@@ -5,13 +5,13 @@ use tracing::{info, warn, error, debug};
 use chrono::Utc;
 
 use crate::engine::config::{EngineConfig, EngineMode};
-use crate::engine::state::{EngineState, Direction, Position, Signal};
+use crate::engine::state::{EngineState, Direction, Position, Signal, get_instrument_name};
 use crate::api::rest_client::IGRestClient;
 use crate::risk::RiskManager;
 use crate::strategy::traits::Strategy;
 use crate::strategy::ensemble::EnsembleVoter;
 use crate::ipc::events::EngineEvent;
-use crate::notifications::telegram::{TelegramNotifier, get_instrument_name};
+use crate::notifications::telegram::TelegramNotifier;
 
 /// Analyze one or more markets and potentially execute trades
 #[allow(clippy::too_many_arguments)]
@@ -324,8 +324,9 @@ pub async fn analyze_market(
                                 let t_tp = position.take_profit;
                                 tokio::spawn(async move {
                                     let mut msg = format!(
-                                        "<b>VIRTUAL TRADE OPENED</b>\n\n<b>Instrument:</b> {}\n<b>Direction:</b> {}\n<b>Size:</b> {}\n<b>Entry Price:</b> {}\n<b>Stop Loss:</b> {}",
-                                        get_instrument_name(&t_epic), t_dir, t_size, t_price, t_sl.unwrap_or(0.0)
+                                        "<b>VIRTUAL TRADE OPENED</b>\n\n<b>Instrument:</b> {}\n<b>Direction:</b> {}\n<b>Size:</b> {}\n<b>Entry Price:</b> {}\n<b>Stop Loss:</b> {}\n<b>Time:</b> {}",
+                                        get_instrument_name(&t_epic), t_dir, t_size, t_price, t_sl.unwrap_or(0.0),
+                                        (chrono::Utc::now() + chrono::Duration::hours(8)).format("%H:%M:%S SGT")
                                     );
                                     if let Some(tp) = t_tp {
                                         msg.push_str(&format!("\n<b>Take Profit:</b> {}", tp));
@@ -518,7 +519,12 @@ pub async fn execute_manual_trigger(
         }
         crate::risk::RiskVerdict::Rejected(reason) => {
             warn!("Manual trigger REJECTED by risk manager: {}", reason);
-            let alert_msg = format!("Manual trigger for {} rejected: {}", epic, reason);
+            let alert_msg = format!(
+                "Manual trigger for {} rejected: {}\nTime: {}", 
+                get_instrument_name(&epic), 
+                reason,
+                (chrono::Utc::now() + chrono::Duration::hours(8)).format("%H:%M:%S SGT")
+            );
             
             let _ = event_tx.send(EngineEvent::risk_alert(
                 alert_msg.clone(),

@@ -27,6 +27,7 @@ use crate::strategy::{
 use crate::indicators::Candle;
 use crate::ipc::events::EngineEvent;
 use crate::notifications::telegram::TelegramNotifier;
+use crate::data::candle_store;
 
 pub use analysis::analyze_market;
 pub use handlers::handle_position_monitoring;
@@ -386,49 +387,88 @@ pub async fn run(
     }
 
     info!(
-        "Fetching initial price history (250 candles, HOUR resolution) for {} markets",
+        "Warming up price history (HOUR resolution) for {} markets — disk-first strategy",
         config.markets.epics.len()
     );
 
     for (idx, epic) in config.markets.epics.iter().enumerate() {
         info!("📊 Warming up [{}/{}] {} ...", idx + 1, config.markets.epics.len(), epic);
-        match client.get_price_history(epic, "HOUR", 250).await {
-            Ok(price_response) => {
-                let candles: Vec<Candle> = price_response
-                    .prices
-                    .iter()
-                    .map(|p| {
-                        let timestamp = chrono::NaiveDateTime::parse_from_str(
-                            &p.snapshot_time, 
-                            "%Y/%m/%d %H:%M:%S"
-                        ).map(|dt| dt.and_utc().timestamp())
-                        .unwrap_or_else(|_| Utc::now().timestamp());
 
-                        Candle {
-                            timestamp,
-                            open: p.open_price.bid,
-                            high: p.high_price.bid,
-                            low: p.low_price.bid,
-                            close: p.close_price.bid,
-                            volume: p.last_traded_volume.unwrap_or(0.0) as u64,
-                        }
-                    })
-                    .collect();
+        // Step 1: Try loading from disk cache first
+        let disk_candles = candle_store::load_from_disk(epic, "HOUR");
+        let disk_count = disk_candles.len();
 
-                let mut s = state.write().await;
-                s.markets.history.warm_up(epic, "HOUR", candles.clone());
-                
-                if let Some(indicator_set_map) = s.markets.indicators.get_mut(epic) {
-                    if let Some(indicator_set) = indicator_set_map.get_mut("HOUR") {
-                        for candle in &candles {
-                            indicator_set.update(candle);
-                        }
+        // Step 2: If disk has enough candles (≥ 210 to satisfy MA 200), skip REST API
+        let candles = if disk_count >= 210 {
+            info!(
+                "  ✓ Loaded {} candles from disk for {} [HOUR] — REST API fetch skipped",
+                disk_count, epic
+            );
+            disk_candles
+        } else {
+            // Try REST API to get 250 candles
+            match client.get_price_history(epic, "HOUR", 250).await {
+                Ok(price_response) => {
+                    let api_candles: Vec<Candle> = price_response
+                        .prices
+                        .iter()
+                        .map(|p| {
+                            let timestamp = chrono::NaiveDateTime::parse_from_str(
+                                &p.snapshot_time,
+                                "%Y/%m/%d %H:%M:%S"
+                            ).map(|dt| dt.and_utc().timestamp())
+                            .unwrap_or_else(|_| Utc::now().timestamp());
+
+                            Candle {
+                                timestamp,
+                                open: p.open_price.bid,
+                                high: p.high_price.bid,
+                                low: p.low_price.bid,
+                                close: p.close_price.bid,
+                                volume: p.last_traded_volume.unwrap_or(0.0) as u64,
+                            }
+                        })
+                        .collect();
+
+                    // Merge disk + API candles (dedup, sort, trim to 1000)
+                    let merged = if disk_candles.is_empty() {
+                        api_candles.clone()
+                    } else {
+                        candle_store::merge_candles(disk_candles, api_candles.clone())
+                    };
+                    info!(
+                        "  ✓ {} warmed up — {} candles from API, {} total after merge with disk",
+                        epic, api_candles.len(), merged.len()
+                    );
+                    merged
+                }
+                Err(e) => {
+                    if disk_candles.is_empty() {
+                        warn!("  ✗ No candles available for {} — REST API failed: {}", epic, e);
+                        continue;
                     }
-                    info!("  ✓ {} warmed up — {} candles loaded", epic, candles.len());
+                    warn!(
+                        "  ⚠ REST API failed for {}: {} — using {} candles from disk",
+                        epic, e, disk_count
+                    );
+                    disk_candles
                 }
             }
-            Err(e) => {
-                warn!("  ✗ Failed to fetch price history for {}: {}", epic, e);
+        };
+
+        // Step 3: Load candles into store and feed indicators
+        {
+            let mut s = state.write().await;
+            s.markets.history.warm_up(epic, "HOUR", candles.clone());
+            // Persist merged result back to disk so next restart has the best data
+            s.markets.history.persist_series(epic, "HOUR");
+
+            if let Some(indicator_set_map) = s.markets.indicators.get_mut(epic) {
+                if let Some(indicator_set) = indicator_set_map.get_mut("HOUR") {
+                    for candle in &candles {
+                        indicator_set.update(candle);
+                    }
+                }
             }
         }
     }
@@ -593,6 +633,13 @@ pub async fn run(
     }
 
     info!("Engine event loop terminated");
+
+    // Persist candle data to disk before shutdown
+    {
+        let s = state.read().await;
+        s.markets.history.persist_all();
+        info!("Candle data persisted to disk");
+    }
 
     // Perform cleanup
     info!("Logging out and closing IG session...");

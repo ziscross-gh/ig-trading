@@ -1,6 +1,6 @@
 # TASK_TRACKER.md — IG Trading Engine
 
-**Last updated:** 2026-03-09 (session 6 — pre-launch audit)
+**Last updated:** 2026-03-10 (candle persistence layer)
 **Current phase:** Production-ready. All engine phases complete.
 **Current focus:** 🤖 Bot engine production-ready | 🧠 8.1–8.5, 8.7 ✅ done | 8.6 RL long-term (needs 3mo data)
 
@@ -52,6 +52,7 @@ For the full history of completed work and debt items, see `TECH_DEBT_AUDIT.md`.
 | 6.4 | Fix remaining `unwrap()` panics in optimizer + backtester | Claude | ✅ Done | Safety for live mode |
 | 6.5 | Live mode pre-flight checklist | Gemini | ✅ Done | LIVE_PREFLIGHT_CHECKLIST.md |
 | 6.7 | Engine hardening weekend session | Claude | ✅ Done | 7 improvements: MARKET_STATE propagation, state worker, bar-close gating, VecDeque, dedup, log levels, unwrap cleanup |
+| 6.8 | Candle persistence layer (survive restarts) | Claude | ✅ Done | JSONL disk cache → instant warmup on restart. Disk-first startup, persist on bar close + shutdown. |
 
 ---
 
@@ -88,7 +89,7 @@ Every trade logged is future training data for 8.6:
 
 | Data | File | Purpose |
 |------|------|---------|
-| OHLCV candles | `data/*.json` | Regime classifier, re-optimise |
+| OHLCV candles | `data/candles/*.jsonl` | Persist across restarts, regime classifier, re-optimise |
 | Trade outcomes | `logs/trades.jsonl` | Strategy weighting, RL |
 | Strategy signals | `logs/signals.jsonl` | Win rate tracking |
 | Sentiment scores | `data/sentiment.db` | Sentiment validation |

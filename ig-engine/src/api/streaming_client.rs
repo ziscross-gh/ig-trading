@@ -9,9 +9,9 @@ use lightstreamer_client::subscription::{Subscription, SubscriptionMode, Snapsho
 use lightstreamer_client::subscription_listener::SubscriptionListener;
 use lightstreamer_client::item_update::ItemUpdate;
 
-use crate::engine::state::{EngineState, MarketState, ClosedTrade, Direction};
+use crate::engine::state::{EngineState, MarketState, ClosedTrade, Direction, get_instrument_name};
 use crate::ipc::events::EngineEvent;
-use crate::notifications::telegram::{TelegramNotifier, get_instrument_name};
+use crate::notifications::telegram::TelegramNotifier;
 
 /// Internal event for the state worker
 pub enum StateUpdate {
@@ -143,6 +143,7 @@ pub fn spawn_state_worker(
                     // and advance each indicator set with a proper OHLCV bar.
                     if let Some(completed) = s.markets.bar_accumulator.update(&market_state.epic, mid, now_ts) {
                         s.markets.history.push(&market_state.epic, "HOUR", completed.clone());
+                        s.markets.history.persist_series(&market_state.epic, "HOUR");
 
                         if let Some(tf_map) = s.markets.indicators.get_mut(&market_state.epic) {
                             for indicator_set in tf_map.values_mut() {
@@ -236,9 +237,10 @@ pub fn spawn_state_worker(
                                     let reason = close_reason.to_string();
                                     tokio::spawn(async move {
                                         let msg = format!(
-                                            "{} <b>POSITION CLOSED (stream)</b>\n\n<b>Instrument:</b> {}\n<b>Direction:</b> {}\n<b>Reason:</b> {}\n<b>P&amp;L:</b> {:.2}",
+                                            "{} <b>POSITION CLOSED (stream)</b>\n\n<b>Instrument:</b> {}\n<b>Direction:</b> {}\n<b>Reason:</b> {}\n<b>P&L:</b> {:.2}\n<b>Time:</b> {}",
                                             if pnl >= 0.0 { "✅" } else { "❌" },
-                                            name, dir, reason, pnl
+                                            name, dir, reason, pnl,
+                                            (chrono::Utc::now() + chrono::Duration::hours(8)).format("%H:%M:%S SGT")
                                         );
                                         let _ = tg.send_message(&msg).await;
                                     });
@@ -489,13 +491,16 @@ fn parse_opu(payload: &str) -> Option<Opu> {
         _ => return None,
     };
     
-    let level = json.get("level")?.as_f64()?;
-    let size = json.get("size")?.as_f64()?;
-    let status = json.get("status")?.as_str()?.to_string();
+    let level = json.get("level").and_then(|v| v.as_f64()).unwrap_or(0.0);
+    let size = json.get("size").and_then(|v| v.as_f64()).unwrap_or(0.0);
+    let status = json.get("status").and_then(|v| v.as_str()).unwrap_or("UNKNOWN").to_string();
     
-    // OPU pnl is often absent until closed/deleted, or inside a nested field depending on the version.
-    // We try 'profitAndLoss' first, otherwise default to 0.0 (the server doesn't always send the final PnL strictly in the OPU payload; in production you'd reconcile this with account/trade history).
-    let pnl = json.get("profitAndLoss").and_then(|v| v.as_f64()).unwrap_or(0.0);
+    // OPU pnl is often absent until closed/deleted, or named differently depending on the API version.
+    // We try 'profitAndLoss' then 'profit', otherwise default to 0.0.
+    let pnl = json.get("profitAndLoss")
+        .or_else(|| json.get("profit"))
+        .and_then(|v| v.as_f64())
+        .unwrap_or(0.0);
     
     Some(Opu {
         deal_id,

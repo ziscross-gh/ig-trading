@@ -1,10 +1,11 @@
 pub mod position_sizer;
 
-use chrono::{DateTime, Datelike, Timelike, Utc};
+use chrono::{DateTime, Timelike, Utc, Datelike};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use tracing::{debug, info, warn};
 
+use crate::engine::state::get_instrument_name;
 pub use position_sizer::calculate_position_size;
 
 /// Instrument specification for position sizing
@@ -473,7 +474,7 @@ impl RiskManager {
 
         // Check if already in this market
         if open_positions.iter().any(|pos| pos.epic == epic) {
-            let reason = format!("Already have an open position in {}", epic);
+            let reason = format!("Already have an open position in {}", get_instrument_name(epic));
             warn!("{}", reason);
             return RiskVerdict::Rejected(reason);
         }

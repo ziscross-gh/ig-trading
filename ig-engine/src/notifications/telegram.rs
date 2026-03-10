@@ -8,39 +8,7 @@ use std::error::Error;
 use tracing::{error, info, warn};
 
 use crate::engine::config::TelegramConfig;
-
-/// Get human-readable instrument name from epic code.
-/// Single source of truth — used by http_server.rs, handlers.rs, and Telegram alerts.
-/// Covers both demo (*.CSD.IP / *.CFI.IP) and live (*.CFD) epic variants.
-pub fn get_instrument_name(epic: &str) -> String {
-    match epic {
-        // Gold variants
-        "CS.D.CFIGOLD.CFI.IP" => "Spot Gold (SGD1)".to_string(),
-        "CS.D.CFDGOLD.CMG.IP" => "Spot Gold ($1)".to_string(),
-        "CS.D.GOL.CFD"        => "Spot Gold".to_string(),
-        "CS.D.XAUUSD.CFD" | "CS.D.GOLDUSD.CFD" => "Gold (XAU/USD)".to_string(),
-        "IX.D.SUNGOLD.CFI.IP" => "Weekend Spot Gold".to_string(),
-        // Forex — demo (*.CSD.IP) and live (*.CFD) variants
-        "CS.D.EURUSD.CSD.IP" | "CS.D.EURUSD.CFD" => "EUR/USD".to_string(),
-        "CS.D.GBPUSD.CSD.IP" | "CS.D.GBPUSD.CFD" => "GBP/USD".to_string(),
-        "CS.D.USDJPY.CSD.IP" | "CS.D.USDJPY.CFD" => "USD/JPY".to_string(),
-        "CS.D.AUDUSD.CSD.IP" | "CS.D.AUDUSD.CFD" => "AUD/USD".to_string(),
-        _ => {
-            // Fallback: extract pair from epic segment (e.g., "CS.D.GBPUSD.CSD.IP" → "GBP/USD")
-            let parts: Vec<&str> = epic.split('.').collect();
-            if parts.len() >= 3 {
-                let pair = parts[2];
-                if pair.len() == 6 && pair.chars().all(|c| c.is_ascii_uppercase()) {
-                    format!("{}/{}", &pair[0..3], &pair[3..6])
-                } else {
-                    pair.to_string()
-                }
-            } else {
-                epic.to_string()
-            }
-        }
-    }
-}
+use crate::engine::state::get_instrument_name;
 
 /// Sends notifications to Telegram via the Telegram Bot API
 #[derive(Clone)]
@@ -123,7 +91,7 @@ impl TelegramNotifier {
             <b>Time:</b> {}",
             mode,
             market_list,
-            chrono::Utc::now().format("%Y-%m-%d %H:%M:%S UTC"),
+            (chrono::Utc::now() + chrono::Duration::hours(8)).format("%Y-%m-%d %H:%M:%S SGT"),
         );
 
         match self.send_message(&message).await {
@@ -194,8 +162,10 @@ impl TelegramNotifier {
             <b>Direction:</b> {}\n\
             <b>Size:</b> {}\n\
             <b>Entry Price:</b> {}\n\
-            <b>Stop Loss:</b> {}",
-            direction_emoji, instrument, direction, size, price, sl
+            <b>Stop Loss:</b> {}\n\
+            <b>Time:</b> {}",
+            direction_emoji, instrument, direction, size, price, sl,
+            (chrono::Utc::now() + chrono::Duration::hours(8)).format("%H:%M:%S SGT")
         );
 
         if let Some(tp_price) = tp {
@@ -222,7 +192,12 @@ impl TelegramNotifier {
         }
 
         let instrument = get_instrument_name(epic);
-        let formatted = format!("⚠️ <b>RISK ALERT: {}</b>\n\n{}", instrument, reason);
+        let formatted = format!(
+            "⚠️ <b>RISK ALERT: {}</b>\n\n{}\n\n<b>Time:</b> {}", 
+            instrument, 
+            reason,
+            (chrono::Utc::now() + chrono::Duration::hours(8)).format("%H:%M:%S SGT")
+        );
         self.send_message(&formatted).await
     }
 
@@ -251,8 +226,10 @@ impl TelegramNotifier {
             <b>Trades:</b> {}\n\
             <b>Wins:</b> {} ({:.1}%)\n\
             <b>P&L:</b> {}\n\
-            <b>Balance:</b> {}",
-            pnl_emoji, trades, wins, win_rate, pnl, balance
+            <b>Balance:</b> {}\n\
+            <b>Time:</b> {}",
+            pnl_emoji, trades, wins, win_rate, pnl, balance,
+            (chrono::Utc::now() + chrono::Duration::hours(8)).format("%Y-%m-%d %H:%M:%S SGT")
         );
 
         self.send_message(&message).await
@@ -320,11 +297,13 @@ impl TelegramNotifier {
                     <b>Status:</b> {:?}\n\
                     <b>Balance:</b> ${:.2} {}\n\
                     <b>Uptime:</b> {}s\n\
+                    <b>Time:</b> {}\n\
                     <b>Active Trades:</b> {}",
                     s.status,
                     s.account.balance,
                     s.account.currency,
                     s.started_at.map(|t| (chrono::Utc::now() - t).num_seconds()).unwrap_or(0),
+                    (chrono::Utc::now() + chrono::Duration::hours(8)).format("%H:%M:%S SGT"),
                     s.trades.active.len()
                 );
                 let _ = self.send_message(&status_msg).await;
@@ -340,11 +319,13 @@ impl TelegramNotifier {
                 for pos in &s.trades.active {
                     let name = get_instrument_name(&pos.epic);
                     let emoji = if pos.direction == crate::engine::state::Direction::Buy { "🟢" } else { "🔴" };
+                    let opened_sgt = (pos.opened_at + chrono::Duration::hours(8)).format("%H:%M");
                     msg.push_str(&format!(
                         "{} <b>{}</b>\n\
                         Entry: {:.2} | Current: {:.2}\n\
-                        Size: {} | P&L: <b>{:.2}</b>\n\n",
-                        emoji, name, pos.open_price, pos.current_price, pos.size, pos.pnl
+                        Size: {} | P&L: <b>{:.2}</b>\n\
+                        Opened: {} SGT\n\n",
+                        emoji, name, pos.open_price, pos.current_price, pos.size, pos.pnl, opened_sgt
                     ));
                 }
                 let _ = self.send_message(&msg).await;

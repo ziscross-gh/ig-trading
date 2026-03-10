@@ -4,11 +4,11 @@ use anyhow::Result;
 use tracing::{info, error, debug};
 use chrono::Utc;
 
-use crate::engine::state::{EngineState, Direction, ClosedTrade};
+use crate::engine::state::{EngineState, Direction, ClosedTrade, get_instrument_name};
 use crate::api::rest_client::IGRestClient;
 use crate::strategy::ensemble::EnsembleVoter;
 use crate::ipc::events::EngineEvent;
-use crate::notifications::telegram::{TelegramNotifier, get_instrument_name};
+use crate::notifications::telegram::TelegramNotifier;
 use crate::engine::event_loop::learning::{build_learning_snapshot};
 
 pub async fn handle_position_monitoring(
@@ -161,9 +161,10 @@ pub async fn handle_position_monitoring(
             let v_reason = reason.to_string();
             tokio::spawn(async move {
                 let msg = format!(
-                    "{} <b>VIRTUAL POSITION CLOSED</b>\n\n<b>Instrument:</b> {}\n<b>Direction:</b> {}\n<b>Reason:</b> {}\n<b>P&amp;L:</b> {:.2}",
+                    "{} <b>VIRTUAL POSITION CLOSED</b>\n\n<b>Instrument:</b> {}\n<b>Direction:</b> {}\n<b>Reason:</b> {}\n<b>P&L:</b> {:.2}\n<b>Time:</b> {}",
                     if v_pnl >= 0.0 { "✅" } else { "❌" },
-                    v_name, v_direction, v_reason, v_pnl
+                    v_name, v_direction, v_reason, v_pnl,
+                    (chrono::Utc::now() + chrono::Duration::hours(8)).format("%H:%M:%S SGT")
                 );
                 let _ = tg.send_message(&msg).await;
             });
@@ -236,9 +237,10 @@ pub async fn handle_position_monitoring(
                 let reason_str = reason.to_string();
                 tokio::spawn(async move {
                     let msg = format!(
-                        "{} <b>POSITION CLOSED</b>\n\n<b>Instrument:</b> {}\n<b>Direction:</b> {}\n<b>Reason:</b> {}\n<b>P&amp;L:</b> {:.2}",
+                        "{} <b>POSITION CLOSED</b>\n\n<b>Instrument:</b> {}\n<b>Direction:</b> {}\n<b>Reason:</b> {}\n<b>P&L:</b> {:.2}\n<b>Time:</b> {}",
                         if pnl_val >= 0.0 { "✅" } else { "❌" },
-                        name, direction, reason_str, pnl_val
+                        name, direction, reason_str, pnl_val,
+                        (chrono::Utc::now() + chrono::Duration::hours(8)).format("%H:%M:%S SGT")
                     );
                     let _ = tg.send_message(&msg).await;
                 });

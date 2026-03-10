@@ -11,10 +11,9 @@ use std::sync::Arc;
 use tokio::sync::{broadcast, RwLock};
 use tower_http::cors::CorsLayer;
 
-use crate::engine::state::{EngineState, EngineStatus};
+use crate::engine::state::{EngineState, EngineStatus, get_instrument_name};
 use crate::engine::config::EngineMode;
 use crate::ipc::events::EngineEvent;
-use crate::notifications::telegram::get_instrument_name;
 use crate::engine::optimizer::{Optimizer, OptimizationResult};
 use crate::engine::backtester::{BacktestEngine};
 use crate::strategy::{
