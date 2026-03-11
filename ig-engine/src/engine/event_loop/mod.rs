@@ -32,7 +32,7 @@ use crate::data::candle_store;
 pub use analysis::analyze_market;
 pub use handlers::handle_position_monitoring;
 pub use learning::build_learning_snapshot;
-pub use validation::validate_config;
+pub use validation::{validate_config, validate_live_readiness};
 
 /// Main engine event loop
 pub async fn run(
@@ -339,6 +339,18 @@ pub async fn run(
         }
         Err(e) => {
             warn!("Failed to fetch account info on startup: {}. Balance will be 0 until next refresh.", e);
+        }
+    }
+
+    // --- Live readiness checks (only in live mode, runs after balance is known) ---
+    {
+        let balance = {
+            let s = state.read().await;
+            s.account.balance
+        };
+        if let Err(e) = validate_live_readiness(&config, balance) {
+            error!("❌ Live readiness check failed: {}", e);
+            return Err(e);
         }
     }
 

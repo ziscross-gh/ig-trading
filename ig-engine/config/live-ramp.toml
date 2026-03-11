@@ -1,0 +1,246 @@
+# IG Trading Engine — Live Ramp-Up Configuration
+# ============================================
+# Phase 2: Micro-Lot Live (Weeks 1–2)
+#
+# Ultra-conservative settings for the first real-money trades.
+# Use this config until you have 10+ clean trades with no issues.
+# Then switch to config/live.toml for normal live trading.
+#
+# Run order:
+#   Phase 1 (Paper-on-Live): mode = "paper" in this file
+#   Phase 2 (Micro-Lot Live): mode = "live" in this file
+#   Phase 3 (Normal Live): switch to config/live.toml
+#
+# Key differences from live.toml:
+#   - USD/JPY only (min 0.2 lots — smallest risk per trade)
+#   - max_risk_per_trade = 0.25% (half of normal)
+#   - max_open_positions = 1 (single position at a time)
+#   - max_daily_trades = 5 (hard cap — no overtrading while learning)
+#   - min_avg_strength = 8.0 (only very strong signals)
+#   - max_margin_usage_pct = 10.0 (very tight)
+#
+# To add EUR/USD: uncomment "CS.D.EURUSD.CFD" below when account >= SGD 5,000
+
+[general]
+mode = "live"                    # Change to "paper" for Phase 1 (Paper-on-Live)
+log_level = "info"
+heartbeat_interval_secs = 30
+api_port = 9090
+
+[ig]
+environment = "live"             # demo | live
+session_refresh_mins = 50
+rate_limit_per_minute = 20
+confirm_timeout_ms = 5000
+confirm_max_retries = 10
+
+[markets]
+# ── USD/JPY only during ramp-up ───────────────────────────────────────────────
+# USD/JPY min deal size = 0.2 lots → smaller minimum risk than EUR/USD (0.5 lots)
+# ⚠️  VERIFY EPIC CODE ON LIVE IG PLATFORM BEFORE GO-LIVE ⚠️
+epics = [
+    "CS.D.USDJPY.CFD",    # USD/JPY — verify on live IG platform
+
+    # Add EUR/USD when account >= SGD 5,000 and after 10+ clean USD/JPY trades:
+    # "CS.D.EURUSD.CFD",
+
+    # Gold: DO NOT enable until account > SGD 20,000
+    # "CS.D.GOLDUSD.CFD",
+]
+
+# ============================================
+# RISK MANAGEMENT — ULTRA-CONSERVATIVE
+# ============================================
+[risk]
+max_risk_per_trade = 0.25         # HALF of normal — first real-money trades
+max_daily_loss_pct = 1.0          # Stop at 1% daily loss (tighter than normal 2%)
+max_weekly_drawdown_pct = 3.0     # Weekly circuit breaker (tighter than normal 5%)
+max_open_positions = 1            # Single position only during ramp
+max_correlated_positions = 1
+max_margin_usage_pct = 10.0       # Very tight — maximum safety margin
+min_risk_reward = 1.5             # Higher R:R bar during ramp (normal=1.0)
+sizing_method = "quarter_kelly"
+max_daily_trades = 5              # Hard cap — no overtrading while learning
+
+limited_risk_account = false      # Set true if your account requires guaranteed stops
+use_trailing_stop = true
+trailing_stop_min_pips = 5.0
+allowed_sessions = ["Asia", "London", "UsOverlap"]
+trading_hours_utc = [0, 21]
+allow_weekend_trading = false
+
+news_blackout_windows_utc = [[8, 30], [13, 30], [15, 0]]
+news_blackout_mins = 15
+
+# ── Macro Event Blackout Calendar (identical to live.toml) ────────────────────
+
+[[risk.macro_events]]
+hour = 21
+minute = 0
+label = "Daily market maintenance window (Gold + FX)"
+blackout_mins = 60
+
+[[risk.macro_events]]
+hour = 0
+minute = 30
+label = "AU CPI / Trade Balance"
+blackout_mins = 20
+
+[[risk.macro_events]]
+hour = 7
+minute = 0
+label = "EUR CPI / German Ifo / ZEW"
+blackout_mins = 20
+
+[[risk.macro_events]]
+hour = 8
+minute = 30
+label = "London Open / EU PMI / UK data"
+blackout_mins = 20
+
+[[risk.macro_events]]
+hour = 9
+minute = 0
+label = "ECB / Bank of England rate decisions"
+blackout_mins = 45
+
+[[risk.macro_events]]
+hour = 13
+minute = 30
+label = "NFP / CPI / Core PCE / Retail Sales / GDP"
+blackout_mins = 30
+
+[[risk.macro_events]]
+hour = 15
+minute = 0
+label = "US Open / ISM PMI / Factory Orders"
+blackout_mins = 20
+
+[[risk.macro_events]]
+hour = 19
+minute = 0
+label = "FOMC Rate Decision / Fed Statement"
+blackout_mins = 60
+
+[[risk.macro_events]]
+hour = 19
+minute = 30
+label = "FOMC Press Conference"
+blackout_mins = 45
+
+# ── Instrument Specifications ──────────────────────────────────────────────────
+# ⚠️  VALUES FROM DEMO VERIFICATION (2026-03-10) — RE-VERIFY ON LIVE PLATFORM
+
+[risk.instrument_specs."CS.D.USDJPY.CFD"]
+epic = "CS.D.USDJPY.CFD"
+min_deal_size = 0.2               # Demo verified — re-verify on live
+max_deal_size = 100.0
+pip_value = 0.81
+pip_scale = 0.01
+contract_size = 1.0
+margin_requirement_pct = 5.0
+size_decimals = 2
+min_guaranteed_stop_pips = 7.0
+
+# [risk.instrument_specs."CS.D.EURUSD.CFD"]  ← Uncomment when adding EUR/USD
+# epic = "CS.D.EURUSD.CFD"
+# min_deal_size = 0.5
+# max_deal_size = 100.0
+# pip_value = 1.25
+# pip_scale = 0.0001
+# contract_size = 1.0
+# margin_requirement_pct = 5.0
+# size_decimals = 2
+# min_guaranteed_stop_pips = 5.0
+
+[risk.circuit_breaker]
+consecutive_losses_reduce = 2     # Halve size after 2 losses
+consecutive_losses_pause = 3      # Pause after 3 losses (stricter than normal 4 during ramp)
+pause_duration_mins = 240         # 4-hour pause (longer than normal during ramp)
+daily_loss_warning_pct = 50.0     # Alert at 50% of daily limit (earlier warning)
+
+# ============================================
+# STRATEGIES — HIGH CONVICTION BAR
+# ============================================
+[strategies]
+min_consensus = 3                 # Require 3/4 strategies to agree
+min_avg_strength = 8.0            # HIGHER bar than live.toml (7.5) — only very strong signals
+default_atr_sl_multiplier = 2.0
+default_atr_tp_multiplier = 3.0
+
+[strategies.ma_crossover]
+enabled = true
+weight = 1.0
+short_period = 9
+long_period = 21
+trend_filter_period = 200
+require_adx_above = 25.0
+atr_sl_multiplier = 2.0
+atr_tp_multiplier = 3.0
+trailing_stop_pips = 15.0
+
+[strategies.rsi_divergence]
+enabled = true
+weight = 0.9
+period = 14
+overbought = 70.0
+oversold = 30.0
+detect_divergence = true
+atr_sl_multiplier = 2.0
+atr_tp_multiplier = 3.5
+trailing_stop_pips = 12.0
+
+[strategies.macd_momentum]
+enabled = true
+weight = 1.0
+fast = 12
+slow = 26
+signal = 9
+atr_sl_multiplier = 2.0
+atr_tp_multiplier = 3.0
+trailing_stop_pips = 15.0
+
+[strategies.bollinger_reversion]
+enabled = true
+weight = 0.8
+period = 20
+std_dev = 2.0
+atr_sl_multiplier = 1.5
+atr_tp_multiplier = 2.5
+trailing_stop_pips = 10.0
+
+# ── Per-instrument strategy overrides ────────────────────────────────────────
+[strategies.instrument_overrides."CS.D.USDJPY.CFD"]
+adx_range_filter = true
+adx_range_max    = 25.0
+
+# [strategies.instrument_overrides."CS.D.EURUSD.CFD"]  ← Uncomment with EUR/USD
+# adx_range_filter = true
+# adx_range_max    = 25.0
+
+# Multi-timeframe confirmation
+[strategies.multi_timeframe]
+enabled = true
+weight = 1.2
+trend_tf = "HOUR_4"
+signal_tf = "HOUR"
+entry_tf = "MINUTE_15"
+trailing_stop_pips = 15.0
+
+# ============================================
+# TRADING HOURS (UTC)
+# ============================================
+[trading_hours]
+start = "00:00"                   # 08:00 SGT — Asia open
+end = "21:00"                     # 05:00 SGT — stop before daily maintenance window
+timezone = "UTC"
+
+# ============================================
+# NOTIFICATIONS
+# ============================================
+[notifications.telegram]
+enabled = true
+trade_alerts = true
+risk_alerts = true
+daily_summary = true
+summary_time = "21:00"            # 05:00 SGT — end of trading day
