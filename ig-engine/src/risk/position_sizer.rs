@@ -36,7 +36,7 @@ pub fn calculate_position_size(
     // Get instrument spec: Config -> Fallback -> Default
     let instrument = instrument_specs.get(epic).cloned().or_else(|| InstrumentSpec::from_epic_fallback(epic)).unwrap_or_else(|| InstrumentSpec {
         epic: epic.to_string(),
-        min_deal_size: 0.1,
+        min_deal_size: 0.5,
         max_deal_size: 100.0,
         pip_value: 10.0,
         pip_scale: 0.0001,
@@ -177,7 +177,7 @@ mod tests {
     fn test_instrument_spec_eurusd() {
         let spec = InstrumentSpec::from_epic_fallback("CS.D.EURUSD.CFD").expect("EURUSD spec should exist");
         assert_eq!(spec.pip_value, 1.27);      // USD 1 ≈ SGD$1.27 (IG verified)
-        assert_eq!(spec.min_deal_size, 0.02);  // IG verified minimum
+        assert_eq!(spec.min_deal_size, 0.5);  // Updated verified minimum
     }
 
     #[test]
@@ -246,8 +246,8 @@ mod tests {
         assert_eq!(clamped, 100.0);
 
         // Clamp low
-        let clamped = clamp_to_instrument_limits(0.005, &spec);
-        assert_eq!(clamped, 0.02);
+        let clamped = clamp_to_instrument_limits(0.1, &spec);
+        assert_eq!(clamped, 0.5);
 
         // Within limits
         let clamped = clamp_to_instrument_limits(1.5, &spec);

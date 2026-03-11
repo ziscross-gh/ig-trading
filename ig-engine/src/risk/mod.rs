@@ -39,7 +39,7 @@ impl InstrumentSpec {
             }),
             "CS.D.EURUSD.CSD.IP" | "CS.D.EURUSD.CFD" => Some(Self {
                 epic: epic.to_string(),
-                min_deal_size: 0.02,
+                min_deal_size: 0.5,
                 max_deal_size: 100.0,
                 pip_value: 1.27,
                 pip_scale: 0.0001,
@@ -50,7 +50,7 @@ impl InstrumentSpec {
             }),
             "CS.D.GBPUSD.CSD.IP" | "CS.D.GBPUSD.CFD" => Some(Self {
                 epic: epic.to_string(),
-                min_deal_size: 0.01,
+                min_deal_size: 0.5,
                 max_deal_size: 100.0,
                 pip_value: 1.27,
                 pip_scale: 0.0001,
@@ -61,7 +61,7 @@ impl InstrumentSpec {
             }),
             "CS.D.USDJPY.CSD.IP" | "CS.D.USDJPY.CFD" | "CS.D.EURJPY.CSD.IP" | "CS.D.EURJPY.CFD" => Some(Self {
                 epic: epic.to_string(),
-                min_deal_size: 0.02,
+                min_deal_size: 0.2,
                 max_deal_size: 100.0,
                 pip_value: 0.81,
                 pip_scale: 0.01,
@@ -72,7 +72,7 @@ impl InstrumentSpec {
             }),
             "CS.D.AUDUSD.CSD.IP" | "CS.D.AUDUSD.CFD" => Some(Self {
                 epic: epic.to_string(),
-                min_deal_size: 0.02,
+                min_deal_size: 0.5,
                 max_deal_size: 100.0,
                 pip_value: 1.27,
                 pip_scale: 0.0001,

@@ -55,16 +55,29 @@ impl OrderManager {
         &self,
         client: &mut IGRestClient,
         trade: &AdjustedTrade,
+        currency: &str,
     ) -> Result<ExecutionResult> {
         info!(
-            "Executing trade: {} {} {} @ SL={} TP={}",
-            trade.direction, trade.size, trade.epic, trade.stop_loss, trade.take_profit
+            "Executing trade: {} {} {} @ SL={} TP={} ({})",
+            trade.direction, trade.size, trade.epic, trade.stop_loss, trade.take_profit, currency
         );
 
         // Build the trade request
+        // HYBRID LOGIC: 
+        // 1. JPY pairs MUST use JPY.
+        // 2. Other major FX pairs (EUR, GBP, AUD) use USD.
+        // 3. Everything else uses the account's base currency.
+        let currency_code = if trade.epic.contains("JPY") {
+            "JPY".to_string()
+        } else if trade.epic.contains("EURUSD") || trade.epic.contains("GBPUSD") || trade.epic.contains("AUDUSD") {
+            "USD".to_string()
+        } else {
+            currency.to_string()
+        };
+
         // NOTE: Limited risk accounts REQUIRE guaranteed_stop = true.
-        // Guaranteed stops have a premium but cap your maximum loss absolutely.
-        // Trailing stops are NOT available on limited risk accounts.
+        // However, some markets on Demo reject guaranteed stops for various reasons (Code 11).
+        // For now, we use the global config to decide.
         let request = IGTradeRequest {
             epic: trade.epic.clone(),
             direction: trade.direction.clone(),
@@ -74,12 +87,8 @@ impl OrderManager {
             stop_level: Some(trade.stop_loss),
             stop_distance: None,
             limit_level: Some(trade.take_profit),
-            currency_code: Some(if trade.epic.contains("EURUSD") || trade.epic.contains("GBPUSD") || trade.epic.contains("USDJPY") { 
-                "USD".to_string() 
-            } else {
-                "SGD".to_string()
-            }),
-            guaranteed_stop: Some(true),
+            currency_code: Some(currency_code),
+            guaranteed_stop: Some(self.config.guaranteed_stop),
             trailing_stop: None, // NOT available on limited risk accounts
             force_open: Some(true),
             expiry: "-".to_string(),

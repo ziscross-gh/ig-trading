@@ -301,7 +301,7 @@ pub async fn run(
     let order_manager = crate::engine::order_manager::OrderManager::new(crate::engine::order_manager::OrderManagerConfig {
         confirm_timeout_ms: config.ig.confirm_timeout_ms,
         confirm_max_retries: config.ig.confirm_max_retries,
-        guaranteed_stop: true,
+        guaranteed_stop: config.risk.limited_risk_account,
     });
     info!("Order manager initialized");
 
@@ -367,6 +367,7 @@ pub async fn run(
                     take_profit: ig_pos.limit_level,
                     trailing_stop: None,
                     pnl: 0.0, // Updated by monitor loop later
+                    currency: ig_pos.currency,
                     strategy: "Existing".to_string(),
                     opened_at: {
                         let date_str = ig_pos.created_date.replace("T", " ");

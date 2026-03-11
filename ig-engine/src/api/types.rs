@@ -50,6 +50,16 @@ pub struct IGMarketResponse {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct IGCurrency {
+    pub code: String,
+    pub symbol: String,
+    pub base_exchange_rate: f64,
+    pub exchange_rate: f64,
+    pub is_default: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct IGInstrument {
     pub epic: String,
     pub name: String,
@@ -57,6 +67,7 @@ pub struct IGInstrument {
     pub instrument_type: String,
     pub unit: String,
     pub streaming_prices_available: bool,
+    pub currencies: Vec<IGCurrency>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -165,6 +176,19 @@ pub struct IGTradeRequest {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub force_open: Option<bool>,
     pub expiry: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct IGClosePositionRequest {
+    pub deal_id: Option<String>,
+    pub epic: Option<String>,
+    pub expiry: Option<String>,
+    pub direction: String,
+    pub size: f64,
+    pub order_type: String,
+    pub level: Option<f64>,
+    pub quote_id: Option<String>,
 }
 
 /// Deal status enumeration

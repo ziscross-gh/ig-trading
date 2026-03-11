@@ -57,6 +57,13 @@ impl TraderAPI for MockTraderClient {
                 instrument_type: "CURRENCIES".to_string(),
                 unit: "SHARE".to_string(),
                 streaming_prices_available: true,
+                currencies: vec![IGCurrency {
+                    code: "USD".to_string(),
+                    symbol: "$".to_string(),
+                    base_exchange_rate: 1.0,
+                    exchange_rate: 1.0,
+                    is_default: true,
+                }],
             },
             snapshot: IGSnapshot {
                 market_status: "TRADEABLE".to_string(),

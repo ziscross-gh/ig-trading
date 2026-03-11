@@ -42,7 +42,7 @@ min_risk_reward = 1.0             # Minimum 1:1 risk/reward
 sizing_method = "quarter_kelly"   # Quarter-Kelly: what serious funds use
 max_daily_trades = 20
 
-limited_risk_account = true
+limited_risk_account = false
 use_trailing_stop = true
 trailing_stop_min_pips = 5.0
 allowed_sessions = ["Asia", "London", "UsOverlap"]

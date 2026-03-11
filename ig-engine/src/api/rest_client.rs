@@ -282,14 +282,48 @@ impl TraderAPI for IGRestClient {
         direction: &str,
         size: f64,
     ) -> Result<IGTradeResponse, anyhow::Error> {
-        let url = format!("{}/positions/otc/{}", self.base_url, deal_id);
+        let url = format!("{}/positions/otc", self.base_url);
 
         let body = serde_json::json!({
+            "dealId": deal_id,
             "direction": direction,
-            "size": size
+            "size": size,
+            "orderType": "MARKET"
         });
 
-        self.delete_request::<IGTradeResponse>(&url, body).await
+        // Use version 1 for positions/otc tunneled via POST
+        let mut retry_count = 0;
+        loop {
+            self.apply_rate_limit().await;
+            
+            // Build the request manually to ensure all headers are correct
+            let mut request = self.client.post(&url)
+                .header("X-IG-API-KEY", &self.api_key)
+                .header("Version", "1")
+                .header("_method", "DELETE")
+                .header("Content-Type", "application/json")
+                .json(&body);
+                
+            if let Some(cst) = &self.cst {
+                request = request.header("CST", cst);
+            }
+            if let Some(sec) = &self.security_token {
+                request = request.header("X-SECURITY-TOKEN", sec);
+            }
+
+            let response = request.send().await?;
+            match self.handle_response::<IGTradeResponse>(response).await {
+                Ok(data) => return Ok(data),
+                Err(e) if e.to_string().contains("UNAUTHORIZED") && retry_count < 1 => {
+                    warn!("Session expired. Re-authenticating and retrying...");
+                    let id = self.identifier.clone();
+                    let pw = self.password.clone();
+                    self.authenticate(&id, &pw).await?;
+                    retry_count += 1;
+                }
+                Err(e) => return Err(e),
+            }
+        }
     }
 
     /// Retrieve confirmation for a specific deal reference

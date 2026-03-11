@@ -173,13 +173,16 @@ pub async fn analyze_market(
                 };
 
                 if can_trade {
-                    let account_info = {
+                    let (account_info, account_currency) = {
                         let s = state.read().await;
-                        crate::risk::AccountInfo {
-                            balance: s.account.balance,
-                            equity: s.account.equity,
-                            available_margin: s.account.available,
-                        }
+                        (
+                            crate::risk::AccountInfo {
+                                balance: s.account.balance,
+                                equity: s.account.equity,
+                                available_margin: s.account.available,
+                            },
+                            s.account.currency.clone()
+                        )
                     };
 
                     let open_positions = {
@@ -213,7 +216,7 @@ pub async fn analyze_market(
                     match verdict {
                         crate::risk::RiskVerdict::Approved(adjusted_trade) => {
                             if config.general.mode != EngineMode::Paper {
-                                match order_manager.execute_trade(client, &adjusted_trade).await {
+                                match order_manager.execute_trade(client, &adjusted_trade, &account_currency).await {
                                     Ok(execution) => {
                                         let position = Position {
                                             deal_id: execution.deal_id.clone(),
@@ -231,6 +234,7 @@ pub async fn analyze_market(
                                             trailing_stop: adjusted_trade.trailing_stop_distance,
                                             current_price: mid_price,
                                             pnl: 0.0,
+                                            currency: account_currency.clone(),
                                             strategy: adjusted_trade.strategy.clone(),
                                             opened_at: Utc::now(),
                                             is_virtual: false,
@@ -292,6 +296,7 @@ pub async fn analyze_market(
                                     trailing_stop: adjusted_trade.trailing_stop_distance,
                                     current_price: mid_price,
                                     pnl: 0.0,
+                                    currency: account_currency.clone(),
                                     strategy: adjusted_trade.strategy.clone(),
                                     opened_at: Utc::now(),
                                     is_virtual: true,
@@ -415,13 +420,16 @@ pub async fn execute_manual_trigger(
         }
     };
 
-    let account_info = {
+    let (account_info, account_currency) = {
         let s = state.read().await;
-        crate::risk::AccountInfo {
-            balance: s.account.balance,
-            equity: s.account.equity,
-            available_margin: s.account.available,
-        }
+        (
+            crate::risk::AccountInfo {
+                balance: s.account.balance,
+                equity: s.account.equity,
+                available_margin: s.account.available,
+            },
+            s.account.currency.clone()
+        )
     };
 
     let open_positions = {
@@ -454,7 +462,7 @@ pub async fn execute_manual_trigger(
         crate::risk::RiskVerdict::Approved(adjusted_trade) => {
             info!("Manual trigger APPROVED: {} {} @ {}", epic, dir, price);
             if config.general.mode != EngineMode::Paper {
-                match order_manager.execute_trade(client, &adjusted_trade).await {
+                match order_manager.execute_trade(client, &adjusted_trade, &account_currency).await {
                     Ok(execution) => {
                         let mut s = state.write().await;
                         let pos = Position {
@@ -470,6 +478,7 @@ pub async fn execute_manual_trigger(
                             current_price: execution.fill_price,
                             opened_at: Utc::now(),
                             pnl: 0.0,
+                            currency: account_currency.clone(),
                             strategy: "ManualTrigger".into(),
                             is_virtual: false,
                         };
@@ -510,6 +519,7 @@ pub async fn execute_manual_trigger(
                     current_price: price,
                     opened_at: Utc::now(),
                     pnl: 0.0,
+                    currency: account_currency.clone(),
                     strategy: "ManualTrigger".into(),
                     is_virtual: true,
                 };

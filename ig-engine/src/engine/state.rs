@@ -109,6 +109,7 @@ pub struct Position {
     pub trailing_stop: Option<f64>,
     pub current_price: f64,
     pub pnl: f64,
+    pub currency: String,
     pub strategy: String,
     pub opened_at: DateTime<Utc>,
     pub is_virtual: bool,
