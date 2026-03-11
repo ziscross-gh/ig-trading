@@ -1,6 +1,6 @@
 # TASK_TRACKER.md — IG Trading Engine
 
-**Last updated:** 2026-03-11 (close position fix, min deal sizes, api_lab)
+**Last updated:** 2026-03-11 (live configs + readiness validation)
 **Current phase:** Production-ready. All engine phases complete. Live transition planning in progress.
 **Current focus:** 🤖 Bot engine production-ready | 🧠 8.1–8.5, 8.7 ✅ done | 8.6 RL long-term (needs 3mo data) | 🔜 Live trading transition
 
@@ -44,9 +44,9 @@ For the full history of completed work and debt items, see `TECH_DEBT_AUDIT.md`.
 | L.3 | Verify min deal sizes on demo | Gemini | ✅ Done | EUR/USD=0.5, GBP/USD=0.5, USD/JPY=0.2, Gold=3.0 |
 | L.4 | Config-driven guaranteed_stop | Gemini | ✅ Done | Reads from config.risk.limited_risk_account, not hardcoded |
 | L.5 | api_lab CLI tool (Rust + Python) | Gemini | ✅ Done | List, close, clear_profit, inject trades |
-| L.6 | Complete `config/live.toml` (all sections) | Claude | 🏗️ Planned | Missing macro events, instrument specs, overrides |
-| L.7 | Create `config/live-ramp.toml` | Claude | 🏗️ Planned | Ultra-conservative ramp-up config |
-| L.8 | Live startup validation in Rust | Claude | 🏗️ Planned | Margin feasibility, macro events, instrument spec checks |
+| L.6 | Complete `config/live.toml` (all sections) | Claude | ✅ Done | Fixed 7 wrong field names, added 9 macro events, instrument specs, ADX overrides |
+| L.7 | Create `config/live-ramp.toml` | Claude | ✅ Done | USD/JPY only, 0.25% risk, 1 position, 5 trades/day |
+| L.8 | Live startup validation in Rust | Claude | ✅ Done | validate_live_readiness() — macro events, spec completeness, margin feasibility |
 | L.9 | Verify live epic codes + min deal sizes | User | ⏳ Waiting | Must check on live IG platform before going live |
 
 ---
