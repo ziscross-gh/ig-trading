@@ -1,6 +1,6 @@
 # Tech Debt Audit — IG Trading Engine
 
-**Date:** 2026-02-25 (updated 2026-03-09)
+**Date:** 2026-02-25 (updated 2026-03-10)
 **Scope:** Rust engine (`ig-engine/`) only — dashboard archived
 **Total findings (original):** 72 across 6 categories — frontend items archived
 
@@ -42,7 +42,7 @@ Items scored using: **Priority = (Impact + Risk) × (6 − Effort)**
 | 28 | Dep | Unused crypto deps (`rsa`, `base64`, `pkcs8`) | 2 | 1 | 1 | 15 | `Cargo.toml` |
 | 29 | Doc | No module-level docs on 18 of 41 Rust files | 2 | 2 | 2 | 16 | Multiple `.rs` files |
 | 31 | Infra | No Docker/container config | 2 | 2 | 2 | 16 | Project root |
-| 32 | Infra | No graceful shutdown — no SIGTERM handler, no position drain | 3 | 4 | 3 | 21 | `event_loop.rs` |
+| 32 | Infra | ~~No graceful shutdown~~ ✅ SIGTERM handler + candle persist_all on shutdown | 3 | 4 | 3 | 21 | `event_loop.rs` |
 
 ### Tier 4 — Low / Backlog (Score < 10)
 
@@ -128,4 +128,4 @@ Items scored using: **Priority = (Impact + Risk) × (6 − Effort)**
 | Infrastructure | 0 | 1 | 3 | 2 | 6 |
 | **Total** | **5** | **9** | **18** | **13** | **45** |
 
-**Current state:** All critical engine debt resolved through Phases 1–8.7. Remaining items are low-priority Rust cleanup (dead code, deps, docs). Frontend debt is archived — dashboard not maintained.
+**Current state:** All critical engine debt resolved through Phases 1–8.7. Candle persistence layer (6.8) shipped — disk-first startup with JSONL cache, instant warmup on restart. Remaining items are low-priority Rust cleanup (dead code, deps, docs). Frontend debt is archived — dashboard not maintained.

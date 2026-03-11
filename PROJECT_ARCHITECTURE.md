@@ -1,6 +1,6 @@
 # PROJECT_ARCHITECTURE.md — IG Trading Engine
 
-**Last updated:** 2026-03-09
+**Last updated:** 2026-03-10
 **Scope:** Rust engine (`ig-engine/`) — bot + Telegram only (dashboard archived)
 
 ---
@@ -30,7 +30,11 @@ IG Markets (REST + Lightstreamer)
 │  [Startup]                                               │
 │  ├── Load config/default.toml                            │
 │  ├── Authenticate with IG REST API                       │
-│  ├── Warm up 250 HOUR candles per epic (REST)            │
+│  ├── Warm up candles per epic (disk-first strategy):     │
+│  │     1. Load from data/candles/*.jsonl                 │
+│  │     2. If ≥210 bars on disk → use disk, skip REST API │
+│  │     3. Else try REST API 250 bars → merge with disk   │
+│  │     4. Persist merged result back to disk              │
 │  ├── Initialise IndicatorSet per epic                    │
 │  ├── Spawn Lightstreamer streaming task (auto-reconnect) │
 │  └── Start Axum HTTP/WS server (port 9090)               │
@@ -47,7 +51,7 @@ IG Markets (REST + Lightstreamer)
 │  ├── position_monitor_interval (every 5s)                │
 │  │     └── handlers.rs — SL/TP hit detection, trailing  │
 │  ├── candle_refresh_interval (every 15 min)              │
-│  │     └── Fetch 20 fresh HOUR candles → update indicators│
+│  │     └── Fetch fresh HOUR candles → update indicators  │
 │  ├── session_refresh_interval (every 50 min)             │
 │  │     └── Refresh IG CST + security tokens              │
 │  ├── heartbeat_interval                                  │
@@ -61,6 +65,7 @@ IG Markets (REST + Lightstreamer)
 │  [Shutdown — SIGTERM or Ctrl+C]                          │
 │  ├── Shutdown event broadcast                            │
 │  ├── Event loop exits cleanly                            │
+│  ├── Persist all candle series to disk                   │
 │  └── IG session logout                                   │
 └─────────────────────────────────────────────────────────┘
          │
@@ -174,7 +179,7 @@ Circuit breaker triggers: reduces position size after 3 consecutive losses; paus
 | Sub-state | Key fields |
 |-----------|------------|
 | `AccountState` | balance, available, equity, P&L, currency |
-| `MarketStateContainer` | live prices per epic, `IndicatorSet` per epic, `CandleStore` |
+| `MarketStateContainer` | live prices per epic, `IndicatorSet` per epic, `CandleStore` (JSONL disk persistence) |
 | `TradeState` | active positions, last 200 signals, last 500 closed trades |
 | `MetricsState` | daily stats (trades, wins, P&L, drawdown), circuit breaker state |
 | `LearningState` | scorecard, weight manager, snapshot for API |

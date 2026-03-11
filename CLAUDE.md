@@ -36,6 +36,7 @@ Claude owns the **Rust bot engine, Python ML pipeline, and Telegram notification
 ### Status
 
 - All known bugs fixed (optimizer NaN ✅, backtester guard ✅, Bollinger NaN ✅)
+- Candle persistence layer ✅ — disk-first startup, JSONL files in `data/candles/`, instant warmup on restart
 - Only long-term item: 8.6 RL position sizing (needs 3+ months live trade data in `logs/trades.jsonl`)
 
 ---

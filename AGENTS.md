@@ -55,7 +55,7 @@ ig-trading/
 │   │   ├── strategy/           # MA Crossover, RSI Reversal, MACD, Bollinger + EnsembleVoter
 │   │   ├── risk/               # RiskManager (hard gate) + position_sizer
 │   │   ├── learning/           # StrategyScorecard + AdaptiveWeightManager
-│   │   ├── data/               # CandleStore ring buffer
+│   │   ├── data/               # CandleStore + JSONL disk persistence
 │   │   ├── ipc/                # Axum HTTP + WebSocket server (port 9090)
 │   │   └── notifications/      # Telegram alerts
 │   └── Cargo.toml
@@ -183,7 +183,7 @@ docker-compose up --build           # Engine + PostgreSQL + Redis
 
 ```bash
 cd ig-engine
-cargo test                       # 66 tests (63 unit + 3 integration)
+cargo test                       # 70 tests (67 unit + 3 integration)
 cargo clippy -- -D warnings      # must exit 0
 cargo fmt --check
 ```
@@ -208,5 +208,5 @@ These apply regardless of which AI tool is being used:
 
 ## Current Status
 
-All phases 1–8.7 complete. Only 8.6 (RL position sizing) remains long-term.
-See `TASK_TRACKER.md` for full details.
+All phases 1–8.7 complete. Candle persistence layer (6.8) shipped — disk-first startup, instant warmup on restart.
+Only 8.6 (RL position sizing) remains long-term. See `TASK_TRACKER.md` for full details.
