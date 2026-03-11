@@ -41,7 +41,7 @@ impl InstrumentSpec {
                 epic: epic.to_string(),
                 min_deal_size: 0.5,
                 max_deal_size: 100.0,
-                pip_value: 1.27,
+                pip_value: 12.70, // 1 std lot = 100k units = $10 USD/pip × ~1.27 USD/SGD
                 pip_scale: 0.0001,
                 contract_size: 1.0,
                 margin_requirement_pct: 5.0,
@@ -52,7 +52,7 @@ impl InstrumentSpec {
                 epic: epic.to_string(),
                 min_deal_size: 0.5,
                 max_deal_size: 100.0,
-                pip_value: 1.27,
+                pip_value: 12.70, // 1 std lot = 100k units = $10 USD/pip × ~1.27 USD/SGD
                 pip_scale: 0.0001,
                 contract_size: 1.0,
                 margin_requirement_pct: 5.0,
@@ -63,7 +63,7 @@ impl InstrumentSpec {
                 epic: epic.to_string(),
                 min_deal_size: 0.2,
                 max_deal_size: 100.0,
-                pip_value: 0.81,
+                pip_value: 8.01, // 1 std lot = 100k units = 1000 JPY/pip × ~0.00801 JPY/SGD
                 pip_scale: 0.01,
                 contract_size: 1.0,
                 margin_requirement_pct: 5.0,
@@ -74,7 +74,7 @@ impl InstrumentSpec {
                 epic: epic.to_string(),
                 min_deal_size: 0.5,
                 max_deal_size: 100.0,
-                pip_value: 1.27,
+                pip_value: 12.70, // 1 std lot = 100k units = $10 USD/pip × ~1.27 USD/SGD
                 pip_scale: 0.0001,
                 contract_size: 1.0,
                 margin_requirement_pct: 5.0,

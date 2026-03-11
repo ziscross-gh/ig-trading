@@ -176,7 +176,7 @@ mod tests {
     #[test]
     fn test_instrument_spec_eurusd() {
         let spec = InstrumentSpec::from_epic_fallback("CS.D.EURUSD.CFD").expect("EURUSD spec should exist");
-        assert_eq!(spec.pip_value, 1.27);      // USD 1 ≈ SGD$1.27 (IG verified)
+        assert_eq!(spec.pip_value, 12.70);     // 1 std lot = $10 USD/pip × ~1.27 USD/SGD (IG verified)
         assert_eq!(spec.min_deal_size, 0.5);  // Updated verified minimum
     }
 
@@ -192,10 +192,10 @@ mod tests {
             &empty_specs,
         );
         
-        // pip_value = 1.27 (IG verified SGD)
-        // 200 risk / (50 pips * 1.27 pip_val) = 3.149...
-        // floor to 2 decimals = 3.14
-        assert_eq!(size, 3.14);
+        // pip_value = 12.70 (1 std lot = $10 USD/pip × ~1.27 USD/SGD)
+        // 200 risk / (50 pips * 12.70 pip_val) = 0.314...
+        // floor to 2 decimals = 0.31
+        assert_eq!(size, 0.31);
     }
 
     #[test]
@@ -268,8 +268,8 @@ mod tests {
         );
         
         // pips = 1.00 / 0.01 = 100
-        // pip_value = 0.81 (JPY 100 ≈ SGD$0.81, IG verified)
-        // risk = 100 -> size = 100 / (100 * 0.81) = 1.234... -> floor to 1.23
-        assert_eq!(size, 1.23);
+        // pip_value = 8.01 (1 std lot = 1000 JPY/pip × ~0.00801 JPY/SGD, IG verified)
+        // risk = 100 -> size = 100 / (100 * 8.01) = 0.1248... -> floor to 0.12
+        assert_eq!(size, 0.12);
     }
 }
