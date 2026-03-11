@@ -1,8 +1,8 @@
 # TASK_TRACKER.md — IG Trading Engine
 
-**Last updated:** 2026-03-10 (candle persistence layer)
-**Current phase:** Production-ready. All engine phases complete.
-**Current focus:** 🤖 Bot engine production-ready | 🧠 8.1–8.5, 8.7 ✅ done | 8.6 RL long-term (needs 3mo data)
+**Last updated:** 2026-03-11 (close position fix, min deal sizes, api_lab)
+**Current phase:** Production-ready. All engine phases complete. Live transition planning in progress.
+**Current focus:** 🤖 Bot engine production-ready | 🧠 8.1–8.5, 8.7 ✅ done | 8.6 RL long-term (needs 3mo data) | 🔜 Live trading transition
 
 > 📦 Dashboard (`src/`) is **archived** — not maintained. All dashboard tasks removed.
 
@@ -35,11 +35,28 @@ For the full history of completed work and debt items, see `TECH_DEBT_AUDIT.md`.
 
 ---
 
+## Live Trading Transition (In Progress)
+
+| # | Task | Owner | Status | Notes |
+|---|------|-------|--------|-------|
+| L.1 | Close position API fix (POST + _method:DELETE) | Gemini | ✅ Done | Was completely broken — DELETE verb not supported by IG |
+| L.2 | Currency code hybrid logic (JPY/USD/account-base) | Gemini | ✅ Done | Per-trade currency + Position.currency field |
+| L.3 | Verify min deal sizes on demo | Gemini | ✅ Done | EUR/USD=0.5, GBP/USD=0.5, USD/JPY=0.2, Gold=3.0 |
+| L.4 | Config-driven guaranteed_stop | Gemini | ✅ Done | Reads from config.risk.limited_risk_account, not hardcoded |
+| L.5 | api_lab CLI tool (Rust + Python) | Gemini | ✅ Done | List, close, clear_profit, inject trades |
+| L.6 | Complete `config/live.toml` (all sections) | Claude | 🏗️ Planned | Missing macro events, instrument specs, overrides |
+| L.7 | Create `config/live-ramp.toml` | Claude | 🏗️ Planned | Ultra-conservative ramp-up config |
+| L.8 | Live startup validation in Rust | Claude | 🏗️ Planned | Margin feasibility, macro events, instrument spec checks |
+| L.9 | Verify live epic codes + min deal sizes | User | ⏳ Waiting | Must check on live IG platform before going live |
+
+---
+
 ## Known Bugs / Open Issues
 
 | Priority | Description | File(s) |
 |----------|-------------|---------|
 | High | Python test scripts (`test_ig_trade*.py`) fail in any proxied/sandboxed environment — `ProxyError: 403 Forbidden` on IG API. Must run locally or in Docker. | `test_ig_trade*.py` |
+| Low | OPU parse failures (unknown field `guaranteedStop`) — non-blocking, position updates still work | `event_loop/mod.rs` |
 
 ---
 
@@ -81,7 +98,7 @@ For the full history of completed work and debt items, see `TECH_DEBT_AUDIT.md`.
 | 8.4 | ML regime classifier | Claude | ✅ Done | 🟠 Medium | LightGBM per instrument → TRENDING/RANGING/VOLATILE multipliers |
 | 8.5 | Macro calendar awareness | Claude | ✅ Done | 🟡 Low | Per-event blackout windows (NFP ±30min, FOMC ±60min, etc.) |
 | 8.6 | RL position sizing | Claude | 🏗️ Long-term | 🔵 | PPO on live trade outcomes. `TradeLogger` recording to `logs/trades.jsonl`. Needs 3+ months data. |
-| 8.7 | Code quality pass — zero clippy warnings | Claude | ✅ Done | 🔴 High | `cargo clippy -- -D warnings` exits 0. All 66 tests pass. |
+| 8.7 | Code quality pass — zero clippy warnings | Claude | ✅ Done | 🔴 High | `cargo clippy -- -D warnings` exits 0. All 74 tests pass. |
 
 ### Data Collection — Active
 
