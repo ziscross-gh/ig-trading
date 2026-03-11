@@ -184,7 +184,12 @@ pub fn spawn_state_worker(
                 StateUpdate::Trade(fields) => {
                     // Parse OPU (Open Position Update) — sent when IG closes a position server-side
                     // e.g. stop loss hit, take profit hit, manual close in app
-                    if let Some(opu_str) = fields.get("OPU").and_then(|v| v.as_str()) {
+                    // IG sends an empty OPU field at startup as a Lightstreamer EOS
+                    // snapshot marker when there are no open positions — skip silently.
+                    if let Some(opu_str) = fields.get("OPU")
+                        .and_then(|v| v.as_str())
+                        .filter(|s| !s.trim().is_empty())
+                    {
                         match parse_opu(opu_str) {
                             Some(opu) if opu.status == "DELETED" => {
                                 info!("OPU: position closed server-side: deal_id={}, epic={}, stream_pnl={:.2} (will recompute from prices)", opu.deal_id, opu.epic, opu.pnl);
@@ -271,7 +276,7 @@ pub fn spawn_state_worker(
                                 info!("OPU: status={} for deal_id={} (not a close, ignoring)", opu.status, opu.deal_id);
                             }
                             None => {
-                                warn!("OPU: failed to parse OPU payload: {}", opu_str);
+                                warn!("OPU: failed to parse non-empty payload (unexpected format): {}", opu_str);
                             }
                         }
                     } else if fields.get("CONFIRMS").and_then(|v| v.as_str()).is_some() {
