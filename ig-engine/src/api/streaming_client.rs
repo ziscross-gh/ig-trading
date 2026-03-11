@@ -187,15 +187,28 @@ pub fn spawn_state_worker(
                     if let Some(opu_str) = fields.get("OPU").and_then(|v| v.as_str()) {
                         match parse_opu(opu_str) {
                             Some(opu) if opu.status == "DELETED" => {
-                                info!("OPU: position closed server-side: deal_id={}, epic={}, pnl={:.2}", opu.deal_id, opu.epic, opu.pnl);
+                                info!("OPU: position closed server-side: deal_id={}, epic={}, stream_pnl={:.2} (will recompute from prices)", opu.deal_id, opu.epic, opu.pnl);
 
-                                let (closed_position, close_reason) = {
+                                let (closed_position, close_reason, final_pnl) = {
                                     let mut s = state_worker.write().await;
 
                                     // Find and remove the position from active list
                                     let pos_idx = s.trades.active.iter().position(|p| p.deal_id == opu.deal_id);
                                     if let Some(idx) = pos_idx {
                                         let pos = s.trades.active.remove(idx);
+
+                                        // IG's OPU stream rarely includes profitAndLoss in DELETED
+                                        // events, so we compute PnL from entry/exit prices instead.
+                                        // Fall back to opu.pnl only if we have no exit price.
+                                        let final_pnl = if opu.level > 0.0 {
+                                            if pos.direction == Direction::Buy {
+                                                (opu.level - pos.open_price) * pos.size
+                                            } else {
+                                                (pos.open_price - opu.level) * pos.size
+                                            }
+                                        } else {
+                                            opu.pnl
+                                        };
 
                                         // Record in closed trade history
                                         s.add_closed_trade(ClosedTrade {
@@ -207,7 +220,7 @@ pub fn spawn_state_worker(
                                             exit_price: opu.level,
                                             stop_loss: pos.stop_loss.unwrap_or(0.0),
                                             take_profit: pos.take_profit,
-                                            pnl: opu.pnl,
+                                            pnl: final_pnl,
                                             strategy: pos.strategy.clone(),
                                             status: "closed_server_side".to_string(),
                                             opened_at: pos.opened_at,
@@ -215,25 +228,25 @@ pub fn spawn_state_worker(
                                             is_virtual: pos.is_virtual,
                                         });
 
-                                        s.record_trade_result(opu.pnl);
-                                        (Some(pos), "Server-side close (SL/TP/manual)")
+                                        s.record_trade_result(final_pnl);
+                                        (Some(pos), "Server-side close (SL/TP/manual)", final_pnl)
                                     } else {
                                         warn!("OPU DELETED for unknown deal_id={} — may have been closed by engine already", opu.deal_id);
-                                        (None, "")
+                                        (None, "", 0.0)
                                     }
                                 };
 
                                 if let Some(pos) = closed_position {
                                     let _ = event_tx_worker.send(EngineEvent::position_closed(
                                         opu.deal_id.clone(),
-                                        opu.pnl,
+                                        final_pnl,
                                     ));
 
                                     // Telegram notification
                                     let tg = TelegramNotifier::new(&None);
                                     let name = get_instrument_name(&opu.epic);
                                     let dir = format!("{}", pos.direction);
-                                    let pnl = opu.pnl;
+                                    let pnl = final_pnl;
                                     let reason = close_reason.to_string();
                                     tokio::spawn(async move {
                                         let msg = format!(
