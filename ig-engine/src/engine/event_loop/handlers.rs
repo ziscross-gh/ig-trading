@@ -39,11 +39,20 @@ pub async fn handle_position_monitoring(
             if let Some(&current_price) = price_map.get(&position.epic) {
                 position.current_price = current_price;
 
-                position.pnl = if position.direction == Direction::Buy {
-                    (current_price - position.open_price) * position.size
+                // Use pip_value (SGD per pip per lot) for correct account-currency PnL.
+                // pip_value already encodes the FX conversion to SGD (e.g. USD/SGD, JPY/SGD).
+                let spec = instrument_specs.get(&position.epic)
+                    .cloned()
+                    .or_else(|| crate::risk::InstrumentSpec::from_epic_fallback(&position.epic));
+                let (pip_scale, pip_value) = spec
+                    .map(|s| (s.pip_scale, s.pip_value))
+                    .unwrap_or((0.0001, 1.0));
+                let price_diff = if position.direction == Direction::Buy {
+                    current_price - position.open_price
                 } else {
-                    (position.open_price - current_price) * position.size
+                    position.open_price - current_price
                 };
+                position.pnl = (price_diff / pip_scale) * pip_value * position.size;
 
                 if let Some(trail_dist) = position.trailing_stop {
                     // Reduce API spam by requiring SL to move by at least X pips

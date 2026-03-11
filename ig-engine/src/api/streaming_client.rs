@@ -198,14 +198,22 @@ pub fn spawn_state_worker(
                                         let pos = s.trades.active.remove(idx);
 
                                         // IG's OPU stream rarely includes profitAndLoss in DELETED
-                                        // events, so we compute PnL from entry/exit prices instead.
+                                        // events, so we compute PnL from entry/exit prices instead,
+                                        // using pip_value (SGD/pip/lot) to convert to account currency.
                                         // Fall back to opu.pnl only if we have no exit price.
                                         let final_pnl = if opu.level > 0.0 {
-                                            if pos.direction == Direction::Buy {
-                                                (opu.level - pos.open_price) * pos.size
+                                            let spec = s.config.risk.instrument_specs.get(&opu.epic)
+                                                .cloned()
+                                                .or_else(|| crate::risk::InstrumentSpec::from_epic_fallback(&opu.epic));
+                                            let (pip_scale, pip_value) = spec
+                                                .map(|sp| (sp.pip_scale, sp.pip_value))
+                                                .unwrap_or((0.0001, 1.0));
+                                            let price_diff = if pos.direction == Direction::Buy {
+                                                opu.level - pos.open_price
                                             } else {
-                                                (pos.open_price - opu.level) * pos.size
-                                            }
+                                                pos.open_price - opu.level
+                                            };
+                                            (price_diff / pip_scale) * pip_value * pos.size
                                         } else {
                                             opu.pnl
                                         };
