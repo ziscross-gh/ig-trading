@@ -69,52 +69,26 @@ allowed_sessions = ["Asia", "London", "UsOverlap"]
 trading_hours_utc = [0, 21]
 allow_weekend_trading = false
 
-news_blackout_windows_utc = [[8, 30], [13, 30], [15, 0]]
-news_blackout_mins = 15
+# Static fallback — only used when data/economic_calendar.json is missing or stale.
+# Daily London Open / ECB / AU CPI blocks removed (blocked best sessions every day).
+news_blackout_windows_utc = []
+news_blackout_mins = 30
 
-# ── Macro Event Blackout Calendar (identical to live.toml) ────────────────────
+# ── Macro Event Blackout Calendar (static fallback, same as live.toml) ────────
+# Live calendar (scripts/fetch_calendar.py → data/economic_calendar.json) takes
+# priority. These entries are fallback only when the live file is stale.
 
 [[risk.macro_events]]
 hour = 21
 minute = 0
 label = "Daily market maintenance window (Gold + FX)"
-blackout_mins = 60
-
-[[risk.macro_events]]
-hour = 0
-minute = 30
-label = "AU CPI / Trade Balance"
-blackout_mins = 20
-
-[[risk.macro_events]]
-hour = 7
-minute = 0
-label = "EUR CPI / German Ifo / ZEW"
-blackout_mins = 20
-
-[[risk.macro_events]]
-hour = 8
-minute = 30
-label = "London Open / EU PMI / UK data"
-blackout_mins = 20
-
-[[risk.macro_events]]
-hour = 9
-minute = 0
-label = "ECB / Bank of England rate decisions"
-blackout_mins = 45
+blackout_mins = 60                # 21:00–22:00 UTC = 05:00–06:00 SGT
 
 [[risk.macro_events]]
 hour = 13
 minute = 30
 label = "NFP / CPI / Core PCE / Retail Sales / GDP"
 blackout_mins = 30
-
-[[risk.macro_events]]
-hour = 15
-minute = 0
-label = "US Open / ISM PMI / Factory Orders"
-blackout_mins = 20
 
 [[risk.macro_events]]
 hour = 19

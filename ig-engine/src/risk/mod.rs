@@ -191,19 +191,17 @@ impl Default for RiskConfig {
                 crate::engine::state::Session::UsOverlap,
             ],
             // Legacy fields — kept for backward compat with old configs that omit macro_events.
-            news_blackout_windows_utc: vec![(8, 30), (13, 30), (15, 0)],
-            news_blackout_mins: 15,
-            // Structured macro calendar (Phase 8.5) — per-event blackout durations.
-            // When non-empty these take priority over news_blackout_windows_utc.
+            news_blackout_windows_utc: vec![],
+            news_blackout_mins: 30,
+            // Static fallback macro calendar — only used when data/economic_calendar.json
+            // is missing or stale (> 26h old). Keep only events that are high-impact on
+            // EVERY occurrence: NFP/CPI always at 13:30 UTC, FOMC always at 19:00 UTC.
+            // Daily London Open / ECB / EU data blocks removed — they fired every day and
+            // blocked the best trading session (15:00–17:45 SGT) with zero news on most days.
             macro_events: vec![
-                MacroEvent { hour:  0, minute: 30, label: "AU CPI / Trade Balance".into(),       blackout_mins: Some(20) },
-                MacroEvent { hour:  7, minute:  0, label: "EUR CPI / German data".into(),         blackout_mins: Some(20) },
-                MacroEvent { hour:  8, minute: 30, label: "London Open / EU data releases".into(), blackout_mins: Some(20) },
-                MacroEvent { hour:  9, minute:  0, label: "ECB / Bank of England meetings".into(), blackout_mins: Some(45) },
                 MacroEvent { hour: 13, minute: 30, label: "NFP / CPI / Core PCE / Retail Sales".into(), blackout_mins: Some(30) },
-                MacroEvent { hour: 15, minute:  0, label: "US Open / ISM PMI".into(),             blackout_mins: Some(20) },
-                MacroEvent { hour: 19, minute:  0, label: "FOMC Rate Decision / Fed Statement".into(), blackout_mins: Some(60) },
-                MacroEvent { hour: 19, minute: 30, label: "FOMC Press Conference".into(),         blackout_mins: Some(45) },
+                MacroEvent { hour: 19, minute:  0, label: "FOMC Rate Decision / Fed Statement".into(),   blackout_mins: Some(60) },
+                MacroEvent { hour: 19, minute: 30, label: "FOMC Press Conference".into(),                blackout_mins: Some(45) },
             ],
             allow_weekend_trading: false, // weekday spot only — enable when weekend epics are active
         }
@@ -388,42 +386,50 @@ impl RiskManager {
         }
 
         // Layer 2b: Macro Event Blackout Windows
+        // Priority: live calendar (data/economic_calendar.json) → static macro_events fallback
         {
             let now      = Utc::now();
-            let now_mins = now.hour() * 60 + now.minute();
+            let now_secs = now.timestamp();
 
-            if !self.config.macro_events.is_empty() {
-                // Phase 8.5 path — per-event blackout durations
-                for event in &self.config.macro_events {
-                    let window_mins = event.hour * 60 + event.minute;
-                    let blackout    = event.blackout_mins.unwrap_or(self.config.news_blackout_mins);
-                    let start = window_mins.saturating_sub(blackout);
-                    let end   = window_mins + blackout;
-                    if now_mins >= start && now_mins < end {
-                        let reason = format!(
-                            "Macro event blackout: {} at {:02}:{:02} UTC ±{}min (now {:02}:{:02} UTC)",
-                            event.label, event.hour, event.minute, blackout,
-                            now.hour(), now.minute()
-                        );
-                        warn!("{}", reason);
-                        return RiskVerdict::Rejected(reason);
+            if let Some(blocked_by) = check_live_calendar(now_secs) {
+                // Live calendar file is fresh — use it exclusively
+                warn!("{}", blocked_by);
+                return RiskVerdict::Rejected(blocked_by);
+            } else {
+                // No fresh live calendar — fall back to static macro_events in config
+                let now_mins = now.hour() * 60 + now.minute();
+
+                if !self.config.macro_events.is_empty() {
+                    for event in &self.config.macro_events {
+                        let window_mins = event.hour * 60 + event.minute;
+                        let blackout    = event.blackout_mins.unwrap_or(self.config.news_blackout_mins);
+                        let start = window_mins.saturating_sub(blackout);
+                        let end   = window_mins + blackout;
+                        if now_mins >= start && now_mins < end {
+                            let reason = format!(
+                                "Macro event blackout (static): {} at {:02}:{:02} UTC ±{}min (now {:02}:{:02} UTC)",
+                                event.label, event.hour, event.minute, blackout,
+                                now.hour(), now.minute()
+                            );
+                            warn!("{}", reason);
+                            return RiskVerdict::Rejected(reason);
+                        }
                     }
-                }
-            } else if !self.config.news_blackout_windows_utc.is_empty() {
-                // Legacy fallback — flat global blackout duration
-                for (h, m) in &self.config.news_blackout_windows_utc {
-                    let window_mins = h * 60 + m;
-                    let blackout    = self.config.news_blackout_mins;
-                    let start = window_mins.saturating_sub(blackout);
-                    let end   = window_mins + blackout;
-                    if now_mins >= start && now_mins < end {
-                        let reason = format!(
-                            "News blackout window: {:02}:{:02} UTC ±{}min (now {:02}:{:02} UTC)",
-                            h, m, blackout,
-                            now.hour(), now.minute()
-                        );
-                        warn!("{}", reason);
-                        return RiskVerdict::Rejected(reason);
+                } else if !self.config.news_blackout_windows_utc.is_empty() {
+                    for (h, m) in &self.config.news_blackout_windows_utc {
+                        let window_mins = h * 60 + m;
+                        let blackout    = self.config.news_blackout_mins;
+                        let start = window_mins.saturating_sub(blackout);
+                        let end   = window_mins + blackout;
+                        if now_mins >= start && now_mins < end {
+                            let reason = format!(
+                                "News blackout window (static): {:02}:{:02} UTC ±{}min (now {:02}:{:02} UTC)",
+                                h, m, blackout,
+                                now.hour(), now.minute()
+                            );
+                            warn!("{}", reason);
+                            return RiskVerdict::Rejected(reason);
+                        }
                     }
                 }
             }
@@ -869,4 +875,56 @@ mod tests {
         assert_eq!(rm.daily_pnl, 0.0);
         assert_eq!(rm.daily_trades, 0);
     }
+}
+
+// ---------------------------------------------------------------------------
+// Live economic calendar check
+// ---------------------------------------------------------------------------
+
+/// Read `data/economic_calendar.json` written by `scripts/fetch_calendar.py`.
+///
+/// Returns `Some(reason)` if the current UTC time falls within the blackout
+/// window of any scheduled high-impact event. Returns `None` when:
+///   - The calendar file does not exist (→ fall back to static macro_events)
+///   - The `fetched_at` timestamp is more than 26 hours old (stale)
+///   - No event overlaps the current time
+///
+/// The 26-hour stale threshold gives a full day of buffer even if the daily
+/// cron job is delayed by up to 2 hours.
+fn check_live_calendar(now_secs: i64) -> Option<String> {
+    let raw = std::fs::read_to_string("data/economic_calendar.json").ok()?;
+    let json: serde_json::Value = serde_json::from_str(&raw).ok()?;
+
+    // Stale check: reject if fetched more than 26 hours ago
+    let fetched_at = json["fetched_at"].as_str()?;
+    let fetched_ts = chrono::DateTime::parse_from_rfc3339(fetched_at).ok()?.timestamp();
+    if now_secs - fetched_ts > 26 * 3600 {
+        debug!("Economic calendar is stale ({:.1}h old) — falling back to static blackouts",
+            (now_secs - fetched_ts) as f64 / 3600.0);
+        return None;
+    }
+
+    let events = json["events"].as_array()?;
+
+    for event in events {
+        let dt_str = event["datetime_utc"].as_str()?;
+        let event_ts = chrono::DateTime::parse_from_rfc3339(dt_str).ok()?.timestamp();
+        let blackout_mins = event["blackout_mins"].as_u64().unwrap_or(30) as i64;
+        let blackout_secs = blackout_mins * 60;
+
+        let start = event_ts - blackout_secs;
+        let end   = event_ts + blackout_secs;
+
+        if now_secs >= start && now_secs < end {
+            let title   = event["title"].as_str().unwrap_or("unknown");
+            let country = event["country"].as_str().unwrap_or("?");
+            let now_utc = chrono::Utc::now();
+            return Some(format!(
+                "Live calendar blackout: [{country}] {title} at {dt_str} ±{blackout_mins}min (now {:02}:{:02} UTC)",
+                now_utc.hour(), now_utc.minute(),
+            ));
+        }
+    }
+
+    None
 }

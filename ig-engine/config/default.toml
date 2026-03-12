@@ -49,14 +49,23 @@ allowed_sessions = ["Asia", "London", "UsOverlap"]
 trading_hours_utc = [0, 21]          # 00:00–21:00 UTC = 08:00–05:00 SGT (stops before daily maintenance)
 allow_weekend_trading = false        # true only when weekend epics (e.g. IG weekend gold) are active
 
-# ── Macro Event Blackout Calendar (Phase 8.5) ──────────────────────────────────
-# Per-event blackout windows supersede the legacy flat news_blackout_windows_utc.
-# blackout_mins = minutes blocked BEFORE and AFTER the event time (UTC).
-# Omit blackout_mins to fall back to the global news_blackout_mins default.
+# ── Macro Event Blackout Calendar ───────────────────────────────────────────────
+# The engine first checks data/economic_calendar.json (written by
+# scripts/fetch_calendar.py). If that file is fresh (< 26h old), ONLY live
+# calendar events trigger blackouts. The entries below are a static FALLBACK
+# used when the live calendar file is missing or stale.
+#
+# Removed from fallback (were firing every day, blocking best sessions):
+#   - 07:00 UTC "EUR CPI / German data"       → daily, blocked 15:00 SGT
+#   - 08:30 UTC "London Open / EU data"        → daily, blocked 16:30 SGT
+#   - 09:00 UTC "ECB / Bank of England"        → daily, blocked 17:00 SGT
+#   - 15:00 UTC "US Open / ISM PMI"            → daily, blocked 23:00 SGT
+#   - 00:30 UTC "AU CPI / Trade Balance"       → daily, low relevance
+# These are now handled by the live calendar on actual event days only.
 
-# Legacy flat blackout (used only when macro_events array is empty)
-news_blackout_windows_utc = [[8, 30], [13, 30], [15, 0]]
-news_blackout_mins = 15
+# Legacy flat blackout (only used when macro_events array is empty)
+news_blackout_windows_utc = []
+news_blackout_mins = 30
 
 [[risk.macro_events]]
 hour = 21
@@ -65,40 +74,10 @@ label = "Daily market maintenance window (Gold + FX)"
 blackout_mins = 60                # 21:00–22:00 UTC = 05:00–06:00 SGT — IG daily break
 
 [[risk.macro_events]]
-hour = 0
-minute = 30
-label = "AU CPI / Trade Balance"
-blackout_mins = 20
-
-[[risk.macro_events]]
-hour = 7
-minute = 0
-label = "EUR CPI / German Ifo / ZEW"
-blackout_mins = 20
-
-[[risk.macro_events]]
-hour = 8
-minute = 30
-label = "London Open / EU PMI / UK data"
-blackout_mins = 20
-
-[[risk.macro_events]]
-hour = 9
-minute = 0
-label = "ECB / Bank of England rate decisions"
-blackout_mins = 45
-
-[[risk.macro_events]]
 hour = 13
 minute = 30
 label = "NFP / CPI / Core PCE / Retail Sales / GDP"
 blackout_mins = 30
-
-[[risk.macro_events]]
-hour = 15
-minute = 0
-label = "US Open / ISM PMI / Factory Orders"
-blackout_mins = 20
 
 [[risk.macro_events]]
 hour = 19
