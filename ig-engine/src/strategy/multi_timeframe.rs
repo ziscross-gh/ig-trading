@@ -77,9 +77,14 @@ impl Strategy for MultiTimeframeStrategy {
     }
 
     fn evaluate(&self, epic: &str, price: f64, indicators_map: &HashMap<String, IndicatorSnapshot>) -> Option<Signal> {
-        let trend_ind = indicators_map.get(&self.trend_tf)?;
+        // Fall back to signal_tf (HOUR) if trend_tf (HOUR_4) or entry_tf (MINUTE_15) not warmed up yet.
+        // This lets the strategy participate in ensemble voting using HOUR data on all three levels
+        // until multi-resolution historical data is available.
+        let trend_ind = indicators_map.get(&self.trend_tf)
+            .or_else(|| indicators_map.get(&self.signal_tf))?;
         let signal_ind = indicators_map.get(&self.signal_tf)?;
-        let entry_ind = indicators_map.get(&self.entry_tf)?;
+        let entry_ind = indicators_map.get(&self.entry_tf)
+            .or_else(|| indicators_map.get(&self.signal_tf))?;
 
         // 1. Evaluate Trend Timeframe (e.g. 4H)
         let trend_ema_short = trend_ind.ema_short?;

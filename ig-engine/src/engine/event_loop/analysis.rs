@@ -80,7 +80,8 @@ pub async fn analyze_market(
             }
 
             if snapshot_map.is_empty() {
-                continue; // no warmed up timeframes
+                tracing::info!("[{}] Indicators not warmed up yet — skipping bar analysis", epic);
+                continue;
             }
 
             // Read per-instrument override (ADX range filter)
@@ -160,6 +161,11 @@ pub async fn analyze_market(
             } else {
                 debug!("No fresh regime data for {} — using unweighted signals", epic);
             }
+
+            tracing::info!(
+                "[{}] Bar analysis: {}/{} strategies fired signals",
+                epic, signals.len(), strategies.len()
+            );
 
             if let Some(ensemble_signal) = ensemble.vote(&signals) {
                 info!(

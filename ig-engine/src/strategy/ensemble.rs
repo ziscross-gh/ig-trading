@@ -61,6 +61,10 @@ impl EnsembleVoter {
 
         // Check if we have minimum consensus
         if dominant_signals.len() < self.min_consensus {
+            tracing::info!(
+                "Ensemble no-vote: {}/{} consensus ({} buy, {} sell) — need {}",
+                dominant_signals.len(), signals.len(), buy_count, sell_count, self.min_consensus
+            );
             return None;
         }
 
@@ -86,6 +90,10 @@ impl EnsembleVoter {
 
         // Check if average strength meets minimum threshold
         if avg_strength < self.min_avg_strength {
+            tracing::info!(
+                "Ensemble no-vote: avg strength {:.1} < threshold {:.1} ({} {} signals)",
+                avg_strength, self.min_avg_strength, dominant_signals.len(), direction
+            );
             return None;
         }
 
