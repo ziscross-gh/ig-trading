@@ -434,19 +434,21 @@ pub async fn run(
                         .iter()
                         .map(|p| {
                             // IG REST API snapshotTime format variants observed:
+                            //   "YYYY:MM:DD-HH:mm:ss"      (Confirmed March 2026)
                             //   "DD/MM/YYYY HH:mm:ss:SSS"  (British date, colon-ms suffix)
                             //   "YYYY/MM/DD HH:mm:ss:SSS"  (ISO date, colon-ms suffix)
                             //   "YYYY-MM-DDTHH:mm:ss+00:00" (RFC3339, mock client only)
-                            // Strip the optional colon+ms suffix first, then try each format.
                             let st = &p.snapshot_time;
                             // Strip ":SSS" or ":mmm" millisecond suffix if present (length > 19)
                             let trimmed = if st.len() > 19 { &st[..19] } else { st.as_str() };
 
                             let timestamp = chrono::DateTime::parse_from_rfc3339(st)
                                 .map(|dt| dt.timestamp())
-                                // British date: "DD/MM/YYYY HH:mm:ss" (IG live API)
+                                // IG specific: "YYYY:MM:DD-HH:mm:ss"
+                                .or_else(|_| chrono::NaiveDateTime::parse_from_str(trimmed, "%Y:%m:%d-%H:%M:%S").map(|dt| dt.and_utc().timestamp()))
+                                // British date: "DD/MM/YYYY HH:mm:ss"
                                 .or_else(|_| chrono::NaiveDateTime::parse_from_str(trimmed, "%d/%m/%Y %H:%M:%S").map(|dt| dt.and_utc().timestamp()))
-                                // ISO date: "YYYY/MM/DD HH:mm:ss" (alternate IG format)
+                                // ISO date: "YYYY/MM/DD HH:mm:ss"
                                 .or_else(|_| chrono::NaiveDateTime::parse_from_str(trimmed, "%Y/%m/%d %H:%M:%S").map(|dt| dt.and_utc().timestamp()))
                                 .unwrap_or_else(|_| {
                                     parse_failures += 1;
