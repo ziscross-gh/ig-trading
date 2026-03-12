@@ -52,9 +52,10 @@ pub async fn analyze_market(
 
         // Skip analysis when the market is not in a tradeable state (e.g., weekend "edit",
         // auction, or offline). MARKET_STATE is None until IG sends the initial snapshot.
-        // Use starts_with("TRADEABLE") to accept both "TRADEABLE" and "TRADEABLE_NO_STOPS".
+        // Case-insensitive: IG sends lowercase "tradeable" or "tradeable_no_stops".
         if let Some(ref state_str) = mkt_state {
-            if !state_str.starts_with("TRADEABLE") {
+            let upper = state_str.to_ascii_uppercase();
+            if !upper.starts_with("TRADEABLE") {
                 info!("Market {} not tradeable (MARKET_STATE={}), skipping analysis", epic, state_str);
                 continue;
             }
