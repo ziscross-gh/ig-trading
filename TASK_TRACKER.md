@@ -1,6 +1,6 @@
 # TASK_TRACKER.md — IG Trading Engine
 
-**Last updated:** 2026-03-11 (live configs + readiness validation)
+**Last updated:** 2026-03-12 (indicator warmup + MARKET_STATE fixes — engine now produces signals)
 **Current phase:** Production-ready. All engine phases complete. Live transition planning in progress.
 **Current focus:** 🤖 Bot engine production-ready | 🧠 8.1–8.5, 8.7 ✅ done | 8.6 RL long-term (needs 3mo data) | 🔜 Live trading transition
 
@@ -57,6 +57,13 @@ For the full history of completed work and debt items, see `TECH_DEBT_AUDIT.md`.
 |----------|-------------|---------|
 | High | Python test scripts (`test_ig_trade*.py`) fail in any proxied/sandboxed environment — `ProxyError: 403 Forbidden` on IG API. Must run locally or in Docker. | `test_ig_trade*.py` |
 | Low | OPU parse failures (unknown field `guaranteedStop`) — non-blocking, position updates still work | `event_loop/mod.rs` |
+
+### Recently Fixed (2026-03-12)
+
+| Bug | Root Cause | Fix | Commit |
+|-----|-----------|-----|--------|
+| ALL market analysis silently skipped | `MARKET_STATE` comparison was `!= "TRADEABLE"` (uppercase) but IG sends lowercase `"tradeable"` — `debug!` log hidden in INFO mode | Changed to `to_ascii_uppercase().starts_with("TRADEABLE")` | 169d22f |
+| Indicators never reached warmup (19 of 250 candles used) | `snapshotTime` parse used `%Y/%m/%d %H:%M:%S` but IG API returns `"YYYY/MM/DD HH:mm:ss:SSS"` (colon + ms suffix); mock client returns RFC3339 — both failed silently → all 250 candles got `Utc::now()` → deduplicated to 1 | Multi-format parse: try RFC3339 → strip `:SSS` → IG format → warn! on failure | 706a1dd |
 
 ---
 
