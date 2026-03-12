@@ -46,14 +46,16 @@ pub async fn analyze_market(
         };
 
         if bid <= 0.0 || offer <= 0.0 {
+            debug!("[{}] Skipping analysis — bid={:.5} offer={:.5} (waiting for valid prices)", epic, bid, offer);
             continue;
         }
 
         // Skip analysis when the market is not in a tradeable state (e.g., weekend "edit",
         // auction, or offline). MARKET_STATE is None until IG sends the initial snapshot.
+        // Use starts_with("TRADEABLE") to accept both "TRADEABLE" and "TRADEABLE_NO_STOPS".
         if let Some(ref state_str) = mkt_state {
-            if state_str != "TRADEABLE" {
-                debug!("Market {} not tradeable (MARKET_STATE={}), skipping analysis", epic, state_str);
+            if !state_str.starts_with("TRADEABLE") {
+                info!("Market {} not tradeable (MARKET_STATE={}), skipping analysis", epic, state_str);
                 continue;
             }
         }
