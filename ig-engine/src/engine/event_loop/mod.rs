@@ -422,27 +422,32 @@ pub async fn run(
             // Try REST API to get 250 candles
             match client.get_price_history(epic, "HOUR", 250).await {
                 Ok(price_response) => {
+                    // Log the raw snapshotTime from the first candle so we can
+                    // confirm the exact format IG's API returns.
+                    if let Some(first) = price_response.prices.first() {
+                        info!("  ℹ snapshotTime sample for {}: {:?}", epic, first.snapshot_time);
+                    }
+
                     let mut parse_failures = 0usize;
                     let api_candles: Vec<Candle> = price_response
                         .prices
                         .iter()
                         .map(|p| {
-                            // IG REST API returns snapshotTime as "YYYY/MM/DD HH:mm:ss:SSS"
-                            // (with a colon-separated millisecond suffix).
-                            // The mock client uses RFC3339 ("YYYY-MM-DDTHH:mm:ss+00:00").
-                            // Try both; fall back to Utc::now() only as last resort.
+                            // IG REST API snapshotTime format variants observed:
+                            //   "DD/MM/YYYY HH:mm:ss:SSS"  (British date, colon-ms suffix)
+                            //   "YYYY/MM/DD HH:mm:ss:SSS"  (ISO date, colon-ms suffix)
+                            //   "YYYY-MM-DDTHH:mm:ss+00:00" (RFC3339, mock client only)
+                            // Strip the optional colon+ms suffix first, then try each format.
                             let st = &p.snapshot_time;
+                            // Strip ":SSS" or ":mmm" millisecond suffix if present (length > 19)
+                            let trimmed = if st.len() > 19 { &st[..19] } else { st.as_str() };
+
                             let timestamp = chrono::DateTime::parse_from_rfc3339(st)
                                 .map(|dt| dt.timestamp())
-                                .or_else(|_| {
-                                    // Strip optional ":SSS" millisecond suffix (IG format)
-                                    let trimmed = if st.len() > 19 { &st[..19] } else { st.as_str() };
-                                    chrono::NaiveDateTime::parse_from_str(
-                                        trimmed,
-                                        "%Y/%m/%d %H:%M:%S",
-                                    )
-                                    .map(|dt| dt.and_utc().timestamp())
-                                })
+                                // British date: "DD/MM/YYYY HH:mm:ss" (IG live API)
+                                .or_else(|_| chrono::NaiveDateTime::parse_from_str(trimmed, "%d/%m/%Y %H:%M:%S").map(|dt| dt.and_utc().timestamp()))
+                                // ISO date: "YYYY/MM/DD HH:mm:ss" (alternate IG format)
+                                .or_else(|_| chrono::NaiveDateTime::parse_from_str(trimmed, "%Y/%m/%d %H:%M:%S").map(|dt| dt.and_utc().timestamp()))
                                 .unwrap_or_else(|_| {
                                     parse_failures += 1;
                                     Utc::now().timestamp()
@@ -460,9 +465,11 @@ pub async fn run(
                         .collect();
                     if parse_failures > 0 {
                         warn!(
-                            "  ⚠ {} of {} candle timestamps failed to parse for {} — check snapshotTime format",
+                            "  ⚠ {}/{} candle timestamps still failed to parse for {} (see snapshotTime sample above)",
                             parse_failures, api_candles.len(), epic
                         );
+                    } else {
+                        info!("  ✓ All {} snapshotTime values parsed successfully for {}", api_candles.len(), epic);
                     }
 
                     // Merge disk + API candles (dedup, sort, trim to 1000)
