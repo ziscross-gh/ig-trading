@@ -164,18 +164,18 @@ docker-compose up --build           # Engine + PostgreSQL + Redis
 
 | Method | Path | Description |
 |--------|------|-------------|
-| GET | `/health` | Liveness probe |
-| GET | `/status` | Engine status + daily stats |
-| GET | `/positions` | Open positions |
-| GET | `/trades` | Trade history |
-| GET | `/signals` | Recent signals |
-| GET | `/config` | Current config |
-| POST | `/start` | Start engine |
-| POST | `/stop` | Stop engine |
-| POST | `/pause` | Pause trading |
-| POST | `/trigger` | Manual trade `{ epic, direction }` |
-| GET | `/learning` | Adaptive weight state |
-| WS | `/ws` | Real-time EngineEvent stream |
+| GET | `/api/health` | Liveness probe |
+| GET | `/api/status` | Engine status + daily stats |
+| GET | `/api/positions` | Open positions |
+| GET | `/api/trades` | Trade history |
+| GET | `/api/signals` | Recent signals |
+| GET | `/api/config` | Current config |
+| POST | `/api/start` | Start engine |
+| POST | `/api/stop` | Stop engine |
+| POST | `/api/pause` | Pause trading |
+| POST | `/api/trigger` | Manual trade `{ epic, direction }` |
+| GET | `/api/learning` | Adaptive weight state |
+| WS | `/api/ws` | Real-time EngineEvent stream |
 
 ---
 

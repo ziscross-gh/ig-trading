@@ -16,6 +16,7 @@ import sys
 from datetime import datetime, timezone, timedelta
 from urllib.request import urlopen, Request
 from urllib.error import URLError
+from typing import Optional
 
 # Only blackout for these currencies (instruments we trade)
 WATCHED_CURRENCIES = {"USD", "EUR", "JPY", "GBP", "XAU", "AUD"}
@@ -68,7 +69,7 @@ def fetch_week(url: str) -> list:
         return []
 
 
-def to_utc_iso(date_str: str) -> str | None:
+def to_utc_iso(date_str: str) -> Optional[str]:
     """Convert ForexFactory date (ISO with tz offset) to UTC ISO string."""
     for fmt in ("%Y-%m-%dT%H:%M:%S%z", "%Y-%m-%dT%H:%M%z"):
         try:

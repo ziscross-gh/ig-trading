@@ -422,15 +422,31 @@ pub async fn run(
             // Try REST API to get 250 candles
             match client.get_price_history(epic, "HOUR", 250).await {
                 Ok(price_response) => {
+                    let mut parse_failures = 0usize;
                     let api_candles: Vec<Candle> = price_response
                         .prices
                         .iter()
                         .map(|p| {
-                            let timestamp = chrono::NaiveDateTime::parse_from_str(
-                                &p.snapshot_time,
-                                "%Y/%m/%d %H:%M:%S"
-                            ).map(|dt| dt.and_utc().timestamp())
-                            .unwrap_or_else(|_| Utc::now().timestamp());
+                            // IG REST API returns snapshotTime as "YYYY/MM/DD HH:mm:ss:SSS"
+                            // (with a colon-separated millisecond suffix).
+                            // The mock client uses RFC3339 ("YYYY-MM-DDTHH:mm:ss+00:00").
+                            // Try both; fall back to Utc::now() only as last resort.
+                            let st = &p.snapshot_time;
+                            let timestamp = chrono::DateTime::parse_from_rfc3339(st)
+                                .map(|dt| dt.timestamp())
+                                .or_else(|_| {
+                                    // Strip optional ":SSS" millisecond suffix (IG format)
+                                    let trimmed = if st.len() > 19 { &st[..19] } else { st.as_str() };
+                                    chrono::NaiveDateTime::parse_from_str(
+                                        trimmed,
+                                        "%Y/%m/%d %H:%M:%S",
+                                    )
+                                    .map(|dt| dt.and_utc().timestamp())
+                                })
+                                .unwrap_or_else(|_| {
+                                    parse_failures += 1;
+                                    Utc::now().timestamp()
+                                });
 
                             Candle {
                                 timestamp,
@@ -442,6 +458,12 @@ pub async fn run(
                             }
                         })
                         .collect();
+                    if parse_failures > 0 {
+                        warn!(
+                            "  ⚠ {} of {} candle timestamps failed to parse for {} — check snapshotTime format",
+                            parse_failures, api_candles.len(), epic
+                        );
+                    }
 
                     // Merge disk + API candles (dedup, sort, trim to 1000)
                     let merged = if disk_candles.is_empty() {
