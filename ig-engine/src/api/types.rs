@@ -62,6 +62,7 @@ pub struct IGCurrency {
 #[serde(rename_all = "camelCase")]
 pub struct IGInstrument {
     pub epic: String,
+    pub market_id: Option<String>,
     pub name: String,
     #[serde(rename = "type")]
     pub instrument_type: String,
@@ -210,6 +211,95 @@ pub struct IGTradeResponse {
     pub deal_reference: String,
     pub deal_status: Option<String>,
     pub reason: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct IGSentimentResponse {
+    pub market_id: String,
+    pub short_position_percentage: f64,
+    pub long_position_percentage: f64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct IGPaging {
+    pub next: Option<String>,
+    pub size: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct IGMetadata {
+    pub paging: IGPaging,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct IGActivity {
+    pub date: String,
+    pub epic: Option<String>,
+    pub period: Option<String>,
+    pub deal_id: String,
+    pub activity: String,
+    pub channel: String,
+    pub result: String,
+    pub status: String,
+    pub description: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct IGActivityResponse {
+    pub activities: Vec<IGActivity>,
+    pub metadata: IGMetadata,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct IGWatchlist {
+    pub id: String,
+    pub name: String,
+    pub editable: bool,
+    pub deleteable: bool,
+    pub default_watchlist: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct IGWatchlistListResponse {
+    pub watchlists: Vec<IGWatchlist>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct IGWatchlistMarket {
+    pub epic: String,
+    pub instrument_name: String,
+    pub market_status: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct IGWatchlistMarketsResponse {
+    pub markets: Vec<IGWatchlistMarket>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct IGMarketSummary {
+    pub epic: String,
+    pub instrument_name: String,
+    pub instrument_type: String,
+    pub market_status: String,
+    pub lot_size: f64,
+    pub min_step_distance: f64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct IGMarketSearchResponse {
+    pub markets: Vec<IGMarketSummary>,
 }
 
 /// Affected deal in confirmation

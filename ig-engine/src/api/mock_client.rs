@@ -53,6 +53,7 @@ impl TraderAPI for MockTraderClient {
         Ok(IGMarketResponse {
             instrument: IGInstrument {
                 epic: epic.to_string(),
+                market_id: None,
                 name: format!("Mock {}", epic),
                 instrument_type: "CURRENCIES".to_string(),
                 unit: "SHARE".to_string(),

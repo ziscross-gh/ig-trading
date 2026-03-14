@@ -7,7 +7,8 @@ fn test_live_calendar_blackout() {
     let mut config = RiskConfig::default();
     config.max_open_positions = 10;
     config.max_risk_per_trade = 0.5;
-    config.trading_hours_utc = None; // Disable hours for this test
+    config.trading_hours_utc = None;       // Disable hours for this test
+    config.allow_weekend_trading = true;   // Prevent weekend gate from firing before calendar check
     
     let mut rm = RiskManager::new(config);
     
