@@ -1,144 +1,67 @@
 # IG Trading Engine — Hardened Configuration
 # ============================================
-# Billionaire-grade risk settings. Conservative by design.
 
 [general]
-mode = "demo"                    # | demo | live
+mode = "demo"
 log_level = "info"
 heartbeat_interval_secs = 30
 api_port = 9090
 
 [ig]
-environment = "demo"              # demo | live
+environment = "demo"
+identifier = "IDENTIFIER" # Replaced by environment variable at runtime
 session_refresh_mins = 50
-rate_limit_per_minute = 20        # Conservative (IG allows 30/account, 60/app)
+rate_limit_per_minute = 30
 confirm_timeout_ms = 5000
 confirm_max_retries = 10
 
 [markets]
 epics = [
-    "CS.D.EURUSD.CSD.IP",     # EUR/USD — Tightest forex spread, highest liquidity
-    "CS.D.USDJPY.CSD.IP",     # USD/JPY — Tight spread, strong Asia/US session play
-    "CS.D.CFIGOLD.CFI.IP",    # Spot Gold SGD1 Contract — Native SGD, no conversion fees
-    
-    # --- PHASE 2/3 SCALING PAIRS (COMMENTED OUT TO PROTECT PHASE 1 CAPITAL) ---
-    # "CS.D.GBPUSD.CSD.IP",     # GBP/USD — Major pair, but heavily correlated to EUR/USD
-    # "CS.D.AUDUSD.CSD.IP",     # AUD/USD — Good Asian session, but wider spread
-    # "IX.D.SPX.IFM.IP",        # SP500 — Index proxy, requires different margin calculus
-    # "IX.D.NASDAQ.IFM.IP",     # NASDAQ 100 — High volatility tech proxy
+    "CS.D.EURUSD.CSD.IP",
+    "CS.D.USDJPY.CSD.IP",
+    "CS.D.CFIGOLD.CFI.IP",
 ]
+weekend_epics = [
+    "IX.D.SUNGOLD.CFI.IP",
+]
+context_market_ids = ["USDIND"]
 
-# ============================================
-# RISK MANAGEMENT
-# ============================================
 [risk]
-max_risk_per_trade = 0.5          # 0.5% of account per trade (conservative)
-max_daily_loss_pct = 2.0          # Stop trading after 2% daily loss
-max_weekly_drawdown_pct = 5.0     # Weekly circuit breaker
-max_open_positions = 5            # Increased for demo session
-max_correlated_positions = 1      # Max positions in correlated pairs
-max_margin_usage_pct = 20.0       # Never use more than 20% margin
-min_risk_reward = 1.0             # Minimum 1:1 risk/reward
-sizing_method = "quarter_kelly"   # Quarter-Kelly: what serious funds use
+max_risk_per_trade = 0.5
+max_daily_loss_pct = 2.0
+max_weekly_drawdown_pct = 5.0
+max_open_positions = 5
+max_correlated_positions = 1
+max_margin_usage_pct = 20.0
+min_risk_reward = 2.5
+sizing_method = "quarter_kelly"
 max_daily_trades = 20
-
 limited_risk_account = false
 use_trailing_stop = true
 trailing_stop_min_pips = 5.0
 allowed_sessions = ["Asia", "London", "UsOverlap"]
-trading_hours_utc = [0, 21]          # 00:00–21:00 UTC = 08:00–05:00 SGT (stops before daily maintenance)
-allow_weekend_trading = false        # true only when weekend epics (e.g. IG weekend gold) are active
-
-# ── Macro Event Blackout Calendar ───────────────────────────────────────────────
-# The engine first checks data/economic_calendar.json (written by
-# scripts/fetch_calendar.py). If that file is fresh (< 26h old), ONLY live
-# calendar events trigger blackouts. The entries below are a static FALLBACK
-# used when the live calendar file is missing or stale.
-#
-# Removed from fallback (were firing every day, blocking best sessions):
-#   - 07:00 UTC "EUR CPI / German data"       → daily, blocked 15:00 SGT
-#   - 08:30 UTC "London Open / EU data"        → daily, blocked 16:30 SGT
-#   - 09:00 UTC "ECB / Bank of England"        → daily, blocked 17:00 SGT
-#   - 15:00 UTC "US Open / ISM PMI"            → daily, blocked 23:00 SGT
-#   - 00:30 UTC "AU CPI / Trade Balance"       → daily, low relevance
-# These are now handled by the live calendar on actual event days only.
-
-# Legacy flat blackout (only used when macro_events array is empty)
+trading_hours_utc = [0, 21]
+allow_weekend_trading = true
 news_blackout_windows_utc = []
-news_blackout_mins = 30
+instrument_specs = {}
 
-[[risk.macro_events]]
-hour = 21
-minute = 0
-label = "Daily market maintenance window (Gold + FX)"
-blackout_mins = 60                # 21:00–22:00 UTC = 05:00–06:00 SGT — IG daily break
-
-[[risk.macro_events]]
-hour = 13
-minute = 30
-label = "NFP / CPI / Core PCE / Retail Sales / GDP"
-blackout_mins = 30
-
-[[risk.macro_events]]
-hour = 19
-minute = 0
-label = "FOMC Rate Decision / Fed Statement"
-blackout_mins = 60
-
-[[risk.macro_events]]
-hour = 19
-minute = 30
-label = "FOMC Press Conference"
-blackout_mins = 45
-
-# INSTRUMENT SPECIFICATIONS (Externalized from code)
-[risk.instrument_specs."CS.D.EURUSD.CSD.IP"]
-epic = "CS.D.EURUSD.CSD.IP"
-min_deal_size = 0.02
-max_deal_size = 100.0
-pip_value = 12.70  # 1 std lot (100k units) = $10 USD/pip × ~1.27 USD/SGD
-pip_scale = 0.0001
-contract_size = 1.0
-margin_requirement_pct = 5.0
-size_decimals = 2
-min_guaranteed_stop_pips = 5.0
-
-[risk.instrument_specs."CS.D.USDJPY.CSD.IP"]
-epic = "CS.D.USDJPY.CSD.IP"
-min_deal_size = 0.02
-max_deal_size = 100.0
-pip_value = 8.01  # 1 std lot (100k units) = 1000 JPY/pip × ~0.00801 JPY/SGD
-pip_scale = 0.01
-contract_size = 1.0
-margin_requirement_pct = 5.0
-size_decimals = 2
-min_guaranteed_stop_pips = 7.0
-
-[risk.instrument_specs."CS.D.CFIGOLD.CFI.IP"]
-epic = "CS.D.CFIGOLD.CFI.IP"
-min_deal_size = 3.0
-max_deal_size = 100.0
-pip_value = 1.0
-pip_scale = 1.0
-contract_size = 1.0
-margin_requirement_pct = 20.0
-size_decimals = 2
-min_guaranteed_stop_pips = 2.0
-
-[risk.circuit_breaker]
-consecutive_losses_reduce = 2     # After 2 losses: halve position size
-consecutive_losses_pause = 3      # After 3 losses: pause trading
-pause_duration_mins = 120         # Pause for 2 hours
-daily_loss_warning_pct = 60.0     # Alert at 60% of daily limit
-
-# ============================================
-# STRATEGIES
-# ============================================
 [strategies]
-min_consensus = 3                 # Require 3/4 strategies to agree (high conviction)
-min_avg_strength = 7.0            # Only trade strong signals
-default_atr_sl_multiplier = 2.0
-default_atr_tp_multiplier = 3.0
+min_consensus = 3
+min_avg_strength = 7.5
+default_atr_sl_multiplier = 1.5
+default_atr_tp_multiplier = 4.0
+
+[strategies.consensus_matrix]
+trending = { barrier = 3, min_strength = 7.5 }
+ranging  = { barrier = 3, min_strength = 7.5 }
+volatile = { barrier = 2, min_strength = 8.5 }
+
+# TACTICAL OVERRIDE: Weekend Gold in VOLATILE Regime
+[strategies.weekend_overrides."IX.D.SUNGOLD.CFI.IP"]
+min_consensus = 2
+min_avg_strength = 8.5
+atr_sl_multiplier = 1.5
+atr_tp_multiplier = 4.5
 
 [strategies.ma_crossover]
 enabled = true
@@ -146,10 +69,7 @@ weight = 1.0
 short_period = 9
 long_period = 21
 trend_filter_period = 200
-require_adx_above = 25.0
-atr_sl_multiplier = 2.0
-atr_tp_multiplier = 3.0
-trailing_stop_pips = 15.0
+require_adx_above = 15.0
 
 [strategies.rsi_divergence]
 enabled = true
@@ -158,9 +78,6 @@ period = 14
 overbought = 70.0
 oversold = 30.0
 detect_divergence = true
-atr_sl_multiplier = 2.0
-atr_tp_multiplier = 3.5
-trailing_stop_pips = 12.0
 
 [strategies.macd_momentum]
 enabled = true
@@ -168,62 +85,30 @@ weight = 1.0
 fast = 12
 slow = 26
 signal = 9
-atr_sl_multiplier = 2.0
-atr_tp_multiplier = 3.0
-trailing_stop_pips = 15.0
 
 [strategies.bollinger_reversion]
 enabled = true
 weight = 0.8
 period = 20
 std_dev = 2.0
-atr_sl_multiplier = 1.5
-atr_tp_multiplier = 2.5
-trailing_stop_pips = 10.0
 
-# ── Per-instrument strategy overrides ────────────────────────────────────────
-# Gold trends strongly — ADX range filter keeps RSI/Bollinger (mean-reversion)
-# from firing when Gold is trending hard. Gold-specific SL/TP live in risk.instrument_specs.
-# FX pairs range more — same ADX range filter prevents mean-reversion entries
-# during strong trend phases (e.g., USD rally, JPY intervention moves).
-[strategies.instrument_overrides."CS.D.CFIGOLD.CFI.IP"]
-adx_range_filter = true       # Skip RSI/Bollinger when ADX > adx_range_max
-adx_range_max    = 25.0       # Trending threshold (Gold often >25 in bull runs)
-
-[strategies.instrument_overrides."CS.D.EURUSD.CSD.IP"]
-adx_range_filter = true
-adx_range_max    = 25.0
-
-[strategies.instrument_overrides."CS.D.USDJPY.CSD.IP"]
-adx_range_filter = true
-adx_range_max    = 25.0
-
-# Multi-timeframe confirmation
 [strategies.multi_timeframe]
 enabled = true
 weight = 1.2
 trend_tf = "HOUR_4"
 signal_tf = "HOUR"
 entry_tf = "MINUTE_15"
-trailing_stop_pips = 15.0
 
-# ============================================
-# TRADING HOURS (UTC)
-# ============================================
-# Gold weekday session: Mon 23:00 UTC (07:00 SGT) → Fri 22:00 UTC (Sat 06:00 SGT)
-# Daily maintenance break: 21:00–22:00 UTC (05:00–06:00 SGT) — see macro_events below
-# Engine starts catching candles from 00:00 UTC (08:00 SGT); stops at 21:00 UTC before break.
 [trading_hours]
-start = "00:00"                   # 08:00 SGT — Asia open
-end = "21:00"                     # 05:00 SGT — stop before daily maintenance window
+start = "00:00"
+end = "21:00"
 timezone = "UTC"
 
-# ============================================
-# NOTIFICATIONS
-# ============================================
 [notifications.telegram]
 enabled = true
+token = "TOKEN" # Replaced by environment variable
+chat_id = "CHAT_ID" # Replaced by environment variable
 trade_alerts = true
 risk_alerts = true
 daily_summary = true
-summary_time = "21:00"            # SGT time (UTC+8)
+summary_time = "21:00"

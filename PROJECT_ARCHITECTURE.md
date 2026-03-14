@@ -83,11 +83,12 @@ IG Markets (REST + Lightstreamer)
 | File | Responsibility |
 |------|----------------|
 | `auth.rs` | Login, session token management |
-| `rest_client.rs` | `IGRestClient` — all IG REST endpoints (orders, positions, prices, accounts, confirmations) |
+| `rest_client.rs` | `IGRestClient` — all IG REST endpoints; includes Leaky Bucket rate limiting and granular error mapping |
 | `streaming_client.rs` | Lightstreamer WebSocket client; subscribes to prices, account, trades; auto-reconnects on failure |
 | `traits.rs` | `TraderAPI` trait — production and mock share the same interface |
 | `mock_client.rs` | In-memory mock for integration tests — no real API calls |
 | `types.rs` | Serde structs for all IG API request/response payloads |
+| `errors.rs` | (Planned) Custom `IGError` enum for structured error recovery |
 
 ### `engine/`
 

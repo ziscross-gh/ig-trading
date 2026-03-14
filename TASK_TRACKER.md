@@ -22,6 +22,52 @@ For the full history of completed work and debt items, see `TECH_DEBT_AUDIT.md`.
 | 6 | Engine Hardening / WS Migration | ✅ Complete |
 | 7 | Production Backtesting | ✅ Complete |
 | 8 | AI/ML Enhancements | ✅ 8.1–8.5, 8.7 done · 8.6 long-term |
+| 9 | High-Availability API | ✅ Complete |
+| 10 | Connectivity & Intelligence | ✅ Complete |
+| 11 | Advanced Deployment | ⏳ Planned |
+| 12 | Tactical Volatility | 🏗️ In Progress |
+| 13 | Sticky Trade DNA | ⏳ Planned |
+
+---
+
+## Phase 12 — Tactical Volatility (Engagement)
+
+| # | Task | Owner | Status | Notes |
+|---|------|-------|--------|-------|
+| 12.1 | Regime-Switching Logic | Gemini | 🏗️ In Progress | Swap weights: Volatile -> MeanRev, Trending -> Trend |
+| 12.2 | Sentiment Velocity Guard | Gemini | ⏳ Planned | Block trades on "Breaking News" sentiment spikes |
+| 12.3 | Dynamic Spread Gate | Gemini | ⏳ Planned | Reject trades if IG spreads widen beyond 1.5x avg |
+| 12.4 | Limit Order Migration | Gemini | ⏳ Planned | Force LIMIT orders in jumpy markets |
+
+---
+
+## Phase 13 — Sticky Trade DNA (Management)
+
+| # | Task | Owner | Status | Notes |
+|---|------|-------|--------|-------|
+| 13.1 | Birth Regime Tracking | Gemini | ⏳ Planned | Save MarketRegime into Position struct at open |
+| 13.2 | Management Personalities | Gemini | ⏳ Planned | Decouple trail-stop logic from current regime |
+| 13.3 | Genetic P&L Logging | Gemini | ⏳ Planned | Persist birth metadata to trades.jsonl |
+
+---
+
+## Phase 9 — High-Availability API (Robustness)
+
+| # | Task | Owner | Status | Notes |
+|---|------|-------|--------|-------|
+| 9.1 | Leaky Bucket Rate Limiter | Gemini | ⏳ Planned | Replace semaphore with burstable token bucket |
+| 9.2 | Granular IG Error Enum | Gemini | ⏳ Planned | Map API errorCodes to automated recovery actions |
+
+---
+
+## Phase 10 — Connectivity & Intelligence
+
+| # | Task | Owner | Status | Notes |
+|---|------|-------|--------|-------|
+| 10.1 | Client Sentiment Indicators | Gemini | ✅ Done | Native Rust fetcher + MarketState storage |
+| 10.2 | Related Market Sentiment | Gemini | ⏳ Planned | Indicator-only epics for broader context |
+| 10.3 | Recursive API Pagination | Gemini | ⏳ Planned | Full history retrieval for audits |
+| 10.4 | Watchlist Syncing (BOT_ACTIVE) | Gemini | ⏳ Planned | Dynamically update traded epics from IG platform |
 
 ---
 

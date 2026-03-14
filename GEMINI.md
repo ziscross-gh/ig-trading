@@ -39,12 +39,20 @@ Gemini owns **Rust engine hardening, backtesting, and ML pipeline validation** w
 |---|------|-------|-------|
 | 7.5 | Backtest HTTP endpoint | Phase 7 | ✅ `POST /backtest` on port 9090 |
 | 8.4-test | Regime classifier smoke test | Phase 8 | ✅ Verified TRENDING/RANGING/VOLATILE labels |
+| 10.1 | Client Sentiment Integration | Phase 10 | ✅ Native Rust fetcher + `api_lab` support |
+| 9.1 | Leaky Bucket Rate Limiter | Phase 9 | ✅ Burstable token-bucket active |
+| 9.2 | Granular Error Mapping | Phase 9 | ✅ Structured `IGError` enum active |
+| 10.2 | Related Market Sentiment | Phase 10 | ✅ Global registry + context market support |
+| 10.3 | Recursive API Pagination | Phase 10 | ✅ Automated "next" link following |
 
-### Long-term (needs 3+ months live data)
+### Active Focus
 
-| # | Task | Notes |
-|---|------|-------|
-| 8.6 | RL position sizing | PPO agent on live trade outcomes. Do not start until 3 months of `logs/trades.jsonl` data accumulated. |
+| # | Task | Phase | Notes |
+|---|------|-------|-------|
+| 12.1 | Regime-Switching Logic | Phase 12 | Dynamic weight swapping (Trend vs MeanRev) |
+| 13.1 | Birth Regime Tracking | Phase 13 | Evolving Position state to include birth context |
+| 12.2 | Sentiment Velocity Guard | Phase 12 | News spike detection & auto-pause |
+| 12.3 | Dynamic Spread Gate | Phase 12 | Slippage protection via spread monitoring |
 
 ---
 
