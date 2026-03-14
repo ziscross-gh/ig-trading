@@ -55,8 +55,8 @@ For the full history of completed work and debt items, see `TECH_DEBT_AUDIT.md`.
 
 | # | Task | Owner | Status | Notes |
 |---|------|-------|--------|-------|
-| 9.1 | Leaky Bucket Rate Limiter | Gemini | ⏳ Planned | Replace semaphore with burstable token bucket |
-| 9.2 | Granular IG Error Enum | Gemini | ⏳ Planned | Map API errorCodes to automated recovery actions |
+| 9.1 | Leaky Bucket Rate Limiter | Claude | ✅ Complete | TokenBucket replaces Semaphore; rate_limit_per_minute wired from config (commit 4591a90) |
+| 9.2 | Granular IG Error Enum | Claude | ✅ Complete | errors.rs activated (was orphan); handle_response() uses IGError; UNAUTHORIZED sentinel preserved (commit 4591a90) |
 
 ---
 
