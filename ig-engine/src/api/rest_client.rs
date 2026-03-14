@@ -2,8 +2,8 @@
 use reqwest::{Client, Response, StatusCode};
 use serde::de::DeserializeOwned;
 use std::sync::Arc;
-use std::time::Duration;
-use tokio::sync::Semaphore;
+use std::time::{Duration, Instant};
+use tokio::sync::Mutex;
 use tracing::{debug, error, info, warn};
 use chrono::{DateTime, Utc};
 
@@ -14,8 +14,52 @@ use async_trait::async_trait;
 const DEMO_BASE_URL: &str = "https://demo-api.ig.com/gateway/deal";
 const PROD_BASE_URL: &str = "https://api.ig.com/gateway/deal";
 const API_VERSION: &str = "2";
-const RATE_LIMIT_PERMITS: usize = 100;
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// Burstable token-bucket rate limiter.
+///
+/// Tokens refill continuously at `rate_per_minute / 60` per second up to the burst
+/// ceiling (`max_tokens = rate_per_minute`). Each API call consumes one token.
+/// If no tokens are available the caller sleeps exactly as long as needed to earn one.
+///
+/// Holding the `Mutex` across the sleep naturally serialises concurrent callers — IG's
+/// session-based API must not receive parallel in-flight requests with the same CST token.
+struct TokenBucket {
+    tokens: f64,
+    max_tokens: f64,
+    refill_per_sec: f64,
+    last_refill: Instant,
+}
+
+impl TokenBucket {
+    fn new(rate_per_minute: u32) -> Self {
+        let max = rate_per_minute as f64;
+        Self {
+            tokens: max,
+            max_tokens: max,
+            refill_per_sec: max / 60.0,
+            last_refill: Instant::now(),
+        }
+    }
+
+    async fn acquire(&mut self) {
+        // Refill tokens based on elapsed time
+        let now = Instant::now();
+        let elapsed = now.duration_since(self.last_refill).as_secs_f64();
+        self.tokens = (self.tokens + elapsed * self.refill_per_sec).min(self.max_tokens);
+        self.last_refill = now;
+
+        if self.tokens >= 1.0 {
+            self.tokens -= 1.0;
+        } else {
+            // Calculate precise wait to earn one token, then sleep
+            let wait_secs = (1.0 - self.tokens) / self.refill_per_sec;
+            tokio::time::sleep(Duration::from_secs_f64(wait_secs)).await;
+            self.tokens = 0.0;
+            self.last_refill = Instant::now();
+        }
+    }
+}
 
 #[derive(Debug, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -33,7 +77,10 @@ pub struct IGRestClient {
     security_token: Option<String>,
     lightstreamer_endpoint: Option<String>,
     account_id: Option<String>,
-    rate_limiter: Arc<Semaphore>,
+    /// Token-bucket rate limiter — enforces `rate_limit_per_minute` from engine config.
+    /// Held as a `Mutex` so concurrent callers are serialised (IG requires sequential requests
+    /// per session token).
+    rate_limiter: Arc<Mutex<TokenBucket>>,
     last_authenticated: Option<DateTime<Utc>>,
     // Credentials stored for auto-reauthentication
     identifier: String,
@@ -41,12 +88,17 @@ pub struct IGRestClient {
 }
 
 impl IGRestClient {
-    /// Create a new IG REST client and authenticate
+    /// Create a new IG REST client and authenticate.
+    ///
+    /// `rate_limit_per_minute` — taken from `config.ig.rate_limit_per_minute` (default 30).
+    /// This is the ceiling enforced by the token bucket; IG will return 429 / FORBIDDEN if
+    /// exceeded in practice.
     pub async fn new(
         api_key: String,
         identifier: String,
         password: String,
         is_demo: bool,
+        rate_limit_per_minute: u32,
     ) -> Result<Self, anyhow::Error> {
         let base_url = if is_demo {
             DEMO_BASE_URL.to_string()
@@ -66,7 +118,7 @@ impl IGRestClient {
             security_token: None,
             lightstreamer_endpoint: None,
             account_id: None,
-            rate_limiter: Arc::new(Semaphore::new(RATE_LIMIT_PERMITS)),
+            rate_limiter: Arc::new(Mutex::new(TokenBucket::new(rate_limit_per_minute))),
             last_authenticated: None,
             identifier: identifier.clone(),
             password: password.clone(),
@@ -552,26 +604,35 @@ impl IGRestClient {
         request
     }
 
-    /// Handle HTTP response and deserialize JSON
+    /// Handle HTTP response and deserialize JSON.
+    /// Uses `IGError` for structured error classification (rate limits, auth, market closed, etc.).
+    /// Auth errors always surface as "UNAUTHORIZED" so that retry loops in `get_request` /
+    /// `post_request` / etc. can trigger re-authentication without downcasting.
     async fn handle_response<T: DeserializeOwned>(
         &mut self,
         response: Response,
     ) -> Result<T, anyhow::Error> {
         let status = response.status();
 
-        if status == StatusCode::UNAUTHORIZED {
-            warn!("Unauthorized (401) received.");
-            return Err(anyhow::anyhow!("UNAUTHORIZED"));
-        }
-
         if !status.is_success() {
             let error_text = response.text().await.unwrap_or_default();
-            error!("API request failed with status {}: {}", status, error_text);
-            return Err(anyhow::anyhow!(
-                "API request failed with status {}: {}",
-                status,
-                error_text
-            ));
+
+            // Extract IG's machine-readable errorCode from the JSON body if present.
+            let ig_code = serde_json::from_str::<serde_json::Value>(&error_text)
+                .ok()
+                .and_then(|v| v.get("errorCode").and_then(|c| c.as_str()).map(|s| s.to_string()))
+                .unwrap_or_default();
+
+            let ig_error = crate::api::errors::IGError::from_ig_code(status, &ig_code, &error_text);
+            error!("API request failed with status {}: {} (Code: {})", status, error_text, ig_code);
+
+            // Surface auth failures as the "UNAUTHORIZED" sentinel string so that
+            // the retry wrappers (get_request, post_request, etc.) can re-authenticate.
+            if ig_error.requires_reauth() {
+                return Err(anyhow::anyhow!("UNAUTHORIZED"));
+            }
+
+            return Err(anyhow::Error::from(ig_error));
         }
 
         let body_text = response.text().await?;
@@ -584,12 +645,14 @@ impl IGRestClient {
         }
     }
 
-    /// Apply rate limiting using semaphore
+    /// Block until a token is available from the token bucket, then consume it.
+    ///
+    /// Holding the Mutex across any wait naturally serialises concurrent API calls —
+    /// only one request can be in-flight at a time, which is correct for IG's
+    /// session-based REST API.
     async fn apply_rate_limit(&self) {
-        let _permit = self.rate_limiter.acquire().await;
-        // Permit is automatically released when dropped
-        // In a production system, you might want to add a delay here
-        tokio::time::sleep(Duration::from_millis(10)).await;
+        let mut bucket = self.rate_limiter.lock().await;
+        bucket.acquire().await;
     }
 }
 

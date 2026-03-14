@@ -71,7 +71,7 @@ pub async fn run(
         .map_err(|_| anyhow::anyhow!("IG_PASSWORD environment variable not set"))?;
 
     let is_demo = config.ig.environment == "demo";
-    let mut client = match IGRestClient::new(api_key, identifier, password, is_demo).await {
+    let mut client = match IGRestClient::new(api_key, identifier, password, is_demo, config.ig.rate_limit_per_minute).await {
         Ok(c) => {
             info!("Successfully authenticated with IG API");
             c

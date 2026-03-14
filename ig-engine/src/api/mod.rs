@@ -4,3 +4,4 @@ pub mod types;
 pub mod streaming_client;
 pub mod traits;
 pub mod mock_client;
+pub mod errors;

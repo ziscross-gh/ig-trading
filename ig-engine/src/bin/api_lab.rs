@@ -20,7 +20,7 @@ async fn main() -> Result<(), anyhow::Error> {
     let is_demo = environment.to_lowercase() == "demo";
 
     // 1. Initialize and Authenticate
-    let mut client = IGRestClient::new(api_key, identifier, password, is_demo).await?;
+    let mut client = IGRestClient::new(api_key, identifier, password, is_demo, 30).await?;
     println!("✅ Authenticated successfully with {} API.", environment);
 
     // 2. Get account currency

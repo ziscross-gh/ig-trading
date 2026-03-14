@@ -31,6 +31,7 @@ impl SessionManager {
         identifier: String,
         password: String,
         environment: Environment,
+        rate_limit_per_minute: u32,
     ) -> Result<Self, anyhow::Error> {
         info!(
             "Creating session with environment: {}",
@@ -41,7 +42,7 @@ impl SessionManager {
             }
         );
 
-        let client = IGRestClient::new(api_key, identifier, password, environment.is_demo()).await?;
+        let client = IGRestClient::new(api_key, identifier, password, environment.is_demo(), rate_limit_per_minute).await?;
 
         let session_manager = Self {
             client,
