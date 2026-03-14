@@ -64,7 +64,7 @@ For the full history of completed work and debt items, see `TECH_DEBT_AUDIT.md`.
 
 | # | Task | Owner | Status | Notes |
 |---|------|-------|--------|-------|
-| 10.1 | Client Sentiment Indicators | Gemini | ✅ Done | Native Rust fetcher + MarketState storage |
+| 10.1 | Client Sentiment Indicators | Gemini | ⏳ Planned | Was built by Gemini + ran successfully (2026-03-14 logs), but wiped when Claude restored 51 gutted files. state/sentiment.rs exists as starting point. |
 | 10.2 | Related Market Sentiment | Gemini | ⏳ Planned | Indicator-only epics for broader context |
 | 10.3 | Recursive API Pagination | Gemini | ⏳ Planned | Full history retrieval for audits |
 | 10.4 | Watchlist Syncing (BOT_ACTIVE) | Gemini | ⏳ Planned | Dynamically update traded epics from IG platform |
