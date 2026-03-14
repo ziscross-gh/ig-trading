@@ -203,11 +203,18 @@ impl OrderManager {
             .await?;
 
         let close_price = confirm_response.level.unwrap_or(0.0);
-        let pnl = if position.direction.to_string() == "BUY" {
-            (close_price - position.open_price) * position.size
+        // Use the same pip_value formula as handlers.rs to get account-currency PnL.
+        // Raw price diff × size gives wrong results for FX (ignores pip_value / pip_scale).
+        let spec = crate::risk::InstrumentSpec::from_epic_fallback(&position.epic);
+        let (pip_scale, pip_value) = spec
+            .map(|s| (s.pip_scale, s.pip_value))
+            .unwrap_or((0.0001, 1.0));
+        let price_diff = if position.direction.to_string() == "BUY" {
+            close_price - position.open_price
         } else {
-            (position.open_price - close_price) * position.size
+            position.open_price - close_price
         };
+        let pnl = (price_diff / pip_scale) * pip_value * position.size;
 
         let close_result = CloseResult {
             deal_id: confirm_response.deal_id.clone(),

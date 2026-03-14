@@ -22,8 +22,8 @@ For the full history of completed work and debt items, see `TECH_DEBT_AUDIT.md`.
 | 6 | Engine Hardening / WS Migration | ✅ Complete |
 | 7 | Production Backtesting | ✅ Complete |
 | 8 | AI/ML Enhancements | ✅ 8.1–8.5, 8.7 done · 8.6 long-term |
-| 9 | High-Availability API | ✅ Complete |
-| 10 | Connectivity & Intelligence | ✅ Complete |
+| 9 | High-Availability API | ⏳ Planned (code wiped during restore — orphan files remain) |
+| 10 | Connectivity & Intelligence | ⏳ Planned (code wiped during restore — orphan files remain) |
 | 11 | Advanced Deployment | ⏳ Planned |
 | 12 | Tactical Volatility | 🏗️ In Progress |
 | 13 | Sticky Trade DNA | ⏳ Planned |

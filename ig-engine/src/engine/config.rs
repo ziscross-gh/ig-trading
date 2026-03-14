@@ -42,6 +42,14 @@ pub struct IGConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MarketsConfig {
     pub epics: Vec<String>,
+    /// Weekend-specific epics (e.g. IG's Sunday Gold spot epic) used when
+    /// `allow_weekend_trading = true` and the regular epics are offline.
+    #[serde(default)]
+    pub weekend_epics: Vec<String>,
+    /// Epics or market IDs to poll for sentiment context only (no trading).
+    /// E.g. "USDIND" for the USD Index as a Gold driver.
+    #[serde(default)]
+    pub context_market_ids: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -59,6 +67,32 @@ pub struct StrategiesConfig {
     /// Allows Gold and FX pairs to use different strategy filtering and risk params.
     #[serde(default)]
     pub instrument_overrides: HashMap<String, InstrumentStrategyOverride>,
+    /// Regime-specific consensus overrides: different barrier + min_strength per market state.
+    /// Keys: "trending", "ranging", "volatile". Used by Phase 12.1 regime-switching logic.
+    #[serde(default)]
+    pub consensus_matrix: HashMap<String, ConsensusMatrixEntry>,
+    /// Per-epic strategy overrides for weekend trading (e.g. Sunday Gold spot epic).
+    /// Applied when the active epic is a weekend_epic from MarketsConfig.
+    #[serde(default)]
+    pub weekend_overrides: HashMap<String, WeekendOverride>,
+}
+
+/// Regime-specific consensus threshold entry (Phase 12.1).
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct ConsensusMatrixEntry {
+    /// Minimum number of strategies that must agree (overrides min_consensus).
+    pub barrier: usize,
+    /// Minimum average signal strength (overrides min_avg_strength).
+    pub min_strength: f64,
+}
+
+/// Per-epic strategy overrides used during weekend sessions.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct WeekendOverride {
+    pub min_consensus: Option<usize>,
+    pub min_avg_strength: Option<f64>,
+    pub atr_sl_multiplier: Option<f64>,
+    pub atr_tp_multiplier: Option<f64>,
 }
 
 /// Per-instrument strategy configuration.
@@ -198,6 +232,8 @@ impl Default for EngineConfig {
                     "CS.D.USDJPY.CSD.IP".to_string(),
                     "CS.D.CFIGOLD.CFI.IP".to_string(),
                 ],
+                weekend_epics: vec![],
+                context_market_ids: vec![],
             },
             risk: RiskConfig {
                 max_risk_per_trade: 1.0,
@@ -293,6 +329,8 @@ impl Default for EngineConfig {
                     }
                     m
                 },
+                consensus_matrix: HashMap::new(),
+                weekend_overrides: HashMap::new(),
             },
             trading_hours: TradingHoursConfig {
                 start: "07:00".to_string(),
