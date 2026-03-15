@@ -129,13 +129,24 @@ pub fn spawn_state_worker(
 
                     let mut s = state_worker.write().await;
 
-                    // Preserve market_state from previous update when not included in this tick.
+                    // Preserve market_state and EMA-update avg_spread from previous tick.
                     // Lightstreamer Merge mode only sends changed fields, so MARKET_STATE may
                     // arrive on the snapshot and then not repeat on subsequent price ticks.
-                    if market_state.market_state.is_none() {
-                        if let Some(prev) = s.markets.live.get(&market_state.epic) {
+                    if let Some(prev) = s.markets.live.get(&market_state.epic) {
+                        if market_state.market_state.is_none() {
                             market_state.market_state = prev.market_state.clone();
                         }
+                        // EMA(α=0.05): slowly track baseline spread for the Dynamic Spread Gate.
+                        // Seed from current spread if prev avg is 0 (first tick).
+                        let alpha = 0.05_f64;
+                        market_state.avg_spread = if prev.avg_spread == 0.0 {
+                            market_state.spread
+                        } else {
+                            prev.avg_spread * (1.0 - alpha) + market_state.spread * alpha
+                        };
+                    } else {
+                        // First tick ever for this epic — seed avg_spread from current spread.
+                        market_state.avg_spread = market_state.spread;
                     }
 
                     // Accumulate tick into the current OHLCV bar.
@@ -239,6 +250,7 @@ pub fn spawn_state_worker(
                                             opened_at: pos.opened_at,
                                             closed_at: Utc::now(),
                                             is_virtual: pos.is_virtual,
+                                            opened_in_regime: pos.opened_in_regime.clone(),
                                         });
 
                                         s.record_trade_result(final_pnl);
@@ -500,6 +512,7 @@ pub fn parse_market_state_from_update(update: &ItemUpdate) -> Option<MarketState
         change_pct: get_field("CHANGE_PCT").unwrap_or(0.0),
         market_state: get_string_field("MARKET_STATE"),
         last_update: chrono::Utc::now(),
+        avg_spread: 0.0, // initialised to 0; EMA-updated by the state worker on every tick
     })
 }
 

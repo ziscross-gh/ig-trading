@@ -154,16 +154,21 @@ pub async fn analyze_market(
                 }
             }
 
-            // ── ML Regime signal multipliers (Phase 8.4) ──────────────────────────
+            // ── ML Regime signal multipliers (Phase 8.4 / 12.1) ──────────────────
             // Read the latest regime from data/regime_latest.json (written hourly by
             // scripts/run_regime_classifier.py). If fresh, scale signal strengths so
             // the dominant strategy family gets a consensus boost and the other is muted.
             // Returns None silently when the file is missing or stale — no-op in that case.
-            if let Some(regime) = crate::regime::read_regime(epic.as_str()) {
-                crate::regime::apply_regime_multipliers(&mut signals, &regime);
-            } else {
+            // Also capture the regime string for birth tracking (13.1) and LIMIT gate (12.4).
+            let current_regime_str: Option<String> = crate::regime::read_regime(epic.as_str())
+                .map(|regime| {
+                    crate::regime::apply_regime_multipliers(&mut signals, &regime);
+                    regime.kind.to_string()
+                });
+            if current_regime_str.is_none() {
                 debug!("No fresh regime data for {} — using unweighted signals", epic);
             }
+            let is_volatile_regime = current_regime_str.as_deref() == Some("VOLATILE");
 
             tracing::info!(
                 "[{}] Bar analysis: {}/{} strategies fired signals",
@@ -175,6 +180,42 @@ pub async fn analyze_market(
                     "Ensemble consensus signal: {} {} strength={}",
                     ensemble_signal.direction, epic, ensemble_signal.strength
                 );
+
+                // ── 12.2 Macro Pause — Sentiment Velocity Guard ──────────────────
+                let macro_paused = {
+                    let s = state.read().await;
+                    s.metrics.macro_pause_until
+                        .map(|until| chrono::Utc::now() < until)
+                        .unwrap_or(false)
+                };
+                if macro_paused {
+                    warn!("[{}] Macro pause active (sentiment velocity spike) — skipping trade entry", epic);
+                    let mut s = state.write().await;
+                    s.add_signal_record(ensemble_signal.clone(), false, Some("Macro pause: sentiment velocity spike".to_string()));
+                    continue;
+                }
+
+                // ── 12.3 Dynamic Spread Gate ─────────────────────────────────────
+                let (current_spread, avg_spread) = {
+                    let s = state.read().await;
+                    s.markets.live.get(epic.as_str())
+                        .map(|ms| (ms.spread, ms.avg_spread))
+                        .unwrap_or((0.0, 0.0))
+                };
+                let spread_threshold = avg_spread * 1.5;
+                if avg_spread > 0.0 && current_spread > spread_threshold {
+                    warn!(
+                        "[{}] Spread gate: spread={:.5} > 1.5×avg={:.5} — trade rejected",
+                        epic, current_spread, avg_spread
+                    );
+                    let mut s = state.write().await;
+                    s.add_signal_record(
+                        ensemble_signal.clone(),
+                        false,
+                        Some(format!("Spread gate: {:.5} > {:.5}", current_spread, spread_threshold)),
+                    );
+                    continue;
+                }
 
                 let can_trade = {
                     let s = state.read().await;
@@ -223,7 +264,14 @@ pub async fn analyze_market(
                     );
 
                     match verdict {
-                        crate::risk::RiskVerdict::Approved(adjusted_trade) => {
+                        crate::risk::RiskVerdict::Approved(mut adjusted_trade) => {
+                            // ── 12.4 Limit Order Migration — VOLATILE regime ──────
+                            if is_volatile_regime {
+                                adjusted_trade.order_type = Some("LIMIT".to_string());
+                                adjusted_trade.entry_level = Some(mid_price);
+                                info!("[{}] VOLATILE regime: upgrading order to LIMIT @ {:.5}", epic, mid_price);
+                            }
+
                             if config.general.mode != EngineMode::Paper {
                                 match order_manager.execute_trade(client, &adjusted_trade, &account_currency).await {
                                     Ok(execution) => {
@@ -247,6 +295,7 @@ pub async fn analyze_market(
                                             strategy: adjusted_trade.strategy.clone(),
                                             opened_at: Utc::now(),
                                             is_virtual: false,
+                                            opened_in_regime: current_regime_str.clone(), // 13.1
                                         };
 
                                         {
@@ -309,6 +358,7 @@ pub async fn analyze_market(
                                     strategy: adjusted_trade.strategy.clone(),
                                     opened_at: Utc::now(),
                                     is_virtual: true,
+                                    opened_in_regime: current_regime_str.clone(), // 13.1
                                 };
 
                                 {
@@ -490,6 +540,7 @@ pub async fn execute_manual_trigger(
                             currency: account_currency.clone(),
                             strategy: "ManualTrigger".into(),
                             is_virtual: false,
+                            opened_in_regime: None, // manual trigger — regime not tracked
                         };
                         s.trades.active.push(pos);
                         
@@ -531,6 +582,7 @@ pub async fn execute_manual_trigger(
                     currency: account_currency.clone(),
                     strategy: "ManualTrigger".into(),
                     is_virtual: true,
+                    opened_in_regime: None,
                 };
                 s.trades.active.push(pos);
                 info!("Paper Trade (Manual): Created virtual position for {}", epic);

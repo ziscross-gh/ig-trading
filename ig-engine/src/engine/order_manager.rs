@@ -78,12 +78,15 @@ impl OrderManager {
         // NOTE: Limited risk accounts REQUIRE guaranteed_stop = true.
         // However, some markets on Demo reject guaranteed stops for various reasons (Code 11).
         // For now, we use the global config to decide.
+        // 12.4: Use LIMIT order type when requested (VOLATILE regime gate).
+        // For LIMIT orders, `level` is the desired entry price; stop/limit are distances from there.
+        let is_limit = trade.order_type.as_deref() == Some("LIMIT");
         let request = IGTradeRequest {
             epic: trade.epic.clone(),
             direction: trade.direction.clone(),
             size: trade.size,
-            order_type: "MARKET".to_string(),
-            level: None,
+            order_type: trade.order_type.clone().unwrap_or_else(|| "MARKET".to_string()),
+            level: if is_limit { trade.entry_level } else { None },
             stop_level: Some(trade.stop_loss),
             stop_distance: None,
             limit_level: Some(trade.take_profit),

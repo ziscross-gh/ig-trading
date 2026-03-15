@@ -61,4 +61,31 @@ pub trait TraderAPI: Send + Sync {
         deal_id: &str,
         request: IGUpdatePositionRequest,
     ) -> Result<IGTradeResponse, anyhow::Error>;
+
+    /// Fetch IG crowd sentiment for a market (% long vs % short).
+    ///
+    /// `market_id` is the short IG market identifier, e.g. "GOLD", "EURUSD", "USDJPY".
+    /// These are distinct from epics — use `config.markets.context_market_ids` to configure.
+    async fn get_client_sentiment(
+        &mut self,
+        market_id: &str,
+    ) -> Result<IGSentimentResponse, anyhow::Error>;
+
+    /// Fetch account activity history with recursive pagination (10.3).
+    ///
+    /// Accumulates all pages until `metadata.paging.next` is None.
+    /// `from` and `to` are ISO-8601 date strings, e.g. "2026-01-01T00:00:00".
+    async fn get_account_activity(
+        &mut self,
+        from: &str,
+        to: &str,
+    ) -> Result<Vec<IGActivity>, anyhow::Error>;
+
+    /// Find the IG watchlist named `name` and return its constituent markets (10.4).
+    ///
+    /// Returns an empty response if no watchlist with that name exists.
+    async fn get_watchlist_by_name(
+        &mut self,
+        name: &str,
+    ) -> Result<IGWatchlistMarketsResponse, anyhow::Error>;
 }

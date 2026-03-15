@@ -34,10 +34,10 @@ For the full history of completed work and debt items, see `TECH_DEBT_AUDIT.md`.
 
 | # | Task | Owner | Status | Notes |
 |---|------|-------|--------|-------|
-| 12.1 | Regime-Switching Logic | Gemini | 🏗️ In Progress | Swap weights: Volatile -> MeanRev, Trending -> Trend |
-| 12.2 | Sentiment Velocity Guard | Gemini | ⏳ Planned | Block trades on "Breaking News" sentiment spikes |
-| 12.3 | Dynamic Spread Gate | Gemini | ⏳ Planned | Reject trades if IG spreads widen beyond 1.5x avg |
-| 12.4 | Limit Order Migration | Gemini | ⏳ Planned | Force LIMIT orders in jumpy markets |
+| 12.1 | Regime-Switching Logic | Claude | ✅ Done | regime/mod.rs + apply_regime_multipliers in analysis.rs; TRENDING/RANGING/VOLATILE signal multipliers |
+| 12.2 | Sentiment Velocity Guard | Claude | ✅ Done | velocity>0.5 sets macro_pause_until (+2h) in MetricsState; analysis.rs checks it before all trade entries |
+| 12.3 | Dynamic Spread Gate | Claude | ✅ Done | avg_spread EMA(0.05) on MarketState; spread>1.5×avg rejects trade in analysis.rs |
+| 12.4 | Limit Order Migration | Claude | ✅ Done | VOLATILE regime sets AdjustedTrade.order_type=LIMIT+entry_level; order_manager uses it |
 
 ---
 
@@ -45,9 +45,9 @@ For the full history of completed work and debt items, see `TECH_DEBT_AUDIT.md`.
 
 | # | Task | Owner | Status | Notes |
 |---|------|-------|--------|-------|
-| 13.1 | Birth Regime Tracking | Gemini | ⏳ Planned | Save MarketRegime into Position struct at open |
-| 13.2 | Management Personalities | Gemini | ⏳ Planned | Decouple trail-stop logic from current regime |
-| 13.3 | Genetic P&L Logging | Gemini | ⏳ Planned | Persist birth metadata to trades.jsonl |
+| 13.1 | Birth Regime Tracking | Claude | ✅ Done | opened_in_regime: Option<String> on Position; set in analysis.rs at trade open |
+| 13.2 | Management Personalities | Claude | ✅ Done | handlers.rs: VOLATILE-birth → break-even snap; TRENDING-birth+current VOLATILE → skip ratchet |
+| 13.3 | Genetic P&L Logging | Claude | ✅ Done | ClosedTrade.opened_in_regime serialised to trades.jsonl via existing TradeLogger |
 
 ---
 
@@ -64,10 +64,10 @@ For the full history of completed work and debt items, see `TECH_DEBT_AUDIT.md`.
 
 | # | Task | Owner | Status | Notes |
 |---|------|-------|--------|-------|
-| 10.1 | Client Sentiment Indicators | Gemini | ⏳ Planned | Was built by Gemini + ran successfully (2026-03-14 logs), but wiped when Claude restored 51 gutted files. state/sentiment.rs exists as starting point. |
-| 10.2 | Related Market Sentiment | Gemini | ⏳ Planned | Indicator-only epics for broader context |
-| 10.3 | Recursive API Pagination | Gemini | ⏳ Planned | Full history retrieval for audits |
-| 10.4 | Watchlist Syncing (BOT_ACTIVE) | Gemini | ⏳ Planned | Dynamically update traded epics from IG platform |
+| 10.1 | Client Sentiment Indicators | Claude | ✅ Done | GlobalSentimentRegistry activated in state.rs; get_client_sentiment() on TraderAPI; 15-min poll timer in event_loop; rest_client + mock_client implemented |
+| 10.2 | Related Market Sentiment | Claude | ✅ Done | context_market_ids polled alongside trading epics; all market IDs update the same GlobalSentimentRegistry |
+| 10.3 | Recursive API Pagination | Claude | ✅ Done | get_account_activity() follows metadata.paging.next until exhausted; Version 1 |
+| 10.4 | Watchlist Syncing (BOT_ACTIVE) | Claude | ✅ Done | 1-hr watchlist_sync_interval; fetches BOT_ACTIVE watchlist and adds new epics to state dynamically |
 
 ---
 

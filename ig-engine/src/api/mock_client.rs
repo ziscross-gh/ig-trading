@@ -191,4 +191,33 @@ impl TraderAPI for MockTraderClient {
             affected_deals: None,
         })
     }
+
+    /// Returns a neutral 50/50 sentiment stub for any market_id.
+    async fn get_client_sentiment(
+        &mut self,
+        market_id: &str,
+    ) -> Result<IGSentimentResponse, anyhow::Error> {
+        Ok(IGSentimentResponse {
+            market_id: market_id.to_string(),
+            long_position_percentage: 50.0,
+            short_position_percentage: 50.0,
+        })
+    }
+
+    /// Returns an empty activity list stub (no IG API in mock mode).
+    async fn get_account_activity(
+        &mut self,
+        _from: &str,
+        _to: &str,
+    ) -> Result<Vec<IGActivity>, anyhow::Error> {
+        Ok(vec![])
+    }
+
+    /// Returns an empty watchlist markets stub (no IG API in mock mode).
+    async fn get_watchlist_by_name(
+        &mut self,
+        _name: &str,
+    ) -> Result<IGWatchlistMarketsResponse, anyhow::Error> {
+        Ok(IGWatchlistMarketsResponse { markets: vec![] })
+    }
 }

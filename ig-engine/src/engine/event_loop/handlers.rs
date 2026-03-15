@@ -55,6 +55,38 @@ pub async fn handle_position_monitoring(
                 position.pnl = (price_diff / pip_scale) * pip_value * position.size;
 
                 if let Some(trail_dist) = position.trailing_stop {
+                    // ── 13.2 Management Personalities ────────────────────────────
+                    // Adjust ratchet behaviour based on the regime when the trade was opened.
+                    //
+                    // VOLATILE birth → aggressive break-even: once price has moved trail_dist
+                    //   in our favour, snap SL to open_price immediately (micro-stop).
+                    // TRENDING birth + current VOLATILE regime → preserve wide stop (skip
+                    //   ratchet tightening so we don't get stopped out by whipsaw noise).
+                    let birth_regime = position.opened_in_regime.as_deref().unwrap_or("UNKNOWN");
+                    let current_regime = crate::regime::read_regime(&position.epic)
+                        .map(|r| r.kind.to_string());
+                    let current_is_volatile = current_regime.as_deref() == Some("VOLATILE");
+
+                    // VOLATILE birth: snap to break-even aggressively
+                    if birth_regime == "VOLATILE" {
+                        let profit_dist = match position.direction {
+                            Direction::Buy  => current_price - position.open_price,
+                            Direction::Sell => position.open_price - current_price,
+                        };
+                        if profit_dist >= trail_dist {
+                            let be_sl = match position.direction {
+                                Direction::Buy  => position.open_price,
+                                Direction::Sell => position.open_price,
+                            };
+                            let already_at_be = position.stop_loss.map(|sl| sl >= be_sl).unwrap_or(false);
+                            if !already_at_be {
+                                debug!("VOLATILE-birth break-even snap for {}: SL → {:.5}", position.epic, be_sl);
+                                position.stop_loss = Some(be_sl);
+                                stop_updates.push((position.clone(), be_sl));
+                            }
+                        }
+                    }
+
                     // Reduce API spam by requiring SL to move by at least X pips
                     let spec = instrument_specs.get(&position.epic)
                         .cloned()
@@ -65,22 +97,29 @@ pub async fn handle_position_monitoring(
                         Direction::Buy => current_price - trail_dist,
                         Direction::Sell => current_price + trail_dist,
                     };
-                    
-                    let should_update = match position.direction {
-                        Direction::Buy => position.stop_loss.is_none_or(|sl| new_sl >= sl + min_step),
-                        Direction::Sell => position.stop_loss.is_none_or(|sl| new_sl <= sl - min_step),
-                    };
-                    if should_update {
+
+                    // TRENDING birth in VOLATILE current regime: skip ratchet tightening
+                    // (preserve wide stop so whipsaw doesn't prematurely close the trade).
+                    if birth_regime == "TRENDING" && current_is_volatile {
                         debug!(
-                            "Trailing SL ratchet for {}: {:.5} -> {:.5}",
-                            position.epic,
-                            position.stop_loss.unwrap_or(0.0),
-                            new_sl
+                            "TRENDING-birth management: skipping ratchet tightening for {} (current regime VOLATILE)",
+                            position.epic
                         );
-                        position.stop_loss = Some(new_sl);
-                        
-                        // We will perform the API update outside the lock
-                        stop_updates.push((position.clone(), new_sl));
+                    } else {
+                        let should_update = match position.direction {
+                            Direction::Buy => position.stop_loss.is_none_or(|sl| new_sl >= sl + min_step),
+                            Direction::Sell => position.stop_loss.is_none_or(|sl| new_sl <= sl - min_step),
+                        };
+                        if should_update {
+                            debug!(
+                                "Trailing SL ratchet for {}: {:.5} -> {:.5}",
+                                position.epic,
+                                position.stop_loss.unwrap_or(0.0),
+                                new_sl
+                            );
+                            position.stop_loss = Some(new_sl);
+                            stop_updates.push((position.clone(), new_sl));
+                        }
                     }
                 }
 
@@ -149,6 +188,7 @@ pub async fn handle_position_monitoring(
                     opened_at: position.opened_at,
                     closed_at: Utc::now(),
                     is_virtual: true,
+                    opened_in_regime: position.opened_in_regime.clone(), // 13.3
                 });
 
                 // Update scorecard for learning
@@ -197,6 +237,7 @@ pub async fn handle_position_monitoring(
                     opened_at: position.opened_at,
                     closed_at: Utc::now(),
                     is_virtual: position.is_virtual,
+                    opened_in_regime: position.opened_in_regime.clone(), // 13.3
                 };
 
                 {

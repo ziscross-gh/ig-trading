@@ -426,6 +426,127 @@ impl TraderAPI for IGRestClient {
         let body = serde_json::to_value(&request)?;
         self.put_request::<IGTradeResponse>(&url, body).await
     }
+
+    /// Fetch IG crowd sentiment for a market (GET /clientsentiment/{marketId}, Version 1).
+    ///
+    /// `market_id` is the short IG identifier (e.g. "GOLD", "EURUSD"), not the full epic.
+    /// Built manually to set Version: 1 — build_request defaults to Version: 2.
+    async fn get_client_sentiment(
+        &mut self,
+        market_id: &str,
+    ) -> Result<IGSentimentResponse, anyhow::Error> {
+        self.apply_rate_limit().await;
+        let url = format!("{}/clientsentiment/{}", self.base_url, market_id);
+
+        let mut request = self
+            .client
+            .get(&url)
+            .header("X-IG-API-KEY", &self.api_key)
+            .header("Version", "1")
+            .header("Content-Type", "application/json; charset=UTF-8")
+            .header("Accept", "application/json; charset=UTF-8");
+
+        if let Some(cst) = &self.cst {
+            request = request.header("CST", cst);
+        }
+        if let Some(sec) = &self.security_token {
+            request = request.header("X-SECURITY-TOKEN", sec);
+        }
+
+        let response = request.send().await?;
+        self.handle_response::<IGSentimentResponse>(response).await
+    }
+
+    /// Fetch account activity with recursive pagination (10.3).
+    async fn get_account_activity(
+        &mut self,
+        from: &str,
+        to: &str,
+    ) -> Result<Vec<IGActivity>, anyhow::Error> {
+        let mut all_activities: Vec<IGActivity> = Vec::new();
+        let initial_url = format!(
+            "{}/history/activity?from={}&to={}&detailed=true&pageSize=500",
+            self.base_url, from, to
+        );
+        let mut next_url: Option<String> = Some(initial_url);
+
+        while let Some(url) = next_url.take() {
+            self.apply_rate_limit().await;
+            let mut request = self
+                .client
+                .get(&url)
+                .header("X-IG-API-KEY", &self.api_key)
+                .header("Version", "1")
+                .header("Content-Type", "application/json; charset=UTF-8");
+            if let Some(cst) = &self.cst {
+                request = request.header("CST", cst);
+            }
+            if let Some(sec) = &self.security_token {
+                request = request.header("X-SECURITY-TOKEN", sec);
+            }
+            let response = request.send().await?;
+            let page: IGActivityResponse = self.handle_response(response).await?;
+
+            all_activities.extend(page.activities);
+
+            next_url = page.metadata.paging.next.map(|next| {
+                if next.starts_with("http") {
+                    next
+                } else {
+                    format!("{}{}", self.base_url.trim_end_matches('/'), next)
+                }
+            });
+        }
+
+        Ok(all_activities)
+    }
+
+    /// Find the watchlist named `name` and return its markets (10.4).
+    async fn get_watchlist_by_name(
+        &mut self,
+        name: &str,
+    ) -> Result<IGWatchlistMarketsResponse, anyhow::Error> {
+        // Step 1: list all watchlists
+        let list_url = format!("{}/watchlists", self.base_url);
+        self.apply_rate_limit().await;
+        let mut request = self
+            .client
+            .get(&list_url)
+            .header("X-IG-API-KEY", &self.api_key)
+            .header("Version", "1")
+            .header("Content-Type", "application/json; charset=UTF-8");
+        if let Some(cst) = &self.cst {
+            request = request.header("CST", cst);
+        }
+        if let Some(sec) = &self.security_token {
+            request = request.header("X-SECURITY-TOKEN", sec);
+        }
+        let response = request.send().await?;
+        let list: IGWatchlistListResponse = self.handle_response(response).await?;
+
+        // Step 2: find by name
+        let Some(watchlist) = list.watchlists.into_iter().find(|w| w.name == name) else {
+            return Ok(IGWatchlistMarketsResponse { markets: vec![] });
+        };
+
+        // Step 3: fetch its markets
+        let markets_url = format!("{}/watchlists/{}", self.base_url, watchlist.id);
+        self.apply_rate_limit().await;
+        let mut request = self
+            .client
+            .get(&markets_url)
+            .header("X-IG-API-KEY", &self.api_key)
+            .header("Version", "1")
+            .header("Content-Type", "application/json; charset=UTF-8");
+        if let Some(cst) = &self.cst {
+            request = request.header("CST", cst);
+        }
+        if let Some(sec) = &self.security_token {
+            request = request.header("X-SECURITY-TOKEN", sec);
+        }
+        let response = request.send().await?;
+        self.handle_response::<IGWatchlistMarketsResponse>(response).await
+    }
 }
 
 impl IGRestClient {

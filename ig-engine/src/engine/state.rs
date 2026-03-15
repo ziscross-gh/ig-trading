@@ -1,4 +1,7 @@
 #![allow(dead_code)]
+pub mod sentiment;
+pub use sentiment::{GlobalSentimentRegistry, SentimentData};
+
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, VecDeque};
 use chrono::{DateTime, Utc};
@@ -113,6 +116,9 @@ pub struct Position {
     pub strategy: String,
     pub opened_at: DateTime<Utc>,
     pub is_virtual: bool,
+    /// ML regime at the moment this position was opened ("TRENDING", "RANGING", "VOLATILE").
+    /// Used by management personalities to preserve original stop logic regardless of current regime.
+    pub opened_in_regime: Option<String>,
 }
 
 /// A closed trade record
@@ -132,6 +138,8 @@ pub struct ClosedTrade {
     pub opened_at: DateTime<Utc>,
     pub closed_at: DateTime<Utc>,
     pub is_virtual: bool,
+    /// ML regime at position open — persisted to trades.jsonl for genetic P&L analysis (Phase 13.3).
+    pub opened_in_regime: Option<String>,
 }
 
 /// A strategy signal
@@ -191,6 +199,9 @@ pub struct MarketState {
     /// None means the field has not yet arrived from Lightstreamer.
     pub market_state: Option<String>,
     pub last_update: DateTime<Utc>,
+    /// Rolling EMA of historical spread (α=0.05). Used by the Dynamic Spread Gate (12.3)
+    /// to reject trades when live spread is unusually wide (> 1.5× this baseline).
+    pub avg_spread: f64,
 }
 
 pub struct TradeState {
@@ -205,6 +216,9 @@ pub struct MetricsState {
     pub daily: DailyStats,
     pub circuit_breaker_active: bool,
     pub circuit_breaker_until: Option<DateTime<Utc>>,
+    /// Set when a sentiment velocity spike is detected (delta > 0.5 in 15 min).
+    /// All new trade entries are blocked until this timestamp passes (2-hour macro pause).
+    pub macro_pause_until: Option<DateTime<Utc>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -264,7 +278,7 @@ pub struct EngineState {
     pub config: EngineConfig,
     pub status: EngineStatus,
     pub started_at: Option<DateTime<Utc>>,
-    
+
     pub account: AccountState,
     pub markets: MarketStateContainer,
     pub trades: TradeState,
@@ -272,6 +286,8 @@ pub struct EngineState {
     pub learning: LearningState,
     pub session: SessionState,
     pub trade_logger: TradeLogger,
+    /// Live IG crowd-sentiment data, updated every 15 minutes for all `context_market_ids`.
+    pub sentiment: GlobalSentimentRegistry,
 }
 
 impl EngineState {
@@ -330,6 +346,7 @@ impl EngineState {
                 },
                 circuit_breaker_active: false,
                 circuit_breaker_until: None,
+                macro_pause_until: None,
             },
             learning: LearningState {
                 snapshot: LearningSnapshot::default(),
@@ -338,6 +355,7 @@ impl EngineState {
             },
             session: SessionState::default(),
             trade_logger: TradeLogger::default(),
+            sentiment: GlobalSentimentRegistry::new(),
         }
     }
 

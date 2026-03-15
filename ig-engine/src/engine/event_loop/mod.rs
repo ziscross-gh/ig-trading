@@ -389,6 +389,7 @@ pub async fn run(
                             .unwrap_or_else(|_| chrono::Utc::now())
                     },
                     is_virtual: false,
+                    opened_in_regime: None, // birth regime unknown for pre-existing positions
                 };
                 s.trades.active.push(position);
             }
@@ -523,6 +524,10 @@ pub async fn run(
     let mut daily_reset_interval = interval(Duration::from_secs(60));
     let mut heartbeat_interval = interval(Duration::from_secs(config.general.heartbeat_interval_secs));
     let mut daily_summary_interval = interval(Duration::from_secs(60));
+    // IG client sentiment — refreshed every 15 minutes for all configured context_market_ids
+    let mut sentiment_poll_interval = interval(Duration::from_secs(15 * 60));
+    // BOT_ACTIVE watchlist sync — dynamically add epics from IG every hour (10.4)
+    let mut watchlist_sync_interval = interval(Duration::from_secs(60 * 60));
     let mut last_summary_date = String::new();
     // Track the most recent bar-start timestamp per epic that we ran analysis on.
     // Strategy evaluation only runs when indicators have actually advanced (new bar closed),
@@ -671,6 +676,112 @@ pub async fn run(
                 drop(s);
 
                 let _ = event_tx.send(EngineEvent::heartbeat(uptime_secs, positions_count));
+            }
+
+            _ = sentiment_poll_interval.tick() => {
+                let market_ids: Vec<String> = {
+                    let s = state.read().await;
+                    s.config.markets.context_market_ids.clone()
+                };
+
+                if market_ids.is_empty() {
+                    debug!("No context_market_ids configured — skipping sentiment poll");
+                } else {
+                    let mut updated = 0usize;
+                    for market_id in &market_ids {
+                        match client.get_client_sentiment(market_id).await {
+                            Ok(resp) => {
+                                let mut s = state.write().await;
+                                s.sentiment.update(
+                                    resp.market_id.clone(),
+                                    resp.long_position_percentage,
+                                    resp.short_position_percentage,
+                                );
+                                updated += 1;
+                            }
+                            Err(e) => {
+                                warn!("Sentiment poll failed for {}: {}", market_id, e);
+                            }
+                        }
+                    }
+                    if updated > 0 {
+                        info!("📊 Sentiment updated for {}/{} markets", updated, market_ids.len());
+                    }
+
+                    // ── 12.2 Sentiment Velocity Guard ────────────────────────────
+                    // After updating all sentiments, check for velocity spikes.
+                    // A delta > 0.5 in a single 15-min window indicates a "Breaking News"
+                    // event — trigger a 2-hour macro pause on new trade entries.
+                    const VELOCITY_THRESHOLD: f64 = 0.5;
+                    let velocity_spike = {
+                        let s = state.read().await;
+                        market_ids.iter().any(|mid| s.sentiment.get_velocity(mid) > VELOCITY_THRESHOLD)
+                    };
+                    if velocity_spike {
+                        let pause_until = chrono::Utc::now() + chrono::Duration::hours(2);
+                        let mut s = state.write().await;
+                        s.metrics.macro_pause_until = Some(pause_until);
+                        warn!(
+                            "⚡ Sentiment velocity spike detected — macro pause active until {} UTC",
+                            pause_until.format("%H:%M")
+                        );
+                        let _ = event_tx.send(crate::ipc::events::EngineEvent::status_change(
+                            "running".into(),
+                            format!("macro_pause_until:{}", pause_until.timestamp()),
+                        ));
+                    } else {
+                        // Clear expired macro pause automatically
+                        let expired = {
+                            let s = state.read().await;
+                            s.metrics.macro_pause_until
+                                .map(|until| chrono::Utc::now() >= until)
+                                .unwrap_or(false)
+                        };
+                        if expired {
+                            let mut s = state.write().await;
+                            s.metrics.macro_pause_until = None;
+                            info!("✅ Macro pause expired — trade entries re-enabled");
+                        }
+                    }
+                }
+            }
+
+            _ = watchlist_sync_interval.tick() => {
+                // ── 10.4 Watchlist Syncing (BOT_ACTIVE) ──────────────────────────
+                // Fetch the "BOT_ACTIVE" watchlist from IG and dynamically add any
+                // new epics to the engine's active monitoring list without a restart.
+                match client.get_watchlist_by_name("BOT_ACTIVE").await {
+                    Ok(markets) => {
+                        let new_epics: Vec<String> = markets.markets
+                            .into_iter()
+                            .map(|m| m.epic)
+                            .collect();
+
+                        let mut s = state.write().await;
+                        let mut added = 0usize;
+                        for epic in &new_epics {
+                            if !s.config.markets.epics.contains(epic) {
+                                s.config.markets.epics.push(epic.clone());
+
+                                // Initialise indicator map for the new epic
+                                let mut tf_map = std::collections::HashMap::new();
+                                tf_map.insert("HOUR".to_string(), crate::indicators::IndicatorSet::default_config());
+                                s.markets.indicators.insert(epic.clone(), tf_map);
+
+                                info!("📋 BOT_ACTIVE watchlist: added new epic {}", epic);
+                                added += 1;
+                            }
+                        }
+                        if added > 0 {
+                            info!("📋 Watchlist sync: {} new epic(s) added from BOT_ACTIVE", added);
+                        } else {
+                            debug!("Watchlist sync: BOT_ACTIVE unchanged ({} epics)", new_epics.len());
+                        }
+                    }
+                    Err(e) => {
+                        debug!("Watchlist sync skipped (BOT_ACTIVE not found or error): {}", e);
+                    }
+                }
             }
 
         }

@@ -226,6 +226,10 @@ pub struct AdjustedTrade {
     pub trailing_stop_distance: Option<f64>,
     pub strategy: String,
     pub warning: Option<String>,
+    /// Order type override. `None` → "MARKET". Set to `"LIMIT"` by the VOLATILE regime gate (12.4).
+    pub order_type: Option<String>,
+    /// Entry level for LIMIT orders. Required when `order_type == Some("LIMIT")`.
+    pub entry_level: Option<f64>,
 }
 
 /// Open position information
@@ -620,6 +624,8 @@ impl RiskManager {
             trailing_stop_distance: final_trailing_stop,
             strategy: strategy.to_string(),
             warning: warning_note,
+            order_type: None,   // defaulted to MARKET; overridden to LIMIT in VOLATILE regime
+            entry_level: None,
         };
 
         info!(
