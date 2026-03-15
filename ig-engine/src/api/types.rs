@@ -262,6 +262,8 @@ pub struct IGWatchlist {
     pub name: String,
     pub editable: bool,
     pub deleteable: bool,
+    // IG API returns "defaultSystemWatchlist", not "defaultWatchlist"
+    #[serde(rename = "defaultSystemWatchlist")]
     pub default_watchlist: bool,
 }
 
