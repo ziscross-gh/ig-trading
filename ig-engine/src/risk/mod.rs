@@ -125,6 +125,8 @@ pub struct MacroEvent {
     pub blackout_mins: Option<u32>,
 }
 
+fn default_volatile_be_trigger() -> f64 { 0.3 }
+
 /// Risk management configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
@@ -145,6 +147,12 @@ pub struct RiskConfig {
     pub min_guaranteed_stop_distance: Option<f64>,
     pub use_trailing_stop: bool,
     pub trailing_stop_min_pips: f64,
+    /// Fraction of initial SL distance at which a VOLATILE-birth trade snaps to break-even.
+    /// Default 0.3 = trigger when 30% of SL distance is in profit.
+    /// Example: SL=237 pips → snap to BE at 71 pips profit (instead of waiting for 237).
+    /// This prevents profitable trades from reversing into losses.
+    #[serde(default = "default_volatile_be_trigger")]
+    pub volatile_breakeven_trigger: f64,
     pub allowed_sessions: Vec<crate::engine::state::Session>,
     /// News blackout windows: list of (hour, minute) UTC times to block ±`news_blackout_mins` around
     /// Kept for backward compatibility — superseded by `macro_events` when non-empty.
@@ -185,6 +193,7 @@ impl Default for RiskConfig {
             min_guaranteed_stop_distance: None,
             use_trailing_stop: false,
             trailing_stop_min_pips: 5.0,
+            volatile_breakeven_trigger: 0.3,
             allowed_sessions: vec![
                 crate::engine::state::Session::Asia,
                 crate::engine::state::Session::London,
@@ -628,9 +637,14 @@ impl RiskManager {
             entry_level: None,
         };
 
+        // Increment daily trade counter at approval time (before IG execution).
+        // Conservative: counts against the daily limit even if the subsequent
+        // network call to IG fails, preventing retry-storm behaviour.
+        self.daily_trades += 1;
+
         info!(
-            "Trade approved: {} {} @ {} (size={:.2})",
-            epic, direction, entry_price, final_size
+            "Trade approved: {} {} @ {} (size={:.2}) [daily trades: {}/{}]",
+            epic, direction, entry_price, final_size, self.daily_trades, self.config.max_daily_trades
         );
 
         RiskVerdict::Approved(adjusted_trade)
@@ -795,6 +809,59 @@ impl RiskManager {
     #[allow(dead_code)]
     pub fn config(&self) -> &RiskConfig {
         &self.config
+    }
+
+    /// M15 trade risk check — delegates to `check_trade()` then applies 0.5× position size.
+    ///
+    /// Returns the same `RiskVerdict` as `check_trade()` with the size halved after approval.
+    /// If the halved size falls below the instrument minimum, returns `Rejected`.
+    #[allow(clippy::too_many_arguments)]
+    pub fn check_trade_m15(
+        &mut self,
+        epic: &str,
+        direction: &str,
+        entry_price: f64,
+        stop_loss: f64,
+        take_profit: f64,
+        trailing_stop_distance: Option<f64>,
+        account_info: &AccountInfo,
+        open_positions: &[OpenPosition],
+        strategy: &str,
+    ) -> RiskVerdict {
+        match self.check_trade(
+            epic,
+            direction,
+            entry_price,
+            stop_loss,
+            take_profit,
+            trailing_stop_distance,
+            account_info,
+            open_positions,
+            strategy,
+        ) {
+            RiskVerdict::Approved(mut adjusted) => {
+                let spec = self.get_instrument_spec(epic);
+                let half_size = adjusted.size * 0.5;
+                if half_size < spec.min_deal_size {
+                    warn!(
+                        "M15 trade rejected: half-size {:.2} < instrument minimum {:.2} for {}",
+                        half_size, spec.min_deal_size, epic
+                    );
+                    RiskVerdict::Rejected(format!(
+                        "M15 half-size {:.2} < instrument minimum {:.2}",
+                        half_size, spec.min_deal_size
+                    ))
+                } else {
+                    adjusted.size = half_size;
+                    info!(
+                        "M15 trade approved: {} {} size={:.2} (halved from {:.2})",
+                        epic, direction, adjusted.size, half_size * 2.0
+                    );
+                    RiskVerdict::Approved(adjusted)
+                }
+            }
+            rejected => rejected,
+        }
     }
 
     pub fn get_instrument_spec(&self, epic: &str) -> InstrumentSpec {

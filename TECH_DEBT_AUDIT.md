@@ -1,6 +1,6 @@
 # Tech Debt Audit — IG Trading Engine
 
-**Date:** 2026-02-25 (updated 2026-03-10)
+**Date:** 2026-02-25 (updated 2026-03-17)
 **Scope:** Rust engine (`ig-engine/`) only — dashboard archived
 **Total findings (original):** 72 across 6 categories — frontend items archived
 
@@ -128,4 +128,4 @@ Items scored using: **Priority = (Impact + Risk) × (6 − Effort)**
 | Infrastructure | 0 | 1 | 3 | 2 | 6 |
 | **Total** | **5** | **9** | **18** | **13** | **45** |
 
-**Current state:** All critical engine debt resolved through Phases 1–8.7. Candle persistence layer (6.8) shipped — disk-first startup with JSONL cache, instant warmup on restart. Remaining items are low-priority Rust cleanup (dead code, deps, docs). Frontend debt is archived — dashboard not maintained.
+**Current state:** All critical engine debt resolved through Phases 1–14. M15 tick accumulator (Phase 14.H) eliminates API dependency for candle history — ticks build bars locally forever. H1 Direction Gate (14.E) resolves cross-timeframe conflicts. Remaining items are low-priority Rust cleanup (dead code, deps, docs). Frontend debt is archived — dashboard not maintained.

@@ -600,6 +600,70 @@ impl IGRestClient {
         Ok(())
     }
 
+    /// Fetch today's financing / interest transactions from IG.
+    /// IG applies overnight funding once per day (usually just after midnight).
+    /// Returns the net SGD financing P&L for today (positive = credit, negative = charge).
+    ///
+    /// Endpoint: GET /history/transactions?type=INTEREST&from=...&to=...
+    /// The `profitAndLoss` field format is e.g. "SD59.65" or "SD-5.84" where "SD" = SGD.
+    pub async fn get_today_financing(&mut self) -> Result<f64, anyhow::Error> {
+        let now = Utc::now();
+        let from = now.format("%Y-%m-%dT00:00:00").to_string();
+        let to   = now.format("%Y-%m-%dT23:59:59").to_string();
+
+        let url = format!(
+            "{}/history/transactions?type=INTEREST&from={}&to={}&pageSize=500",
+            self.base_url, from, to
+        );
+
+        self.apply_rate_limit().await;
+
+        let mut request = self.client.get(&url)
+            .header("X-IG-API-KEY", &self.api_key)
+            .header("Version", "2")
+            .header("Content-Type", "application/json; charset=UTF-8")
+            .header("Accept", "application/json; charset=UTF-8");
+
+        if let Some(cst) = &self.cst {
+            request = request.header("CST", cst);
+        }
+        if let Some(token) = &self.security_token {
+            request = request.header("X-SECURITY-TOKEN", token);
+        }
+
+        let response = request
+            .timeout(Duration::from_secs(15))
+            .send()
+            .await?;
+
+        let status = response.status();
+        let body: serde_json::Value = response.json().await.unwrap_or_default();
+
+        if !status.is_success() {
+            let code = body["errorCode"].as_str().unwrap_or("unknown");
+            return Err(anyhow::anyhow!("Financing fetch failed {}: {}", status, code));
+        }
+
+        let mut total_financing = 0.0_f64;
+        if let Some(txns) = body["transactions"].as_array() {
+            for txn in txns {
+                if let Some(pnl_str) = txn["profitAndLoss"].as_str() {
+                    // Strip currency prefix e.g. "SD59.65" → 59.65, "SD-5.84" → -5.84
+                    let numeric: String = pnl_str.chars()
+                        .filter(|c| c.is_ascii_digit() || *c == '-' || *c == '.')
+                        .collect();
+                    if let Ok(val) = numeric.parse::<f64>() {
+                        total_financing += val;
+                        debug!("Financing txn: {} → {:.2}", pnl_str, val);
+                    }
+                }
+            }
+            info!("Financing fetched: {} transactions, net = {:.2} SGD", txns.len(), total_financing);
+        }
+
+        Ok(total_financing)
+    }
+
     /// Logout and close the session
     pub async fn logout(&self) -> Result<(), anyhow::Error> {
         let url = format!("{}/session", self.base_url);

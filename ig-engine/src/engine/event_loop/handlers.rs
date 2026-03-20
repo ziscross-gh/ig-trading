@@ -19,7 +19,7 @@ pub async fn handle_position_monitoring(
     telegram: &TelegramNotifier,
     ensemble: &mut EnsembleVoter,
 ) -> Result<()> {
-    let (positions_to_close, stop_updates) = {
+    let (positions_to_close, stop_updates, cooldown_secs) = {
         let mut s = state.write().await;
         let mut to_close = Vec::new();
         let mut stop_updates = Vec::new();
@@ -34,6 +34,9 @@ pub async fn handle_position_monitoring(
         // mutable borrow of s.trades.active without a borrow conflict.
         let instrument_specs = s.config.risk.instrument_specs.clone();
         let trailing_stop_min_pips = s.config.risk.trailing_stop_min_pips;
+        // Read config values here — cannot acquire another lock inside this write lock
+        let volatile_breakeven_trigger = s.config.risk.volatile_breakeven_trigger;
+        let cooldown_secs = s.config.strategies.post_trade_cooldown_secs;
 
         for (idx, position) in s.trades.active.iter_mut().enumerate() {
             if let Some(&current_price) = price_map.get(&position.epic) {
@@ -68,19 +71,30 @@ pub async fn handle_position_monitoring(
                     let current_is_volatile = current_regime.as_deref() == Some("VOLATILE");
 
                     // VOLATILE birth: snap to break-even aggressively
+                    // ── 15.C Early Break-even ─────────────────────────────────────
+                    // Lesson: trades were sitting in significant profit (88–117 pips)
+                    // but the old trigger required 100% of trail_dist (237 pips) before
+                    // snapping to BE. Price reversed, turning profit into loss.
+                    // Fix: trigger BE at `volatile_breakeven_trigger` fraction of trail_dist
+                    // (default 0.3 = 30%, e.g. 71 pips on a 237-pip SL).
                     if birth_regime == "VOLATILE" {
                         let profit_dist = match position.direction {
                             Direction::Buy  => current_price - position.open_price,
                             Direction::Sell => position.open_price - current_price,
                         };
-                        if profit_dist >= trail_dist {
-                            let be_sl = match position.direction {
-                                Direction::Buy  => position.open_price,
-                                Direction::Sell => position.open_price,
+                        let be_trigger = volatile_breakeven_trigger;
+                        let trigger_dist = trail_dist * be_trigger;
+                        if profit_dist >= trigger_dist {
+                            let be_sl = position.open_price;
+                            let already_protected = match position.direction {
+                                Direction::Buy  => position.stop_loss.map(|sl| sl >= be_sl).unwrap_or(false),
+                                Direction::Sell => position.stop_loss.map(|sl| sl <= be_sl).unwrap_or(false),
                             };
-                            let already_at_be = position.stop_loss.map(|sl| sl >= be_sl).unwrap_or(false);
-                            if !already_at_be {
-                                debug!("VOLATILE-birth break-even snap for {}: SL → {:.5}", position.epic, be_sl);
+                            if !already_protected {
+                                info!(
+                                    "[{}] VOLATILE BE snap: profit={:.5} >= {:.0}% of trail_dist={:.5} → SL locked to breakeven {:.5}",
+                                    position.epic, profit_dist, be_trigger * 100.0, trail_dist, be_sl
+                                );
                                 position.stop_loss = Some(be_sl);
                                 stop_updates.push((position.clone(), be_sl));
                             }
@@ -149,7 +163,15 @@ pub async fn handle_position_monitoring(
             s.trades.active.remove(*idx);
         }
 
-        (to_close, stop_updates)
+        // Set cooldown NOW — before dropping the write lock — so the gap between
+        // "position removed from active" and "REST close_position() returns" is
+        // covered. Without this, a concurrent M15 bar can pass both the
+        // "already open" check and the cooldown check and fire a reversal trade.
+        for (_, position, _) in &to_close {
+            s.set_trade_cooldown(&position.epic, cooldown_secs);
+        }
+
+        (to_close, stop_updates, cooldown_secs)
     };
 
     // 1. Perform stop updates on IG
@@ -172,7 +194,7 @@ pub async fn handle_position_monitoring(
             let close_pnl = position.pnl;
             {
                 let mut s = state.write().await;
-                s.record_trade_result(close_pnl);
+                s.record_trade_result_for_epic(close_pnl, Some(&position.epic));
                 s.add_closed_trade(ClosedTrade {
                     deal_id: position.deal_id.clone(),
                     epic: position.epic.clone(),
@@ -195,6 +217,8 @@ pub async fn handle_position_monitoring(
                 if let Some(scorecard) = &mut s.learning.scorecard {
                     scorecard.update_virtual(&position, close_pnl);
                 }
+                // Set re-entry cooldown
+                s.set_trade_cooldown(&position.epic, cooldown_secs);
             }
 
             let _ = event_tx.send(EngineEvent::position_closed(
@@ -242,8 +266,10 @@ pub async fn handle_position_monitoring(
 
                 {
                     let mut s = state.write().await;
-                    s.record_trade_result(close_result.pnl);
+                    s.record_trade_result_for_epic(close_result.pnl, Some(&position.epic));
                     s.add_closed_trade(closed_trade.clone());
+                    // Set re-entry cooldown
+                    s.set_trade_cooldown(&position.epic, cooldown_secs);
                 }
 
                 {
@@ -302,6 +328,14 @@ pub async fn handle_position_monitoring(
                 );
             }
         }
+    }
+
+    // Persist active positions every monitor tick for crash recovery.
+    // On next startup, mod.rs compares this snapshot against IG live positions
+    // to detect any trades that closed while the engine was offline.
+    {
+        let s = state.read().await;
+        s.save_active_positions();
     }
 
     Ok(())

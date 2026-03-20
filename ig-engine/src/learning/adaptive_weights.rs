@@ -226,6 +226,7 @@ mod tests {
             opened_at: now,
             closed_at: now + chrono::Duration::minutes(30),
             is_virtual: false,
+            opened_in_regime: None,
         }
     }
 

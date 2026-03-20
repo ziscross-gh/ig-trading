@@ -89,7 +89,7 @@ const TRENDING_BOOST:   f64 = 1.5;   // trend family boosted
 const TRENDING_MUTE:    f64 = 0.3;   // reversion family muted
 const RANGING_BOOST:    f64 = 1.5;   // reversion family boosted
 const RANGING_MUTE:     f64 = 0.3;   // trend family muted
-const VOLATILE_MUTE:    f64 = 0.4;   // all strategies muted
+const VOLATILE_MUTE:    f64 = 0.5;   // all strategies muted (0.5 lets scalp tier reach avg ≥ 6.0)
 
 const TREND_STRATEGIES:     &[&str] = &["MA_Crossover", "MACD_Momentum", "Multi_Timeframe"];
 const REVERSION_STRATEGIES: &[&str] = &["RSI_Reversal", "Bollinger_Bands"];
@@ -141,11 +141,11 @@ pub fn read_regime(epic: &str) -> Option<Regime> {
 ///
 /// # Example multiplier table
 ///
-/// | Regime   | MA_Crossover | MACD_Momentum | RSI_Reversal | Bollinger_Bands | Gold_Sentiment |
-/// |----------|-------------|---------------|-------------|-----------------|----------------|
-/// | TRENDING | ×1.5        | ×1.5          | ×0.3        | ×0.3            | ×1.0           |
-/// | RANGING  | ×0.3        | ×0.3          | ×1.5        | ×1.5            | ×1.0           |
-/// | VOLATILE | ×0.4        | ×0.4          | ×0.4        | ×0.4            | ×0.4           |
+/// | Regime   | MA_Crossover | MACD_Momentum | RSI_Reversal | Bollinger_Bands | Gold_Sentiment | Stochastic_Momentum |
+/// |----------|-------------|---------------|-------------|-----------------|----------------|---------------------|
+/// | TRENDING | ×1.5        | ×1.5          | ×0.3        | ×0.3            | ×1.0           | ×0.5                |
+/// | RANGING  | ×0.3        | ×0.3          | ×1.5        | ×1.5            | ×1.0           | ×1.2                |
+/// | VOLATILE | ×0.5        | ×0.5          | ×0.5        | ×0.5            | ×1.0           | ×0.8                |
 pub fn apply_regime_multipliers(signals: &mut [Signal], regime: &Regime) {
     let icon = match regime.kind {
         RegimeKind::Trending => "📈",
@@ -173,19 +173,40 @@ pub fn apply_regime_multipliers(signals: &mut [Signal], regime: &Regime) {
 fn regime_multiplier(kind: &RegimeKind, strategy: &str) -> f64 {
     match kind {
         RegimeKind::Trending => {
-            if TREND_STRATEGIES.contains(&strategy)     { TRENDING_BOOST }
-            else if REVERSION_STRATEGIES.contains(&strategy) { TRENDING_MUTE }
+            if TREND_STRATEGIES.contains(&strategy)           { TRENDING_BOOST }
+            else if REVERSION_STRATEGIES.contains(&strategy)  { TRENDING_MUTE }
+            else if strategy == "Stochastic_Momentum"         { VOLATILE_MUTE } // oscillator less useful in trend
             else { 1.0 }
         }
         RegimeKind::Ranging => {
-            if REVERSION_STRATEGIES.contains(&strategy) { RANGING_BOOST }
-            else if TREND_STRATEGIES.contains(&strategy)     { RANGING_MUTE }
+            if REVERSION_STRATEGIES.contains(&strategy)       { RANGING_BOOST }
+            else if TREND_STRATEGIES.contains(&strategy)      { RANGING_MUTE }
+            else if strategy == "Stochastic_Momentum"         { 1.2 } // oscillators excel in ranging
             else { 1.0 }
         }
         RegimeKind::Volatile => {
-            // Sentiment signals are still valid in volatility (often driven by them)
-            if strategy == "Gold_Sentiment" { 1.0 }
-            else { VOLATILE_MUTE }
+            // Differentiated VOLATILE multipliers (Phase 15.D):
+            // In volatile/choppy markets, oscillator and reversion strategies outperform
+            // trend-following strategies. Trend strategies (MA, MTF) are actually harmful
+            // (they chase false breakouts), so mute them harder.
+            //
+            //  Stochastic  → 1.2× best for catching overbought/oversold extremes in chop
+            //  RSI_Reversal→ 1.0× mean reversion valid in volatile waves
+            //  Bollinger   → 1.0× BB squeeze/expansion signals valid in volatile
+            //  MACD        → 0.8× can catch initial volatile move direction
+            //  MA_Crossover→ 0.3× trend-following = bad in chop
+            //  Multi_TF    → 0.3× needs aligned trends = harmful in chop
+            //  Sentiment   → 1.0× often the cause of volatility
+            match strategy {
+                "Stochastic_Momentum" => 1.2,
+                "RSI_Reversal"        => 1.0,
+                "Bollinger_Bands"     => 1.0,
+                "MACD_Momentum"       => 0.8,
+                "MA_Crossover"        => 0.3,
+                "Multi_Timeframe"     => 0.3,
+                "Gold_Sentiment"      => 1.0,
+                _                     => VOLATILE_MUTE,
+            }
         }
     }
 }

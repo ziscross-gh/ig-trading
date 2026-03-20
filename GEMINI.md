@@ -25,11 +25,26 @@
 - When completing a task, update `TASK_TRACKER.md` (🏗️ → ✅)
 - If a task needs Claude to continue, add it to `CLAUDE.md` under "Active"
 
+## Doc-Update Protocol (run after EVERY code change)
+
+**Step 1 — AGENTS.md FIRST** (auto-loaded — stale facts here corrupt every future session):
+- Is the `Current status:` line still accurate?
+- Are the Strategy Ensemble, Risk Rules tables still accurate?
+- If ANY answer is no → **update AGENTS.md before anything else**
+
+**Step 2 — TASK_TRACKER.md** (always): flip status, update header, move fixed bugs to "Recently Fixed"
+
+**Step 3 — PROJECT_ARCHITECTURE.md** (only if architecture changed)
+
+**Step 4/5 — TECH_DEBT_AUDIT.md / AI_ROADMAP.md** (only if relevant debt/ML work done)
+
+> Never report "done" without completing Steps 1–2.
+
 ---
 
 ## Assigned Tasks (Gemini's Focus)
 
-> All phases 1–8.7 complete. Dashboard archived. Engine production-ready.
+> Phases 1–15 + 14.A–I complete. Engine live and trading. Dashboard archived.
 
 Gemini owns **Rust engine hardening, backtesting, and ML pipeline validation** work.
 
@@ -42,29 +57,23 @@ Gemini owns **Rust engine hardening, backtesting, and ML pipeline validation** w
 | L.2 | Currency hybrid logic | Live | ✅ JPY/USD/account-base per-trade in order_manager.rs |
 | L.4 | Config-driven guaranteed_stop | Live | ✅ Reads from `config.risk.limited_risk_account` |
 | L.5 | api_lab CLI tool | Live | ✅ `src/bin/api_lab.rs` — list, close, inject trades |
-
-### Needs Rebuild (code was removed during source restore)
-
-> ⚠️ Gemini built these features and they ran successfully (confirmed in `logs/engine.log.2026-03-14`).
-> They were wiped when Claude's session restored 51 files that Gemini had destructively modified.
-> Orphan files remain as starting points: `src/api/errors.rs`, `src/engine/state/sentiment.rs`.
-
-| # | Task | Phase | Notes |
-|---|------|-------|-------|
-| 9.1 | Leaky Bucket Rate Limiter | Phase 9 | Was in rest_client.rs — restore reverted to Semaphore. Needs additive rebuild. |
-| 9.2 | Granular Error Mapping | Phase 9 | `errors.rs` exists but `api/mod.rs` lacks `pub mod errors;` — add declaration to activate |
-| 10.1 | Client Sentiment Integration | Phase 10 | Was in event_loop/mod.rs — restore removed it. `state/sentiment.rs` exists as scaffold. |
-| 10.2 | Related Market Sentiment | Phase 10 | `GlobalSentimentRegistry` struct exists in sentiment.rs but `state.rs` has no `mod sentiment`. |
-| 10.3 | Recursive API Pagination | Phase 10 | No code found in rest_client.rs — likely never finished before restore. |
+| 9.1 | Leaky Bucket Rate Limiter | Phase 9 | ✅ `TokenBucket` in rest_client.rs — verified active |
+| 9.2 | Granular Error Mapping | Phase 9 | ✅ `IGError` enum in errors.rs — integrated in handle_response |
+| 10.1 | Client Sentiment Integration | Phase 10 | ✅ Polling loop in event_loop/mod.rs — verified active |
+| 10.2 | Related Market Sentiment | Phase 10 | ✅ context_market_ids polling — verified active |
+| 10.3 | Recursive API Pagination | Phase 10 | ✅ get_account_activity pagination — verified active |
+| 12.1 | Regime-Switching Logic | Phase 12 | ✅ Multipliers in regime/mod.rs + analysis.rs |
+| 13.1 | Birth Regime Tracking | Phase 13 | ✅ opened_in_regime on Position + ClosedTrade |
+| 12.2 | Sentiment Velocity Guard | Phase 12 | ✅ macro_pause_until in MetricsState + analysis.rs |
+| 12.3 | Dynamic Spread Gate | Phase 12 | ✅ avg_spread in MarketState + analysis.rs |
+| 12.4 | Limit Order Migration | Phase 12 | ✅ order_type=LIMIT respected in order_manager.rs |
+| 14.E | H1 Directional Bias/Gate | Phase 14 | ✅ H1 bias recording + M15 alignment gate in analysis.rs |
 
 ### Active Focus
 
 | # | Task | Phase | Notes |
 |---|------|-------|-------|
-| 12.1 | Regime-Switching Logic | Phase 12 | Dynamic weight swapping (Trend vs MeanRev) |
-| 13.1 | Birth Regime Tracking | Phase 13 | Evolving Position state to include birth context |
-| 12.2 | Sentiment Velocity Guard | Phase 12 | News spike detection & auto-pause |
-| 12.3 | Dynamic Spread Gate | Phase 12 | Slippage protection via spread monitoring |
+| 8.6 | RL Position Sizing | Phase 8 | **Data collection only**; RL agent implementation deferred until 3+ months of trade data is gathered (Phase 16+) |
 
 ---
 

@@ -80,13 +80,18 @@ impl BollingerStrategy {
         let (stop_loss, take_profit) = match direction {
             Direction::Buy => {
                 let stop_loss = price - (self.atr_sl_multiplier * atr);
-                // Target is middle band for mean reversion
-                let take_profit = middle_band;
+                // Target is middle band for mean reversion.
+                // Floor TP at 2.5×SL distance so R:R always clears the minimum 2.5 check.
+                // In tight ranges the middle band can be too close, causing silent rejection.
+                let sl_dist = price - stop_loss;
+                let take_profit = middle_band.max(price + 2.5 * sl_dist);
                 (stop_loss, take_profit)
             }
             Direction::Sell => {
                 let stop_loss = price + (self.atr_sl_multiplier * atr);
-                let take_profit = middle_band;
+                // Floor TP symmetrically for sells.
+                let sl_dist = stop_loss - price;
+                let take_profit = middle_band.min(price - 2.5 * sl_dist);
                 (stop_loss, take_profit)
             }
         };

@@ -178,12 +178,27 @@ pub struct AccountState {
     pub currency: String,
 }
 
+/// H1-level directional bias per epic, updated on each H1 bar close analysis.
+/// Used as a gate to prevent M15 entries against the prevailing H1 direction.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct H1DirectionBias {
+    /// Net direction from raw H1 strategy signals (None = tied or no signals).
+    pub direction: Option<Direction>,
+    pub buy_count: usize,
+    pub sell_count: usize,
+    pub updated_at: DateTime<Utc>,
+}
+
 pub struct MarketStateContainer {
     pub live: HashMap<String, MarketState>,
     pub indicators: HashMap<String, HashMap<String, IndicatorSet>>, // Epic -> Timeframe -> IndicatorSet
     pub history: CandleStore,
-    /// Accumulates WS ticks into OHLCV bars; pushes completed bars to history + indicators.
+    /// Accumulates WS ticks into H1 OHLCV bars; pushes completed bars to history + indicators.
     pub bar_accumulator: BarAccumulator,
+    /// Accumulates WS ticks into M15 OHLCV bars; pushes completed bars to history + indicators.
+    pub bar_accumulator_m15: BarAccumulator,
+    /// Latest H1 directional bias per epic — written by analyze_market(), read by analyze_market_m15().
+    pub h1_bias: HashMap<String, H1DirectionBias>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -204,11 +219,17 @@ pub struct MarketState {
     pub avg_spread: f64,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct TradeState {
     pub active: Vec<Position>,
     pub signals: VecDeque<Signal>,
     pub signal_records: VecDeque<SignalRecord>,
     pub history: VecDeque<ClosedTrade>,
+    /// Per-epic cooldown: blocks re-entry until the stored timestamp passes.
+    /// Set when any position closes (TP or SL) to prevent immediate re-entry
+    /// while price is potentially reversing.
+    #[serde(default)]
+    pub cooldowns: HashMap<String, DateTime<Utc>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -232,6 +253,13 @@ pub struct DailyStats {
     pub high_watermark: f64,
     pub consecutive_losses: u32,
     pub consecutive_wins: u32,
+    /// Per-instrument trade count for the day. Reset alongside `trades` on daily rollover.
+    #[serde(default)]
+    pub trades_by_epic: HashMap<String, u32>,
+    /// Net overnight financing P&L for today (fetched from IG /history/transactions).
+    /// Positive = credit received, negative = charge paid. Separate from trade P&L.
+    #[serde(default)]
+    pub financing_pnl: f64,
 }
 
 pub struct LearningState {
@@ -273,6 +301,48 @@ pub struct SessionState {
 
 use crate::data::trade_logger::TradeLogger;
 
+/// Tracks M15 trade count per H1 candle boundary per epic.
+/// Prevents overtrading by enforcing a maximum of `max_trades` M15 trades
+/// within a single H1 candle period.
+pub struct M15CooldownTracker {
+    /// epic -> (h1_candle_start_ts, trade_count)
+    pub trades_per_h1_candle: HashMap<String, (i64, u32)>,
+}
+
+impl Default for M15CooldownTracker {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl M15CooldownTracker {
+    pub fn new() -> Self {
+        Self {
+            trades_per_h1_candle: HashMap::new(),
+        }
+    }
+
+    /// Returns true if a new M15 trade is allowed for this epic in the current H1 candle.
+    pub fn can_trade(&self, epic: &str, h1_ts: i64, max_trades: u32) -> bool {
+        match self.trades_per_h1_candle.get(epic) {
+            Some((ts, count)) if *ts == h1_ts => *count < max_trades,
+            _ => true,
+        }
+    }
+
+    /// Record a new M15 trade for this epic in the current H1 candle.
+    pub fn record_trade(&mut self, epic: &str, h1_ts: i64) {
+        let entry = self.trades_per_h1_candle
+            .entry(epic.to_string())
+            .or_insert((h1_ts, 0));
+        if entry.0 != h1_ts {
+            *entry = (h1_ts, 1);
+        } else {
+            entry.1 += 1;
+        }
+    }
+}
+
 /// The complete engine state — decoupled into domain-specific sub-states
 pub struct EngineState {
     pub config: EngineConfig,
@@ -288,6 +358,8 @@ pub struct EngineState {
     pub trade_logger: TradeLogger,
     /// Live IG crowd-sentiment data, updated every 15 minutes for all `context_market_ids`.
     pub sentiment: GlobalSentimentRegistry,
+    /// M15 trade cooldown tracker — limits M15 trades per H1 candle boundary.
+    pub m15_cooldown: M15CooldownTracker,
 }
 
 impl EngineState {
@@ -331,13 +403,16 @@ impl EngineState {
                 live: HashMap::new(),
                 indicators,
                 history: CandleStore::new(),
-                bar_accumulator: BarAccumulator::new(3600), // 1-hour bars
+                bar_accumulator: BarAccumulator::new(3600),    // 1-hour bars
+                bar_accumulator_m15: BarAccumulator::new(900), // 15-minute bars
+                h1_bias: HashMap::new(),
             },
             trades: TradeState {
                 active: Vec::new(),
                 signals: VecDeque::new(),
                 signal_records: VecDeque::new(),
                 history: VecDeque::new(),
+                cooldowns: HashMap::new(),
             },
             metrics: MetricsState {
                 daily: DailyStats {
@@ -356,6 +431,7 @@ impl EngineState {
             session: SessionState::default(),
             trade_logger: TradeLogger::default(),
             sentiment: GlobalSentimentRegistry::new(),
+            m15_cooldown: M15CooldownTracker::new(),
         }
     }
 
@@ -390,7 +466,14 @@ impl EngineState {
     }
 
     pub fn record_trade_result(&mut self, pnl: f64) {
+        self.record_trade_result_for_epic(pnl, None);
+    }
+
+    pub fn record_trade_result_for_epic(&mut self, pnl: f64, epic: Option<&str>) {
         self.metrics.daily.trades += 1;
+        if let Some(e) = epic {
+            *self.metrics.daily.trades_by_epic.entry(e.to_string()).or_insert(0) += 1;
+        }
         self.metrics.daily.pnl += pnl;
 
         if self.config.general.mode == crate::engine::config::EngineMode::Paper {
@@ -446,5 +529,50 @@ impl EngineState {
         if self.trades.history.len() > 500 {
             self.trades.history.pop_front();
         }
+    }
+
+    /// Set a re-entry cooldown for the given epic.
+    /// Call this whenever a position closes (TP or SL hit).
+    pub fn set_trade_cooldown(&mut self, epic: &str, cooldown_secs: u64) {
+        if cooldown_secs == 0 { return; }
+        let until = Utc::now() + chrono::Duration::seconds(cooldown_secs as i64);
+        self.trades.cooldowns.insert(epic.to_string(), until);
+        tracing::info!("[{}] Re-entry cooldown set — blocked for {}s until {}", epic, cooldown_secs, until.format("%H:%M:%S UTC"));
+    }
+
+    /// Returns true if the epic is currently in cooldown (re-entry blocked).
+    pub fn is_in_cooldown(&self, epic: &str) -> bool {
+        self.trades.cooldowns
+            .get(epic)
+            .map(|&until| Utc::now() < until)
+            .unwrap_or(false)
+    }
+
+    /// Persist active positions to disk for crash recovery.
+    /// Written every monitor tick (~5s); read on next startup to detect
+    /// positions that closed while the engine was offline.
+    pub fn save_active_positions(&self) {
+        let path = "data/recovery/active_positions.json";
+        if let Some(dir) = std::path::Path::new(path).parent() {
+            let _ = std::fs::create_dir_all(dir);
+        }
+        match serde_json::to_string_pretty(&self.trades.active) {
+            Ok(json) => {
+                if let Err(e) = std::fs::write(path, json) {
+                    tracing::debug!("Failed to persist active positions: {}", e);
+                }
+            }
+            Err(e) => tracing::debug!("Failed to serialize active positions: {}", e),
+        }
+    }
+
+    /// Load active positions persisted from the previous session.
+    /// Returns an empty vec if the file does not exist or cannot be parsed.
+    pub fn load_persisted_positions() -> Vec<Position> {
+        let path = "data/recovery/active_positions.json";
+        std::fs::read_to_string(path)
+            .ok()
+            .and_then(|s| serde_json::from_str::<Vec<Position>>(&s).ok())
+            .unwrap_or_default()
     }
 }

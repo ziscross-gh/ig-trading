@@ -33,8 +33,24 @@ impl EnsembleVoter {
         }
     }
 
-    /// Votes on a collection of signals and returns a combined signal if consensus is reached
+    /// Votes on a collection of signals and returns a combined signal if consensus is reached.
+    /// Uses the voter's configured `min_consensus` and `min_avg_strength` thresholds.
     pub fn vote(&self, signals: &[Signal]) -> Option<Signal> {
+        self.vote_with_overrides(signals, self.min_consensus, self.min_avg_strength)
+    }
+
+    /// Like [`vote`] but with explicit threshold overrides.
+    ///
+    /// Used by the VOLATILE scalp path in `analysis.rs` where a lower consensus
+    /// threshold (2 strategies) and lower strength floor (6.0) are accepted in
+    /// exchange for half-size position sizing.  All other logic (conflict penalty,
+    /// SL/TP selection, etc.) is identical to a normal vote.
+    pub fn vote_with_overrides(
+        &self,
+        signals: &[Signal],
+        min_consensus: usize,
+        min_avg_strength: f64,
+    ) -> Option<Signal> {
         if signals.is_empty() {
             return None;
         }
@@ -60,10 +76,10 @@ impl EnsembleVoter {
         };
 
         // Check if we have minimum consensus
-        if dominant_signals.len() < self.min_consensus {
+        if dominant_signals.len() < min_consensus {
             tracing::info!(
                 "Ensemble no-vote: {}/{} consensus ({} buy, {} sell) — need {}",
-                dominant_signals.len(), signals.len(), buy_count, sell_count, self.min_consensus
+                dominant_signals.len(), signals.len(), buy_count, sell_count, min_consensus
             );
             return None;
         }
@@ -89,10 +105,10 @@ impl EnsembleVoter {
         };
 
         // Check if average strength meets minimum threshold
-        if avg_strength < self.min_avg_strength {
+        if avg_strength < min_avg_strength {
             tracing::info!(
                 "Ensemble no-vote: avg strength {:.1} < threshold {:.1} ({} {} signals)",
-                avg_strength, self.min_avg_strength, dominant_signals.len(), direction
+                avg_strength, min_avg_strength, dominant_signals.len(), direction
             );
             return None;
         }
@@ -115,8 +131,8 @@ impl EnsembleVoter {
         };
 
         // Re-check threshold after penalty
-        if final_strength < self.min_avg_strength {
-            tracing::debug!("Signal rejected after conflict penalty: {:.2} < {:.2}", final_strength, self.min_avg_strength);
+        if final_strength < min_avg_strength {
+            tracing::debug!("Signal rejected after conflict penalty: {:.2} < {:.2}", final_strength, min_avg_strength);
             return None;
         }
 

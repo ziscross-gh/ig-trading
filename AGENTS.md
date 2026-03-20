@@ -24,7 +24,7 @@ An autonomous algorithmic trading system for **IG Markets**, built with:
 
 > 📦 A Next.js dashboard exists in `src/` but is **archived** — not maintained. Focus is bot engine + Telegram only.
 
-**Current status:** Phases 1–8.7 complete. Demo mode fully operational. Ready for live demo session.
+**Current status:** Phases 1–15 + 14.A–I complete. Demo mode live and trading. M15 dual-timeframe scheme fully operational. RL position sizing (8.6) is the only long-term remaining item.
 
 ---
 
@@ -37,37 +37,58 @@ ig-trading/
 │   │   ├── main.rs             # Entry point
 │   │   ├── api/                # IG REST + Lightstreamer API layer
 │   │   │   ├── rest_client.rs  # IGRestClient — orders, positions, prices
-│   │   │   ├── streaming_client.rs  # Lightstreamer WebSocket feed
+│   │   │   ├── streaming_client.rs  # Lightstreamer WS feed + H1/M15 bar accumulators
 │   │   │   ├── traits.rs       # TraderAPI trait (testable abstraction)
 │   │   │   └── mock_client.rs  # Mock for integration tests
 │   │   ├── engine/
 │   │   │   ├── config.rs       # EngineConfig — from config/default.toml
-│   │   │   ├── state.rs        # EngineState and sub-states
+│   │   │   ├── state.rs        # EngineState sub-states incl. H1DirectionBias, bar_accumulator_m15
 │   │   │   ├── order_manager.rs # Deal confirmation with retries
 │   │   │   ├── backtester.rs   # Historical backtesting
 │   │   │   └── event_loop/     # Main async loop
-│   │   │       ├── mod.rs      # tokio::select! over timers + events
-│   │   │       ├── analysis.rs # Signal gen → risk gate → execution
-│   │   │       ├── handlers.rs # Position monitoring, SL/TP
+│   │   │       ├── mod.rs      # tokio::select! — timers, M15 refresh, self-heal
+│   │   │       ├── analysis.rs # H1 + M15 signal gen → H1 gate → risk gate → execution
+│   │   │       ├── handlers.rs # Position monitoring, SL/TP, trailing stop
 │   │   │       ├── learning.rs # Adaptive learning snapshot
 │   │   │       └── validation.rs # Config pre-flight checks
 │   │   ├── indicators/         # SMA, EMA, RSI, MACD, Bollinger, ATR, ADX, Stochastic
-│   │   ├── strategy/           # MA Crossover, RSI Reversal, MACD, Bollinger + EnsembleVoter
-│   │   ├── risk/               # RiskManager (hard gate) + position_sizer
+│   │   ├── strategy/           # 6 H1 strategies + 3 M15 strategies + EnsembleVoter
+│   │   ├── regime/             # VOLATILE/TRENDING/RANGING multipliers from ML classifier
+│   │   ├── risk/               # RiskManager (hard gate) + check_trade_m15() + position_sizer
 │   │   ├── learning/           # StrategyScorecard + AdaptiveWeightManager
-│   │   ├── data/               # CandleStore + JSONL disk persistence
+│   │   ├── data/               # CandleStore + BarAccumulator + JSONL disk persistence
 │   │   ├── ipc/                # Axum HTTP + WebSocket server (port 9090)
-│   │   └── notifications/      # Telegram alerts
+│   │   └── notifications/      # Telegram alerts + command listener
+│   ├── config/
+│   │   ├── default.toml        # Demo config (active)
+│   │   ├── live.toml           # Live config (validated, ready)
+│   │   └── live-ramp.toml      # Live ramp-up (USD/JPY only, 0.25% risk)
+│   ├── data/
+│   │   ├── candles/            # *_HOUR.jsonl + *_MINUTE_15.jsonl (disk-first warmup)
+│   │   └── regime_latest.json  # Symlink → ../../data/regime_latest.json (cron-updated)
 │   └── Cargo.toml
+│
+├── scripts/                    # Python AI agents + tools
+│   ├── sentiment_agent.py      # Gold news sentiment → SQLite (runs every 15 min via cron)
+│   ├── run_regime_classifier.py # ML regime → regime_latest.json (runs every hour via cron)
+│   ├── train_regime_classifier.py # Train LightGBM regime model
+│   ├── fetch_historical_data.py # Fetch 2yr OHLCV for backtesting
+│   ├── backtest.py             # Portfolio backtest with ensemble + trailing stop
+│   ├── optimize.py             # Grid search over strategy parameters
+│   ├── compare_params.py       # Diff optimize output vs current TOML
+│   ├── weekly_reoptimise.sh    # Sunday cron: fetch → optimize → compare → reload
+│   └── api_lab.py              # Manual trade tools (list, close, inject)
 │
 ├── src/                        # [ARCHIVED] Next.js dashboard — not maintained
 │
-├── config/default.toml         # All runtime config (mode, markets, risk, strategies)
 ├── AGENTS.md                   # ← You are here (shared AI instructions)
 ├── CLAUDE.md                   # Claude-specific additions
+├── GEMINI.md                   # Gemini-specific additions
 ├── PROJECT_ARCHITECTURE.md     # Deep architecture reference
-├── TASK_TRACKER.md             # Live task status
+├── TASK_TRACKER.md             # Live task status + bug log
 ├── TECH_DEBT_AUDIT.md          # Debt audit + phase history
+├── AI_ROADMAP.md               # ML/AI enhancement roadmap (8.1–8.6)
+├── LIVE_PREFLIGHT_CHECKLIST.md # Steps before switching to live account
 ├── .env / .env.example         # Secrets — never commit .env
 ├── docker-compose.yml
 └── .github/workflows/ci.yml
@@ -97,14 +118,29 @@ Set via `config/default.toml → [general] mode`.
 
 ## Strategy Ensemble
 
-Trade executes only when ensemble reaches **min 2 strategies agreeing** at **avg strength ≥ 6.0/10**.
+**H1 (hourly bar close) — 6 vote sources:**
 
-| Strategy | Indicators | Weight |
+| Strategy | Indicators | VOLATILE mute |
 |---|---|---|
-| MA Crossover | SMA 9/21 + ADX > 25 | 1.0 |
-| RSI Reversal | RSI 14 + divergence | 0.9 |
-| MACD Momentum | MACD 12/26/9 | 1.0 |
-| Bollinger Reversion | BB 20, 2σ | 0.8 |
+| MA Crossover | EMA 9/21 + EMA200 + ADX | 0.5× |
+| RSI Reversal | RSI 14 + divergence | 0.5× |
+| MACD Momentum | MACD 12/26/9 | 0.5× |
+| Bollinger Reversion | BB 20, 2σ | 0.5× |
+| Multi_Timeframe | EMA alignment across TFs, dynamic strength | 0.5× |
+| Stochastic_Momentum | %K/%D crossover + ADX/RSI bonuses | **0.8×** |
+| Gold_Sentiment | RSS news → LLM score ≥ ±0.55 (Gold only) | **1.0×** |
+
+Consensus: min 3 agree + avg strength ≥ 6.0 → full position. VOLATILE scalp tier: min 2 + avg ≥ 6.0 → 0.5× size.
+
+**M15 (60s refresh, 15-min candles) — 3 vote sources:**
+
+| Strategy | Signal Logic | Active Regimes |
+|---|---|---|
+| M15_MomentumBurst | M15 RSI 55–75 + MACD expanding + H1 EMA200 | Trending, Volatile |
+| M15_EmaMicrotrend | M15 EMA9>EMA21 + slope + H1 EMA21 confirm | Trending, Volatile |
+| M15_BollingerReversion | M15 %B<0.05 + RSI<35 + H1 RSI>35 | Ranging only |
+
+M15 size: 0.5× H1. H1 Direction Gate blocks M15 signals contradicting H1 bias. ×1.2 bonus for aligned signals.
 
 Weights auto-adjust every 10 trades via `AdaptiveWeightManager` (rolling 50-trade window).
 
@@ -183,7 +219,7 @@ docker-compose up --build           # Engine + PostgreSQL + Redis
 
 ```bash
 cd ig-engine
-cargo test                       # 70 tests (67 unit + 3 integration)
+cargo test                       # 76 tests passing
 cargo clippy -- -D warnings      # must exit 0
 cargo fmt --check
 ```
@@ -200,13 +236,23 @@ These apply regardless of which AI tool is being used:
 4. **Never hardcode pip values or instrument specs** — they live in `config/default.toml → [risk.instrument_specs]`.
 5. **Never use `println!` in Rust** — use `tracing` macros (`info!`, `warn!`, `error!`).
 6. **Hold `Arc<RwLock<EngineState>>` locks minimally** — always drop before `.await`.
-7. **`test_ig_trade*.py` files are debugging artefacts** — do not modify or treat as production code.
+7. **`test_ig_trade.py` is a debugging artefact** — do not modify or treat as production code.
 8. **Do not modify `config/default.toml` defaults when working on features** — use a local override instead.
 9. **`cargo clippy -- -D warnings` must exit 0** — zero warnings policy enforced since Phase 8.7.
+10. **Doc-Update Protocol — mandatory after every code change:**
+    - Check AGENTS.md FIRST (auto-loaded — stale facts here corrupt every future session). Ask: "Does AGENTS.md state something now wrong?" If yes, fix it before anything else.
+    - Always update TASK_TRACKER.md (flip status, update header, move fixed bugs).
+    - Only update PROJECT_ARCHITECTURE.md if architecture changed; TECH_DEBT_AUDIT.md if debt resolved; AI_ROADMAP.md if Phase 8.x changed.
+    - See CLAUDE.md / GEMINI.md for the full checklist and operational commands.
 
 ---
 
 ## Current Status
 
-All phases 1–8.7 complete. Candle persistence layer (6.8) shipped — disk-first startup, instant warmup on restart.
-Only 8.6 (RL position sizing) remains long-term. See `TASK_TRACKER.md` for full details.
+Phases 1–15 + 14.A–I complete. Engine live on demo account, actively trading VOLATILE regime via M15 scalp tier. Key systems:
+- **H1**: 6 strategies, VOLATILE scalp tier (need 2), regime file from ML cron
+- **M15**: 3 strategies, H1 direction gate + ×1.2 alignment bonus, tick-built candles (BarAccumulator), disk-first warmup
+- **Telegram**: send + receive (startup ping, /status, /positions commands)
+- **Only long-term remaining**: 8.6 RL position sizing (needs 3+ months live data)
+
+See `TASK_TRACKER.md` for full phase history and open bugs.

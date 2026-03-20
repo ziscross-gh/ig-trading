@@ -47,6 +47,7 @@ import xml.etree.ElementTree as ET
 import urllib.error
 import urllib.request
 from datetime import datetime, timezone
+from typing import Optional, List, Dict
 
 # ── Paths ─────────────────────────────────────────────────────────────────────
 
@@ -58,9 +59,9 @@ OUT_FILE  = os.path.join(DATA_DIR, "gold_sentiment_latest.json")
 # ── News sources ──────────────────────────────────────────────────────────────
 
 NEWS_SOURCES = [
-    ("Reuters Business",    "https://feeds.reuters.com/reuters/businessNews"),
-    ("Yahoo Finance Gold",  "https://finance.yahoo.com/rss/headline?s=GC=F"),
-    ("Kitco News",          "https://www.kitco.com/rss/"),
+    ("Yahoo Finance Gold",  "https://finance.yahoo.com/rss/headline?s=GC%3DF"),
+    ("MarketWatch Pulse",   "https://feeds.marketwatch.com/marketwatch/marketpulse/"),
+    ("Mining.com",          "https://www.mining.com/feed/"),
 ]
 
 # Keywords that trigger filtering headlines as Gold-relevant
@@ -100,7 +101,7 @@ BEARISH_TERMS = {
     "strong jobs":    0.55, "nfp beats":        0.60, "jobs beat":      0.55,
 }
 
-def keyword_score(headlines: list[str]) -> dict:
+def keyword_score(headlines: List[str]) -> Dict:
     """Keyword-based sentiment scoring. Always available, no LLM needed."""
     text = " ".join(headlines).lower()
     bull_score = 0.0
@@ -157,7 +158,7 @@ Key Gold drivers:
 
 # ── Ollama scoring ────────────────────────────────────────────────────────────
 
-def score_with_ollama(headlines: list[str]) -> dict | None:
+def score_with_ollama(headlines: List[str]) -> Optional[Dict]:
     host  = os.getenv("OLLAMA_HOST", "http://localhost:11434")
     model = os.getenv("OLLAMA_MODEL", "llama3")
     prompt = LLM_PROMPT.format(headlines="\n".join(f"- {h}" for h in headlines[:10]))
@@ -189,7 +190,7 @@ def score_with_ollama(headlines: list[str]) -> dict | None:
 
 # ── Claude API scoring ────────────────────────────────────────────────────────
 
-def score_with_claude(headlines: list[str]) -> dict | None:
+def score_with_claude(headlines: List[str]) -> Optional[Dict]:
     api_key = os.getenv("ANTHROPIC_API_KEY", "")
     if not api_key:
         return None
@@ -227,7 +228,7 @@ def score_with_claude(headlines: list[str]) -> dict | None:
 
 # ── News fetcher ──────────────────────────────────────────────────────────────
 
-def fetch_headlines() -> list[str]:
+def fetch_headlines() -> List[str]:
     """Fetch and filter Gold-relevant headlines from RSS feeds."""
     all_headlines = []
 
@@ -270,7 +271,7 @@ def detect_mode() -> str:
 
 # ── Main poll ─────────────────────────────────────────────────────────────────
 
-def poll_once(mode: str) -> dict:
+def poll_once(mode: str) -> Dict:
     """Fetch headlines, score, write output file. Returns the result dict."""
     now_utc = datetime.now(tz=timezone.utc)
     print(f"\n[{now_utc.strftime('%Y-%m-%dT%H:%M:%SZ')}] Polling Gold sentiment (mode={mode})...")
@@ -287,13 +288,15 @@ def poll_once(mode: str) -> dict:
             print(f"    … (+{len(headlines)-5} more)")
 
         if mode == "claude":
-            result = score_with_claude(headlines) or keyword_score(headlines)
-            if not score_with_claude(headlines):
+            llm_result = score_with_claude(headlines)
+            if llm_result is None:
                 print("  ↩  Claude failed — falling back to keyword scoring")
+            result = llm_result or keyword_score(headlines)
         elif mode == "ollama":
-            result = score_with_ollama(headlines) or keyword_score(headlines)
-            if not score_with_ollama(headlines):
+            llm_result = score_with_ollama(headlines)
+            if llm_result is None:
                 print("  ↩  Ollama failed — falling back to keyword scoring")
+            result = llm_result or keyword_score(headlines)
         else:
             result = keyword_score(headlines)
 

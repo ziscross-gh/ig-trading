@@ -39,6 +39,7 @@ max_daily_trades = 20
 limited_risk_account = false
 use_trailing_stop = true
 trailing_stop_min_pips = 5.0
+volatile_breakeven_trigger = 0.3   # Phase 15.C — snap SL to BE when profit >= 30% of SL distance (VOLATILE trades)
 allowed_sessions = ["Asia", "London", "UsOverlap"]
 trading_hours_utc = [0, 21]
 allow_weekend_trading = true
@@ -50,11 +51,19 @@ min_consensus = 3
 min_avg_strength = 7.5
 default_atr_sl_multiplier = 1.5
 default_atr_tp_multiplier = 4.0
+h1_direction_gate_enabled = true   # Phase 14.E — block M15 entries against H1 bias
+h1_alignment_bonus = 1.2           # Phase 14.E — boost M15 signals that agree with H1 direction (1.0 = off)
+h1_macro_trend_gate_enabled = true # Phase 15.B — block H1 entries that trade against recent H1 price trend (skipped in VOLATILE)
+h1_macro_trend_lookback = 5        # Phase 15.B — number of H1 closes used to compute slope (min 3)
+volatile_atr_sl_multiplier = 0.75  # Phase 15.D — tighter SL for VOLATILE wave trades (0.75×ATR, R:R=2.67)
+volatile_atr_tp_multiplier = 2.0   # Phase 15.D — achievable TP for VOLATILE waves (2.0×ATR vs default 4.0×)
+post_trade_cooldown_secs = 1800    # Phase 15.E — block re-entry on same epic for 30 min after any TP/SL close
+require_h1_confirmation = true     # Phase 16.A — block M15 cold-start trades until H1 has established a direction
 
 [strategies.consensus_matrix]
 trending = { barrier = 3, min_strength = 7.5 }
 ranging  = { barrier = 3, min_strength = 7.5 }
-volatile = { barrier = 2, min_strength = 8.5 }
+volatile = { barrier = 2, min_strength = 7.5 }  # scalp fallback: 2 strategies avg ≥ 7.5 (recalibrated for Phase 15.D multipliers)
 
 # TACTICAL OVERRIDE: Weekend Gold in VOLATILE Regime
 [strategies.weekend_overrides."IX.D.SUNGOLD.CFI.IP"]
@@ -99,9 +108,38 @@ trend_tf = "HOUR_4"
 signal_tf = "HOUR"
 entry_tf = "MINUTE_15"
 
+[strategies.stochastic_momentum]
+enabled = true
+weight = 1.0
+overbought = 70.0
+oversold = 30.0
+
+[strategies.m15_momentum_burst]
+enabled = true    # Phase 14 active
+weight = 1.0
+rsi_min = 55.0
+rsi_max = 75.0
+atr_sl_multiplier = 1.5   # 1.5x ATR stop — tight enough for M15
+atr_tp_multiplier = 4.0   # 4.0x ATR take profit → R:R = 2.67 (clears min 2.5)
+
+[strategies.m15_ema_microtrend]
+enabled = true
+weight = 1.0
+atr_sl_multiplier = 1.5
+atr_tp_multiplier = 4.0   # R:R = 2.67
+
+[strategies.m15_bollinger_reversion]
+enabled = true
+weight = 1.0
+percent_b_threshold = 0.05
+rsi_threshold = 35.0
+h1_rsi_confirm = 35.0
+atr_sl_multiplier = 1.5
+atr_tp_multiplier = 4.0   # R:R = 2.67 (BB mid band may be closer — ATR TP as fallback)
+
 [trading_hours]
-start = "00:00"
-end = "21:00"
+start = "07:00"   # London open — avoid Asia session chop on EUR/USD
+end = "20:00"     # NY close — stop before thin overnight market
 timezone = "UTC"
 
 [notifications.telegram]

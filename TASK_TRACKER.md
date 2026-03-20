@@ -1,8 +1,8 @@
 # TASK_TRACKER.md — IG Trading Engine
 
-**Last updated:** 2026-03-12 (indicator warmup + MARKET_STATE fixes — engine now produces signals)
-**Current phase:** Production-ready. All engine phases complete. Live transition planning in progress.
-**Current focus:** 🤖 Bot engine production-ready | 🧠 8.1–8.5, 8.7 ✅ done | 8.6 RL long-term (needs 3mo data) | 🔜 Live trading transition
+**Last updated:** 2026-03-17 (Phase 14 fully live — H1 gate + alignment bonus, tick-built M15 candles, self-heal, disk persistence fixed)
+**Current phase:** Production-ready + Active trading. VOLATILE regime live. M15 scheme fully operational.
+**Current focus:** 🤖 Engine live & trading | ⚡ VOLATILE "need 2" scalp tier active | ✅ M15 candles built from live ticks | ⏳ IG rate limit reset pending (MINUTE_15 disk cache populating)
 
 > 📦 Dashboard (`src/`) is **archived** — not maintained. All dashboard tasks removed.
 
@@ -22,15 +22,33 @@ For the full history of completed work and debt items, see `TECH_DEBT_AUDIT.md`.
 | 6 | Engine Hardening / WS Migration | ✅ Complete |
 | 7 | Production Backtesting | ✅ Complete |
 | 8 | AI/ML Enhancements | ✅ 8.1–8.5, 8.7 done · 8.6 long-term |
-| 9 | High-Availability API | ⏳ Planned (code wiped during restore — orphan files remain) |
-| 10 | Connectivity & Intelligence | ⏳ Planned (code wiped during restore — orphan files remain) |
+| 9 | High-Availability API | ✅ Complete |
+| 10 | Connectivity & Intelligence | ✅ Complete |
 | 11 | Advanced Deployment | ⏳ Planned |
-| 12 | Tactical Volatility | 🏗️ In Progress |
-| 13 | Sticky Trade DNA | ⏳ Planned |
+| 12 | Tactical Volatility | ✅ Complete |
+| 13 | Sticky Trade DNA | ✅ Complete |
+| 14 | M15 Bar Trading Scheme | ✅ Fully Live (enabled, trading, H1 gate + tick accumulator) |
+| 15 | VOLATILE Profitable Strategy | ✅ Complete |
 
 ---
 
-## Phase 12 — Tactical Volatility (Engagement)
+## Phase 15 — VOLATILE Profitable Strategy (Complete)
+
+> **Goal:** Make the engine actually trade in VOLATILE regime by adding more vote sources, signal boosters, and fixing critical bugs.
+
+| # | Task | Owner | Status | Notes |
+|---|------|-------|--------|-------|
+| 15.1 | StochasticMomentumStrategy (6th vote source) | Claude | ✅ Done | `strategy/stochastic_momentum.rs` — %K/%D crossover; BUY: bullish cross <50; SELL: bearish cross >50; strength 7.0–10.0 with ADX/RSI bonuses |
+| 15.2 | Phase B signal boosters | Claude | ✅ Done | `apply_signal_boosters()` in analysis.rs — ATR expansion (+1.0 all); key level proximity (×1.2 breakout direction) |
+| 15.3 | VOLATILE regime multipliers updated | Claude | ✅ Done | Stochastic_Momentum: 0.8× (vs 0.5× others); Ranging: 1.2× for oscillators |
+| 15.4 | Fix Multi_Timeframe hardcoded strength=9.0 | Claude | ✅ Done | Dynamic `calculate_signal_strength()`: ADX+1.5, MACD expanding+0.5, RSI pullback+0.5, fallback TF-1.0 |
+| 15.5 | Fix critical daily reset bug | Claude | ✅ Done | `risk_manager.reset_daily()` was NEVER called — engine stopped after 20 lifetime trades; now detects date rollover and resets both state + risk_manager |
+| 15.6 | Audit all strategies for mock/stub logic | Claude | ✅ Done | All 6 strategies confirmed real (MA_Crossover, RSI_Reversal, MACD_Momentum, Bollinger, Multi_Timeframe, Stochastic_Momentum) |
+| 15.7 | Fix sentiment_agent.py Python 3.9 crash | Claude | ✅ Done | `dict \| None` → `Optional[dict]` (Python 3.10 syntax on 3.9); fixed at 20:11 SGT 2026-03-16 |
+
+---
+
+## Phase 12 — Tactical Volatility (Complete)
 
 | # | Task | Owner | Status | Notes |
 |---|------|-------|--------|-------|
@@ -48,6 +66,55 @@ For the full history of completed work and debt items, see `TECH_DEBT_AUDIT.md`.
 | 13.1 | Birth Regime Tracking | Claude | ✅ Done | opened_in_regime: Option<String> on Position; set in analysis.rs at trade open |
 | 13.2 | Management Personalities | Claude | ✅ Done | handlers.rs: VOLATILE-birth → break-even snap; TRENDING-birth+current VOLATILE → skip ratchet |
 | 13.3 | Genetic P&L Logging | Claude | ✅ Done | ClosedTrade.opened_in_regime serialised to trades.jsonl via existing TradeLogger |
+
+---
+
+## Phase 14 — M15 Bar Trading Scheme (✅ Implemented)
+
+> **Opus Architecture Plan completed 2026-03-16. Implementation complete 2026-03-16.**
+> Full dual-timeframe architecture: M15 as primary signal, H1 as directional filter.
+> All 3 strategies disabled by default — enable in `config/default.toml` when ready.
+
+| # | Task | Owner | Status | Notes |
+|---|------|-------|--------|-------|
+| 14.A | Infrastructure — `M15CooldownTracker` + M15 config structs | Claude | ✅ Done | `M15CooldownTracker` in `state.rs`; 3 config structs + 4 new fields in `config.rs`; `indicators` map already supported MINUTE_15 as a key — no new field needed |
+| 14.B | M15 data pipeline — warmup (250 bars) + 60s refresh interval | Claude | ✅ Done | Disk-first warmup in `event_loop/mod.rs`; `m15_refresh_interval` (60s); `last_m15_candle_ts` dedup; new bars trigger `analyze_market_m15()` |
+| 14.C | `M15Strategy` trait + 3 M15 strategies | Claude | ✅ Done | `strategy/traits.rs` extended; `m15_momentum_burst.rs`, `m15_ema_microtrend.rs`, `m15_bollinger_reversion.rs` created |
+| 14.D | `check_trade_m15()` in RiskManager + `analyze_market_m15()` | Claude | ✅ Done | 0.5× position size (rejects if < min_deal_size); cooldown max 2 trades/H1 candle; apply_m15_regime_multipliers() in analysis.rs |
+| 14.E | H1 Direction Gate + H1 Alignment Bonus | Claude | ✅ Done | Gate blocks M15 signals contradicting H1 bias; ×1.2 bonus for M15 signals agreeing with H1 direction. Config: `h1_direction_gate_enabled`, `h1_alignment_bonus = 1.2`. `H1DirectionBias` struct in `state.rs`, written by `analyze_market()`, read by `analyze_market_m15()` |
+| 14.F | M15 disk persistence fix | Claude | ✅ Done | `persist_series("MINUTE_15")` called after API warmup AND after each 60s live tick. Prevents re-fetching 250 bars from IG API on every restart |
+| 14.G | M15 self-heal (API rate limit recovery) | Claude | ✅ Done | If M15 indicators not warmed at 60s tick, fetch 250 bars instead of 5 — auto-recovers without restart when IG rate limit resets |
+| 14.H | M15 tick accumulator (BarAccumulator) | Claude | ✅ Done | `bar_accumulator_m15: BarAccumulator::new(900)` added to `MarketStateContainer`. Lightstreamer ticks → M15 OHLCV bars → CandleStore + indicator update + persist. M15 candle data now built locally from live ticks, fully independent of IG API |
+| 14.I | M15 analysis fallback (tick-warmed) | Claude | ✅ Done | 60s loop runs `analyze_market_m15()` even when IG API fails, provided M15 indicators are warmed from tick-built bars |
+
+**M15 Strategy Summary:**
+
+| Strategy | Regime | Signal Logic | Multiplier |
+|---|---|---|---|
+| M15_MomentumBurst | Trending/Volatile | RSI 55–75 + MACD expanding + H1 EMA200 confirm | VOLATILE: 1.3× · TRENDING: 1.2× |
+| M15_EmaMicrotrend | Trending/Volatile | EMA9>EMA21 + EMA21 slope + H1 EMA21 slope confirm | TRENDING: 1.2× |
+| M15_BollingerReversion | Ranging ONLY | %B<0.05 + RSI<35 + H1 RSI>35 | RANGING: 1.2× |
+
+**Risk profile:** 0.5× H1 position size via `check_trade_m15()` · 4.0× ATR TP / 1.5× ATR SL (R:R = 2.67) · max 2 trades/H1 candle · R:R ≥ 2.5 validated before signal
+
+**M15 candle sources (priority order):**
+1. `data/candles/*_MINUTE_15.jsonl` — disk cache (tick-built, populated from live ticks going forward)
+2. IG REST API — 250-bar warmup on first start (if disk < 210 bars); self-heal on restart
+3. Live Lightstreamer ticks → `bar_accumulator_m15` (continuous, always running)
+
+---
+
+## Phase 11 — Advanced Deployment (Planned)
+
+> When ready to move to 24/7 VPS (Hetzner Singapore recommended — ~€8/mo, closest to IG servers).
+
+| # | Task | Status | Notes |
+|---|------|--------|-------|
+| 11.1 | Docker-Compose + health checks | ⏳ | Dockerfile exists; add compose + liveness probes |
+| 11.2 | GitHub Actions CI/CD | ⏳ | cargo test + clippy + rsync deploy to VPS on merge to main |
+| 11.3 | Systemd service unit | ⏳ | Auto-restart on reboot; logrotate for engine.log |
+| 11.4 | Regime-aware deploy gate | ⏳ | CD delays restart if regime = VOLATILE (avoid mid-trade reload) |
+| 11.5 | VPS IP whitelist in IG API dashboard | ⏳ | Required before going live on VPS |
 
 ---
 
@@ -101,15 +168,36 @@ For the full history of completed work and debt items, see `TECH_DEBT_AUDIT.md`.
 
 | Priority | Description | File(s) |
 |----------|-------------|---------|
-| High | Python test scripts (`test_ig_trade*.py`) fail in any proxied/sandboxed environment — `ProxyError: 403 Forbidden` on IG API. Must run locally or in Docker. | `test_ig_trade*.py` |
+| Medium | Watchlist parse error: `Failed to decode IGWatchlistListResponse` — non-blocking, watchlist sync skips but engine continues | `event_loop/mod.rs` |
+| Low | MINUTE_15 disk cache not yet populated — IG API rate limit exhausted from multiple restarts; tick accumulator building from live ticks now; will auto-populate | `data/candles/` |
+| Low | Python test scripts (`test_ig_trade*.py`) fail in proxied/sandboxed environments — `ProxyError: 403 Forbidden`. Must run locally. | `test_ig_trade*.py` |
 | Low | OPU parse failures (unknown field `guaranteedStop`) — non-blocking, position updates still work | `event_loop/mod.rs` |
+
+### Recently Fixed (2026-03-17)
+
+| Bug | Root Cause | Fix |
+|-----|-----------|-----|
+| Regime file stale (57h) — engine always saw NORMAL regime, "need 3" instead of "need 2" | `ig-engine/data/regime_latest.json` was a standalone file; cron wrote to `ig-trading/data/regime_latest.json` (different path) | Replaced with symlink `../../data/regime_latest.json` — now auto-refreshed every hour by cron |
+| M15 candles never persisted — every restart hit IG API rate limit | `persist_series("MINUTE_15")` was never called after API warmup or live tick | Added `persist_series()` after warmup and after each 60s tick; tick accumulator also persists every 15 min |
+| M15 R:R 1.0 rejected (min 2.5) | `atr_tp_multiplier = 1.5` = same as SL → R:R = 1.0 | Fixed `atr_tp_multiplier = 4.0` → R:R = 2.67 |
+| H1 says Gold BUY, M15 fires Gold SELL → SL hit immediately | No cross-timeframe conflict detection | H1 Direction Gate (14.E): blocks M15 signals contradicting H1 bias; H1 Alignment Bonus ×1.2 for agreeing signals |
+| M15 indicators never warm after restart (rate limit exhausted) | Multiple rapid restarts exhausted IG's historical data allowance | Self-heal (14.G): fetch 250 bars when `!is_warmed_up()`; tick accumulator (14.H) builds bars locally forever |
+
+### Recently Fixed (2026-03-16)
+
+| Bug | Root Cause | Fix |
+|-----|-----------|-----|
+| Engine stops trading after 20 total trades (lifetime, not daily) | `risk_manager.reset_daily()` was never called — daily trade counter hit max and never reset | Detect date rollover in daily_reset_interval branch; call both `state.check_daily_reset()` AND `risk_manager.reset_daily()` |
+| VOLATILE regime: no trades ever execute | With `VOLATILE_MUTE=0.5`, strategies couldn't reach ensemble threshold; only 2-3 vote sources available | Added StochasticMomentumStrategy (0.8× mute) + signal boosters + VOLATILE scalp tier (2 strategies, avg≥6.0) |
+| Multi_Timeframe always signals strength=9.0 | Hardcoded `let strength = 9.0` — all signals looked identical to adaptive weight system | Dynamic `calculate_signal_strength()` based on ADX, MACD expansion, RSI pullback |
+| sentiment_agent.py crashes every 15 min since 18:16 SGT | `dict \| None` union syntax requires Python 3.10+; cron runs Python 3.9.6 | Changed to `Optional[dict]` from typing module |
 
 ### Recently Fixed (2026-03-12)
 
 | Bug | Root Cause | Fix | Commit |
 |-----|-----------|-----|--------|
-| ALL market analysis silently skipped | `MARKET_STATE` comparison was `!= "TRADEABLE"` (uppercase) but IG sends lowercase `"tradeable"` — `debug!` log hidden in INFO mode | Changed to `to_ascii_uppercase().starts_with("TRADEABLE")` | 169d22f |
-| Indicators never reached warmup (19 of 250 candles used) | `snapshotTime` parse used `%Y/%m/%d %H:%M:%S` but IG API returns `"YYYY/MM/DD HH:mm:ss:SSS"` (colon + ms suffix); mock client returns RFC3339 — both failed silently → all 250 candles got `Utc::now()` → deduplicated to 1 | Multi-format parse: try RFC3339 → strip `:SSS` → IG format → warn! on failure | 706a1dd |
+| ALL market analysis silently skipped | `MARKET_STATE` comparison was `!= "TRADEABLE"` (uppercase) but IG sends lowercase `"tradeable"` | Changed to `to_ascii_uppercase().starts_with("TRADEABLE")` | 169d22f |
+| Indicators never reached warmup (19 of 250 candles used) | `snapshotTime` parse used wrong format — all 250 candles got `Utc::now()` → deduplicated to 1 | Multi-format parse: try RFC3339 → strip `:SSS` → IG format | 706a1dd |
 
 ---
 

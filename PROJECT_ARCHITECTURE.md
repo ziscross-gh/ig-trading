@@ -1,6 +1,6 @@
 # PROJECT_ARCHITECTURE.md — IG Trading Engine
 
-**Last updated:** 2026-03-10
+**Last updated:** 2026-03-17 (Phase 14 fully live — H1 gate, tick accumulator, self-heal)
 **Scope:** Rust engine (`ig-engine/`) — bot + Telegram only (dashboard archived)
 
 ---
@@ -51,7 +51,15 @@ IG Markets (REST + Lightstreamer)
 │  ├── position_monitor_interval (every 5s)                │
 │  │     └── handlers.rs — SL/TP hit detection, trailing  │
 │  ├── candle_refresh_interval (every 15 min)              │
-│  │     └── Fetch fresh HOUR candles → update indicators  │
+│  │     └── Fetch fresh HOUR candles → update H1 indicators│
+│  ├── Lightstreamer tick (continuous)                     │
+│  │     └── bar_accumulator (H1) + bar_accumulator_m15    │
+│  │         On M15 bar close: push CandleStore + indicators│
+│  │         + persist to disk (MINUTE_15.jsonl)            │
+│  ├── m15_refresh_interval (every 60s) [Phase 14]         │
+│  │     ├── Try IG API: fetch MINUTE_15 candles → dedup   │
+│  │     │   → update M15 indicators → analyze_market_m15()│
+│  │     └── API fail: if tick-warmed → analyze_market_m15()│
 │  ├── session_refresh_interval (every 50 min)             │
 │  │     └── Refresh IG CST + security tokens              │
 │  ├── heartbeat_interval                                  │
@@ -123,16 +131,65 @@ All indicators operate on an in-memory ring buffer — no disk reads during trad
 
 ### `strategy/`
 
-Each strategy implements `Strategy::generate_signal(candles, indicators) → Option<Signal>`.
+H1 strategies implement `Strategy::evaluate(epic, price, indicators) → Option<Signal>`.
+M15 strategies implement `M15Strategy::evaluate_m15(epic, price, m15_snap, h1_snap, regime) → Option<Signal>`.
 Signals carry: direction, strength (0–10), stop loss price, take profit price.
 
-| Strategy | Signal Logic |
-|----------|-------------|
-| `MACrossoverStrategy` | Fast SMA crosses slow SMA; fires only if ADX > threshold |
-| `RSIReversalStrategy` | RSI oversold/overbought + optional price divergence |
-| `MACDMomentumStrategy` | MACD line crosses signal line |
-| `BollingerStrategy` | Price closes outside outer band → mean reversion entry |
-| `EnsembleVoter` | Aggregates signals with per-strategy weights; requires min consensus count AND min avg strength |
+**6 vote sources (H1 timeframe) + 3 M15 strategies:**
+
+| Strategy | Signal Logic | Regime Role |
+|----------|-------------|-------------|
+| `MACrossoverStrategy` | EMA9/21 cross + EMA200 trend filter; ADX > threshold | Trending: 1.2× · Ranging: 0.6× |
+| `RSIReversalStrategy` | RSI oversold/overbought + optional price divergence | Ranging: 1.2× · Trending: 0.7× |
+| `MACDMomentumStrategy` | MACD histogram sign change (crossover) | Trending: 1.2× |
+| `BollingerStrategy` | Price at outer band → mean reversion entry | Ranging: 1.2× · Trending: 0.6× |
+| `MultiTimeframeStrategy` | HOUR_4/HOUR/MINUTE_15 EMA alignment; dynamic strength via ADX+MACD | Trending: 1.5× |
+| `StochasticMomentumStrategy` | %K/%D crossover in overbought/oversold zone; ADX+RSI strength bonuses | Ranging: 1.2× · VOLATILE: 0.8× |
+| `GoldSentimentStrategy` | RSS sentiment score ≥±0.55; keyword/Claude/Ollama backends | ALL regimes: 1.0× |
+
+**3 M15 vote sources (MINUTE_15 timeframe, H1 as directional filter):**
+
+| Strategy | Signal Logic | Active Regimes | Multiplier |
+|---|---|---|---|
+| `M15_MomentumBurst` | M15 RSI 55–75 + MACD hist expanding + H1 EMA200 confirm | Trending, Volatile | VOLATILE 1.3× · TRENDING 1.2× |
+| `M15_EmaMicrotrend` | M15 EMA9>EMA21 + EMA21 slope + H1 EMA21 slope confirm | Trending, Volatile | TRENDING 1.2× |
+| `M15_BollingerReversion` | M15 %B<0.05 + RSI<35 + H1 RSI>35 (mean reversion) | Ranging ONLY | RANGING 1.2× |
+
+M15 ensemble: `min_consensus=1, min_avg_strength=6.5`. Position size: 0.5× H1 via `check_trade_m15()`. Cooldown: max 2 trades per H1 candle. R:R = 2.67 (SL 1.5× ATR, TP 4.0× ATR). All enabled — `config/default.toml`.
+
+**H1 Direction Gate + Alignment Bonus (Phase 14.E):**
+- `H1DirectionBias` (buy_count vs sell_count from H1 strategies) stored per epic in `MarketStateContainer.h1_bias`
+- Gate: M15 signal contradicting H1 majority is blocked and logged
+- Bonus: M15 signals agreeing with H1 bias get ×1.2 strength boost before ensemble vote
+
+**M15 candle data resilience (Phase 14.F–H):**
+- Tick accumulator (`bar_accumulator_m15`) builds M15 bars from live Lightstreamer ticks — never loses data
+- Bars persisted to `data/candles/*_MINUTE_15.jsonl` on every close
+- Self-heal: if indicators not warmed at 60s tick, fetches 250 bars from IG API automatically
+- Fallback analysis: `analyze_market_m15()` runs from tick-warmed indicators even if IG API is rate-limited
+
+**Ensemble Voting:**
+
+```
+Full consensus:    min 3 strategies, avg strength ≥ 6.0 → full position
+VOLATILE scalp:    min 2 strategies, avg strength ≥ 6.0 → 0.5× position (VOLATILE regime only)
+```
+
+**Regime Multipliers (VOLATILE_MUTE = 0.5):**
+
+| Strategy | Trending | Ranging | Volatile |
+|---|---|---|---|
+| MA_Crossover | 1.2× | 0.6× | 0.5× |
+| RSI_Reversal | 0.7× | 1.2× | 0.5× |
+| MACD_Momentum | 1.2× | 0.8× | 0.5× |
+| Bollinger | 0.6× | 1.2× | 0.5× |
+| Multi_Timeframe | 1.5× | 0.8× | 0.5× |
+| Stochastic_Momentum | 0.5× | 1.2× | **0.8×** |
+| Gold_Sentiment | 1.0× | 1.0× | **1.0×** |
+
+**Signal Boosters** (applied before regime multipliers):
+- ATR expansion: `bar_range > ATR × 1.5` → +1.0 to all signals
+- Key level proximity: price within 0.1% of round level ($50 Gold / 0.50 JPY / 0.005 FX) → ×1.2 breakout-aligned
 
 ### `risk/`
 
@@ -180,7 +237,7 @@ Circuit breaker triggers: reduces position size after 3 consecutive losses; paus
 | Sub-state | Key fields |
 |-----------|------------|
 | `AccountState` | balance, available, equity, P&L, currency |
-| `MarketStateContainer` | live prices per epic, `IndicatorSet` per epic, `CandleStore` (JSONL disk persistence) |
+| `MarketStateContainer` | live prices per epic, `IndicatorSet` per epic, `CandleStore` (JSONL disk persistence), `bar_accumulator` (H1), `bar_accumulator_m15` (M15 — builds candles from live ticks), `h1_bias` (H1DirectionBias per epic) |
 | `TradeState` | active positions, last 200 signals, last 500 closed trades |
 | `MetricsState` | daily stats (trades, wins, P&L, drawdown), circuit breaker state |
 | `LearningState` | scorecard, weight manager, snapshot for API |

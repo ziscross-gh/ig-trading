@@ -72,6 +72,13 @@ pub struct IndicatorSnapshot {
     // Stochastic (flattened)
     pub stochastic_k: Option<f64>,
     pub stochastic_d: Option<f64>,
+
+    // Previous stochastic values (for crossover detection)
+    pub prev_stochastic_k: Option<f64>,
+    pub prev_stochastic_d: Option<f64>,
+
+    // Current bar range (high - low), used for ATR expansion filter
+    pub last_bar_range: Option<f64>,
 }
 
 /// Helper sub-structs used internally during calculation (not in snapshot)
@@ -235,6 +242,12 @@ pub struct IndicatorSet {
     tr_ema: Option<f64>,
     adx_ema: Option<f64>,
 
+    // Stochastic state (computed on each update, stored for prev-value crossover detection)
+    stoch_k: Option<f64>,
+    stoch_d: Option<f64>,
+    prev_stoch_k: Option<f64>,
+    prev_stoch_d: Option<f64>,
+
     // Count of updates for warmup tracking
     update_count: usize,
 }
@@ -291,6 +304,10 @@ impl IndicatorSet {
             minus_dm_ema: None,
             tr_ema: None,
             adx_ema: None,
+            stoch_k: None,
+            stoch_d: None,
+            prev_stoch_k: None,
+            prev_stoch_d: None,
             update_count: 0,
         }
     }
@@ -300,9 +317,18 @@ impl IndicatorSet {
         Self::new(9, 21, 200, 14, 14, 20, 2.0, 14, 14)
     }
 
-    /// Minimum candles needed before indicators are valid
+    /// Minimum candles needed before indicators are valid.
+    /// Uses the largest *actively computed* indicator period (long EMA, BB, ADX, stoch)
+    /// plus a small buffer.  The 200-period trend EMA is excluded because it is only a
+    /// directional filter — the M15/H1 strategies don't require it to be fully stable
+    /// before they can trade, and including it would delay M15 warmup by 50+ hours when
+    /// the engine starts without cached history.
     pub fn warmup_period(&self) -> usize {
-        self.trend_period + 10 // 200 + buffer
+        let max_core = *[self.long_period, self.bb_period, self.adx_period, self.stoch_period]
+            .iter()
+            .max()
+            .unwrap_or(&21);
+        max_core + 10 // e.g. max(21,20,14,14)+10 = 31 bars
     }
 
     pub fn is_warmed_up(&self) -> bool {
@@ -430,6 +456,18 @@ impl IndicatorSet {
         self.prev_high = Some(high);
         self.prev_low = Some(low);
 
+        // Update stochastic (save previous values first for crossover detection)
+        self.prev_stoch_k = self.stoch_k;
+        self.prev_stoch_d = self.stoch_d;
+        let stoch = stochastic::calculate(
+            &self.highs.as_slice_ordered(),
+            &self.lows.as_slice_ordered(),
+            &self.closes.as_slice_ordered(),
+            self.stoch_period,
+        );
+        self.stoch_k = Some(stoch.k);
+        self.stoch_d = Some(stoch.d);
+
         self.update_count += 1;
     }
 
@@ -465,14 +503,6 @@ impl IndicatorSet {
 
         // Bollinger
         let bb = bollinger::calculate(&closes_ordered, self.bb_period, self.bb_std_dev);
-
-        // Stochastic
-        let stoch = stochastic::calculate(
-            &self.highs.as_slice_ordered(),
-            &self.lows.as_slice_ordered(),
-            &closes_ordered,
-            self.stoch_period,
-        );
 
         // ADX
         let adx_val = self.adx_ema;
@@ -515,8 +545,14 @@ impl IndicatorSet {
             adx: adx_val,
             plus_di,
             minus_di,
-            stochastic_k: Some(stoch.k),
-            stochastic_d: Some(stoch.d),
+            stochastic_k: self.stoch_k,
+            stochastic_d: self.stoch_d,
+            prev_stochastic_k: self.prev_stoch_k,
+            prev_stochastic_d: self.prev_stoch_d,
+            last_bar_range: match (self.highs.last(), self.lows.last()) {
+                (Some(h), Some(l)) => Some(h - l),
+                _ => None,
+            },
         })
     }
 }

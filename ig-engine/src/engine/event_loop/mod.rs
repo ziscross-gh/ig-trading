@@ -16,13 +16,17 @@ use crate::api::rest_client::IGRestClient;
 use crate::api::streaming_client::IGStreamingClient;
 use crate::api::traits::TraderAPI;
 use crate::risk::RiskManager;
-use crate::strategy::traits::Strategy;
+use crate::strategy::traits::{Strategy, M15Strategy};
 use crate::strategy::{
     ma_crossover::MACrossoverStrategy,
     rsi_reversal::RSIReversalStrategy,
     macd_momentum::MACDMomentumStrategy,
     bollinger::BollingerStrategy,
+    stochastic_momentum::StochasticMomentumStrategy,
     ensemble::EnsembleVoter,
+    m15_momentum_burst::M15MomentumBurstStrategy,
+    m15_ema_microtrend::M15EmaMicrotrendStrategy,
+    m15_bollinger_reversion::M15BollingerReversionStrategy,
 };
 use crate::indicators::Candle;
 use crate::ipc::events::EngineEvent;
@@ -30,6 +34,7 @@ use crate::notifications::telegram::TelegramNotifier;
 use crate::data::candle_store;
 
 pub use analysis::analyze_market;
+pub use analysis::analyze_market_m15;
 pub use handlers::handle_position_monitoring;
 pub use learning::build_learning_snapshot;
 pub use validation::{validate_config, validate_live_readiness};
@@ -252,6 +257,20 @@ pub async fn run(
         }
     }
 
+    if let Some(stoch_cfg) = &config.strategies.stochastic_momentum {
+        if stoch_cfg.enabled {
+            strategies.push(Box::new(StochasticMomentumStrategy::new(
+                stoch_cfg.weight,
+                stoch_cfg.overbought,
+                stoch_cfg.oversold,
+                stoch_cfg.atr_sl_multiplier.unwrap_or(config.strategies.default_atr_sl_multiplier),
+                stoch_cfg.atr_tp_multiplier.unwrap_or(config.strategies.default_atr_tp_multiplier),
+                stoch_cfg.trailing_stop_pips,
+            )));
+            info!("Stochastic Momentum strategy enabled");
+        }
+    }
+
     let mut ensemble = EnsembleVoter::new(
         config.strategies.min_consensus,
         config.strategies.min_avg_strength,
@@ -283,11 +302,63 @@ pub async fn run(
             ensemble.set_strategy_weight("Multi_Timeframe".to_string(), mtf_cfg.weight);
         }
     }
+    if let Some(stoch_cfg) = &config.strategies.stochastic_momentum {
+        if stoch_cfg.enabled {
+            ensemble.set_strategy_weight("Stochastic_Momentum".to_string(), stoch_cfg.weight);
+        }
+    }
     // Gold sentiment signal — starts at weight 1.0; adaptive manager may tune over time
     ensemble.set_strategy_weight("Gold_Sentiment".to_string(), 1.0);
 
     info!("Ensemble voter configured with {} strategies", strategies.len());
- 
+
+    // --- M15 strategies (Phase 14) ---
+    let mut m15_strategies: Vec<Box<dyn M15Strategy + Send + Sync>> = Vec::new();
+
+    if let Some(cfg) = &config.strategies.m15_momentum_burst {
+        if cfg.enabled {
+            m15_strategies.push(Box::new(M15MomentumBurstStrategy::new(
+                cfg.weight,
+                cfg.rsi_min,
+                cfg.rsi_max,
+                cfg.atr_sl_multiplier.unwrap_or(config.strategies.default_atr_sl_multiplier * 0.75),
+                cfg.atr_tp_multiplier.unwrap_or(config.strategies.default_atr_tp_multiplier * 0.5),
+            )));
+            info!("M15 MomentumBurst strategy enabled");
+        }
+    }
+    if let Some(cfg) = &config.strategies.m15_ema_microtrend {
+        if cfg.enabled {
+            m15_strategies.push(Box::new(M15EmaMicrotrendStrategy::new(
+                cfg.weight,
+                cfg.atr_sl_multiplier.unwrap_or(config.strategies.default_atr_sl_multiplier * 0.75),
+                cfg.atr_tp_multiplier.unwrap_or(config.strategies.default_atr_tp_multiplier * 0.5),
+            )));
+            info!("M15 EmaMicrotrend strategy enabled");
+        }
+    }
+    if let Some(cfg) = &config.strategies.m15_bollinger_reversion {
+        if cfg.enabled {
+            m15_strategies.push(Box::new(M15BollingerReversionStrategy::new(
+                cfg.weight,
+                cfg.percent_b_threshold,
+                cfg.rsi_threshold,
+                cfg.h1_rsi_confirm,
+                cfg.atr_sl_multiplier.unwrap_or(config.strategies.default_atr_sl_multiplier * 0.75),
+            )));
+            info!("M15 BollingerReversion strategy enabled");
+        }
+    }
+
+    let m15_ensemble = EnsembleVoter::new(
+        config.strategies.m15_min_consensus,
+        config.strategies.m15_min_avg_strength,
+    );
+
+    if !m15_strategies.is_empty() {
+        info!("M15 ensemble voter configured with {} strategies", m15_strategies.len());
+    }
+
     let mut risk_config = config.risk.clone();
     risk_config.trading_hours_utc = {
         let start: u32 = config.trading_hours.start.split(':').next().unwrap_or("0").parse().unwrap_or(0);
@@ -397,6 +468,59 @@ pub async fn run(
         }
         Err(e) => {
             warn!("Failed to sync existing positions on startup: {}", e);
+        }
+    }
+
+    // --- Crash-recovery reconciliation ---
+    // Compare the positions persisted from the previous session against IG live
+    // positions just synced above. Any deal that was open last session but is no
+    // longer in IG live was closed while the engine was offline (SL/TP hit or
+    // manual close). We can't reconstruct P&L here so we alert via Telegram.
+    {
+        use std::collections::HashSet;
+        use crate::engine::state::EngineState;
+
+        let persisted = EngineState::load_persisted_positions();
+        if !persisted.is_empty() {
+            let live_deal_ids: HashSet<String> = {
+                let s = state.read().await;
+                s.trades.active.iter().map(|p| p.deal_id.clone()).collect()
+            };
+            let offline_closed: Vec<_> = persisted
+                .into_iter()
+                .filter(|p| !live_deal_ids.contains(&p.deal_id))
+                .collect();
+            if !offline_closed.is_empty() {
+                warn!(
+                    "⚠️  Recovery: {} position(s) closed while engine was offline — P&L not tracked:",
+                    offline_closed.len()
+                );
+                let mut tg_lines = Vec::new();
+                for p in &offline_closed {
+                    warn!(
+                        "  → {} {:?} deal_id={} opened={} — check IG portal for P&L",
+                        p.epic, p.direction, p.deal_id,
+                        p.opened_at.format("%Y-%m-%d %H:%M UTC")
+                    );
+                    tg_lines.push(format!(
+                        "• {} {:?} ({})",
+                        crate::engine::state::get_instrument_name(&p.epic),
+                        p.direction,
+                        p.opened_at.format("%H:%M UTC")
+                    ));
+                }
+                let tg = crate::notifications::telegram::TelegramNotifier::new(
+                    &config.notifications.telegram
+                );
+                let msg = format!(
+                    "⚠️ <b>Engine restarted — {} position(s) closed while offline</b>\nP&amp;L not recorded — check IG portal:\n{}",
+                    offline_closed.len(),
+                    tg_lines.join("\n")
+                );
+                tokio::spawn(async move { let _ = tg.send_message(&msg).await; });
+            } else {
+                info!("✅ Recovery check: all previous positions still open or already synced");
+            }
         }
     }
 
@@ -519,6 +643,82 @@ pub async fn run(
     }
     info!("🚀 All markets warmed up — engine ready");
 
+    // --- M15 warmup (Phase 14) ---
+    // Fetch 250 MINUTE_15 bars per epic to warm up M15 indicator sets.
+    // Only runs when at least one M15 strategy is enabled in config.
+    let m15_enabled = config.strategies.m15_momentum_burst.as_ref().is_some_and(|c| c.enabled)
+        || config.strategies.m15_ema_microtrend.as_ref().is_some_and(|c| c.enabled)
+        || config.strategies.m15_bollinger_reversion.as_ref().is_some_and(|c| c.enabled);
+
+    if m15_enabled {
+        info!("Warming up M15 indicators (MINUTE_15 resolution) for {} markets...", config.markets.epics.len());
+        for (idx, epic) in config.markets.epics.iter().enumerate() {
+            info!("  M15 [{}/{}] {} ...", idx + 1, config.markets.epics.len(), epic);
+
+            // Try disk cache first
+            let disk_candles = candle_store::load_from_disk(epic, "MINUTE_15");
+            let candles = if disk_candles.len() >= 210 {
+                info!("  {} M15 candles from disk for {}", disk_candles.len(), epic);
+                disk_candles
+            } else {
+                match client.get_price_history(epic, "MINUTE_15", 250).await {
+                    Ok(price_response) => {
+                        let api_candles: Vec<crate::indicators::Candle> = price_response.prices.iter().map(|p| {
+                            let st = &p.snapshot_time;
+                            let trimmed = if st.len() > 19 { &st[..19] } else { st.as_str() };
+                            let timestamp = chrono::DateTime::parse_from_rfc3339(st)
+                                .map(|dt| dt.timestamp())
+                                .or_else(|_| chrono::NaiveDateTime::parse_from_str(trimmed, "%Y:%m:%d-%H:%M:%S").map(|dt| dt.and_utc().timestamp()))
+                                .or_else(|_| chrono::NaiveDateTime::parse_from_str(trimmed, "%d/%m/%Y %H:%M:%S").map(|dt| dt.and_utc().timestamp()))
+                                .or_else(|_| chrono::NaiveDateTime::parse_from_str(trimmed, "%Y/%m/%d %H:%M:%S").map(|dt| dt.and_utc().timestamp()))
+                                .unwrap_or_else(|_| Utc::now().timestamp());
+                            crate::indicators::Candle {
+                                timestamp,
+                                open: p.open_price.bid,
+                                high: p.high_price.bid,
+                                low: p.low_price.bid,
+                                close: p.close_price.bid,
+                                volume: p.last_traded_volume.unwrap_or(0.0) as u64,
+                            }
+                        }).collect();
+                        let merged = if disk_candles.is_empty() {
+                            api_candles
+                        } else {
+                            candle_store::merge_candles(disk_candles, api_candles)
+                        };
+                        info!("  {} M15 candles for {}", merged.len(), epic);
+                        merged
+                    }
+                    Err(e) => {
+                        if disk_candles.is_empty() {
+                            warn!("  M15 warmup failed for {}: {}", epic, e);
+                            vec![]
+                        } else {
+                            warn!("  M15 API failed for {}: {} — using {} disk candles", epic, e, disk_candles.len());
+                            disk_candles
+                        }
+                    }
+                }
+            };
+
+            if !candles.is_empty() {
+                let mut s = state.write().await;
+                s.markets.history.warm_up(epic, "MINUTE_15", candles.clone());
+                // Persist to disk so future restarts use disk-first and skip the API call
+                s.markets.history.persist_series(epic, "MINUTE_15");
+                // Insert MINUTE_15 indicator set if not already present
+                let tf_map = s.markets.indicators.entry(epic.clone()).or_default();
+                let m15_indicators = tf_map.entry("MINUTE_15".to_string()).or_insert_with(crate::indicators::IndicatorSet::default_config);
+                for candle in &candles {
+                    m15_indicators.update(candle);
+                }
+                let warmed = m15_indicators.is_warmed_up();
+                info!("  M15 indicators for {} — warmed_up={}", epic, warmed);
+            }
+        }
+        info!("M15 warmup complete");
+    }
+
     let mut position_monitor_interval = interval(Duration::from_secs(5));
     let mut session_refresh_interval = interval(Duration::from_secs(config.ig.session_refresh_mins * 60));
     let mut daily_reset_interval = interval(Duration::from_secs(60));
@@ -528,11 +728,27 @@ pub async fn run(
     let mut sentiment_poll_interval = interval(Duration::from_secs(15 * 60));
     // BOT_ACTIVE watchlist sync — dynamically add epics from IG every hour (10.4)
     let mut watchlist_sync_interval = interval(Duration::from_secs(60 * 60));
+    // Overnight financing — fetch from IG /history/transactions every hour.
+    // IG applies financing once per day; polling hourly ensures we capture it promptly.
+    let mut financing_poll_interval = interval(Duration::from_secs(60 * 60));
     let mut last_summary_date = String::new();
     // Track the most recent bar-start timestamp per epic that we ran analysis on.
     // Strategy evaluation only runs when indicators have actually advanced (new bar closed),
     // avoiding hundreds of redundant evaluations on intra-bar ticks.
     let mut last_analyzed_bar_ts: HashMap<String, i64> = HashMap::new();
+
+    // M15 refresh — fetches new MINUTE_15 candles every 60s and updates M15 indicators
+    // Only active when M15 strategies are configured.
+    let mut m15_refresh_interval = if m15_enabled {
+        Some(interval(Duration::from_secs(60)))
+    } else {
+        None
+    };
+    // Track last M15 candle timestamp per epic (to avoid reprocessing the same bar)
+    let mut last_m15_candle_ts: HashMap<String, i64> = HashMap::new();
+    // Self-heal backoff: after a rate-limit failure, wait 30 min before retrying API self-heal.
+    // During backoff, tick accumulator continues building bars locally — no API needed.
+    let mut m15_self_heal_backoff: HashMap<String, std::time::Instant> = HashMap::new();
 
     info!("Engine event loop started");
 
@@ -637,8 +853,16 @@ pub async fn run(
             }
 
             _ = daily_reset_interval.tick() => {
-                let mut s = state.write().await;
-                s.check_daily_reset();
+                let did_reset = {
+                    let mut s = state.write().await;
+                    let prev_date = s.metrics.daily.date.clone();
+                    s.check_daily_reset();
+                    prev_date != s.metrics.daily.date   // true only when date rolled over
+                };
+                if did_reset {
+                    risk_manager.reset_daily();
+                    info!("🔄 Daily counters reset — new trading day (risk_manager + state)");
+                }
                 debug!("Daily reset check performed");
             }
 
@@ -659,10 +883,11 @@ pub async fn run(
                     let wins = s.metrics.daily.wins;
                     let pnl = s.metrics.daily.pnl;
                     let balance = s.account.balance;
+                    let financing_pnl = s.metrics.daily.financing_pnl;
                     drop(s);
                     last_summary_date = today;
                     tokio::spawn(async move {
-                        let _ = tg.send_daily_summary(trades, wins, pnl, balance).await;
+                        let _ = tg.send_daily_summary(trades, wins, pnl, balance, financing_pnl).await;
                     });
                 }
             }
@@ -718,11 +943,14 @@ pub async fn run(
                         market_ids.iter().any(|mid| s.sentiment.get_velocity(mid) > VELOCITY_THRESHOLD)
                     };
                     if velocity_spike {
-                        let pause_until = chrono::Utc::now() + chrono::Duration::hours(2);
+                        // 30-minute pause: covers post-spike shock without consuming the
+                        // rest of a day trading session (the original 2-hour window was
+                        // excessive; scheduled events are already handled by macro_events).
+                        let pause_until = chrono::Utc::now() + chrono::Duration::minutes(30);
                         let mut s = state.write().await;
                         s.metrics.macro_pause_until = Some(pause_until);
                         warn!(
-                            "⚡ Sentiment velocity spike detected — macro pause active until {} UTC",
+                            "⚡ Sentiment velocity spike detected — macro pause active until {} UTC (30 min)",
                             pause_until.format("%H:%M")
                         );
                         let _ = event_tx.send(crate::ipc::events::EngineEvent::status_change(
@@ -780,6 +1008,184 @@ pub async fn run(
                     }
                     Err(e) => {
                         debug!("Watchlist sync skipped (BOT_ACTIVE not found or error): {}", e);
+                    }
+                }
+            }
+
+            _ = financing_poll_interval.tick() => {
+                // ── Overnight Financing Poll ──────────────────────────────────────
+                // Fetch today's INTEREST transactions from IG and update DailyStats.
+                // IG applies overnight funding once per day (around 22:00–00:00 UTC).
+                match client.get_today_financing().await {
+                    Ok(net) => {
+                        let mut s = state.write().await;
+                        s.metrics.daily.financing_pnl = net;
+                        if net.abs() > 0.01 {
+                            info!("💳 Financing updated: {}{:.2} SGD today",
+                                if net >= 0.0 { "+" } else { "" }, net);
+                        }
+                    }
+                    Err(e) => {
+                        debug!("Financing poll skipped: {}", e);
+                    }
+                }
+            }
+
+            _ = async {
+                if let Some(ref mut interval) = m15_refresh_interval {
+                    interval.tick().await
+                } else {
+                    std::future::pending::<tokio::time::Instant>().await
+                }
+            } => {
+                // Fetch new M15 candles for each epic and update M15 indicators.
+                // Self-heal: if indicators not warmed up (startup warmup failed due to rate limit
+                // or missing disk cache), fetch full 250-bar history on this tick instead of 5.
+                for epic in &config.markets.epics.clone() {
+                    let needs_warmup = {
+                        let s = state.read().await;
+                        s.markets.indicators.get(epic.as_str())
+                            .and_then(|tf| tf.get("MINUTE_15"))
+                            .map(|ind| !ind.is_warmed_up())
+                            .unwrap_or(true)
+                    };
+                    // Self-heal backoff: if a recent self-heal attempt was rate-limited,
+                    // skip the API call and fall through to tick-warmed fallback analysis.
+                    // Tick accumulator is building bars locally regardless — no API needed.
+                    if needs_warmup {
+                        let in_backoff = m15_self_heal_backoff.get(epic.as_str())
+                            .map(|t| t.elapsed() < std::time::Duration::from_secs(1800))
+                            .unwrap_or(false);
+                        if in_backoff {
+                            debug!("[M15] {} — self-heal in 30-min backoff (rate limited), tick accumulator is building bars", epic);
+                            let is_warmed = {
+                                let s = state.read().await;
+                                s.markets.indicators.get(epic.as_str())
+                                    .and_then(|tf| tf.get("MINUTE_15"))
+                                    .map(|ind| ind.is_warmed_up())
+                                    .unwrap_or(false)
+                            };
+                            if is_warmed {
+                                if let Err(ae) = analyze_market_m15(
+                                    &state,
+                                    &mut client,
+                                    &m15_strategies,
+                                    &m15_ensemble,
+                                    &mut risk_manager,
+                                    &order_manager,
+                                    &event_tx,
+                                    &config,
+                                    &telegram,
+                                ).await {
+                                    warn!("[M15] Error in M15 analysis (tick-warmed, backoff) for {}: {}", epic, ae);
+                                }
+                            }
+                            continue;
+                        }
+                    }
+
+                    let fetch_count = if needs_warmup { 250 } else { 5 };
+                    if needs_warmup {
+                        info!("[M15] {} — indicators not warmed up, fetching {} bars for self-heal", epic, fetch_count);
+                    }
+                    match client.get_price_history(epic, "MINUTE_15", fetch_count).await {
+                        Ok(price_response) => {
+                            let new_candles: Vec<Candle> = price_response.prices.iter().map(|p| {
+                                let st = &p.snapshot_time;
+                                let trimmed = if st.len() > 19 { &st[..19] } else { st.as_str() };
+                                let timestamp = chrono::DateTime::parse_from_rfc3339(st)
+                                    .map(|dt| dt.timestamp())
+                                    .or_else(|_| chrono::NaiveDateTime::parse_from_str(trimmed, "%Y:%m:%d-%H:%M:%S").map(|dt| dt.and_utc().timestamp()))
+                                    .or_else(|_| chrono::NaiveDateTime::parse_from_str(trimmed, "%d/%m/%Y %H:%M:%S").map(|dt| dt.and_utc().timestamp()))
+                                    .or_else(|_| chrono::NaiveDateTime::parse_from_str(trimmed, "%Y/%m/%d %H:%M:%S").map(|dt| dt.and_utc().timestamp()))
+                                    .unwrap_or_else(|_| Utc::now().timestamp());
+                                Candle {
+                                    timestamp,
+                                    open: p.open_price.bid,
+                                    high: p.high_price.bid,
+                                    low: p.low_price.bid,
+                                    close: p.close_price.bid,
+                                    volume: p.last_traded_volume.unwrap_or(0.0) as u64,
+                                }
+                            }).collect();
+
+                            let last_ts = last_m15_candle_ts.get(epic.as_str()).copied().unwrap_or(0);
+                            let truly_new: Vec<&Candle> = new_candles.iter()
+                                .filter(|c| c.timestamp > last_ts)
+                                .collect();
+
+                            if !truly_new.is_empty() {
+                                let newest_ts = truly_new.iter().map(|c| c.timestamp).max().unwrap_or(0);
+                                {
+                                    let mut s = state.write().await;
+                                    // Push new candles into CandleStore history AND indicators
+                                    for candle in &truly_new {
+                                        s.markets.history.push(epic, "MINUTE_15", (*candle).clone());
+                                    }
+                                    // Persist updated MINUTE_15 history to disk (disk-first warmup on next restart)
+                                    s.markets.history.persist_series(epic, "MINUTE_15");
+                                    let tf_map = s.markets.indicators.entry(epic.clone()).or_default();
+                                    let m15_set = tf_map.entry("MINUTE_15".to_string()).or_insert_with(crate::indicators::IndicatorSet::default_config);
+                                    for candle in &truly_new {
+                                        m15_set.update(candle);
+                                    }
+                                }
+                                last_m15_candle_ts.insert(epic.clone(), newest_ts);
+                                debug!("[M15] {} — {} new bars, last_ts={}", epic, truly_new.len(), newest_ts);
+
+                                // Run M15 analysis for this epic now that indicators updated
+                                if let Err(e) = analyze_market_m15(
+                                    &state,
+                                    &mut client,
+                                    &m15_strategies,
+                                    &m15_ensemble,
+                                    &mut risk_manager,
+                                    &order_manager,
+                                    &event_tx,
+                                    &config,
+                                    &telegram,
+                                ).await {
+                                    warn!("[M15] Error in M15 analysis for {}: {}", epic, e);
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            debug!("[M15] Failed to fetch M15 candles for {}: {}", epic, e);
+                            // If this was a self-heal attempt, record backoff to stop hammering the API.
+                            // Tick accumulator will build the required bars in ~52 hours of operation.
+                            if needs_warmup {
+                                m15_self_heal_backoff.insert(epic.clone(), std::time::Instant::now());
+                                info!(
+                                    "[M15] {} — self-heal API failed (rate limited), backing off 30 min. \
+                                     Tick accumulator building bars locally — no action needed.",
+                                    epic
+                                );
+                            }
+                            // API failed — but if M15 indicators are already warmed up from
+                            // tick-built candles, run analysis anyway on current indicator state.
+                            let is_warmed = {
+                                let s = state.read().await;
+                                s.markets.indicators.get(epic.as_str())
+                                    .and_then(|tf| tf.get("MINUTE_15"))
+                                    .map(|ind| ind.is_warmed_up())
+                                    .unwrap_or(false)
+                            };
+                            if is_warmed {
+                                if let Err(ae) = analyze_market_m15(
+                                    &state,
+                                    &mut client,
+                                    &m15_strategies,
+                                    &m15_ensemble,
+                                    &mut risk_manager,
+                                    &order_manager,
+                                    &event_tx,
+                                    &config,
+                                    &telegram,
+                                ).await {
+                                    warn!("[M15] Error in M15 analysis (tick-warmed) for {}: {}", epic, ae);
+                                }
+                            }
+                        }
                     }
                 }
             }

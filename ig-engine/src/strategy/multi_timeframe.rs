@@ -41,6 +41,45 @@ impl MultiTimeframeStrategy {
         }
     }
 
+    fn calculate_signal_strength(
+        &self,
+        trend_adx: f64,
+        sig_macd: f64,
+        sig_prev_macd: f64,
+        entry_rsi: f64,
+        is_buy: bool,
+        using_fallback_tf: bool,
+    ) -> f64 {
+        // Base: 7.5 — 3-TF alignment is already high conviction
+        // (lower than the raw 9.0 so bonuses make a meaningful difference)
+        let mut strength = 7.5_f64;
+
+        // Penalty when falling back to HOUR data for trend/entry TF
+        if using_fallback_tf {
+            strength -= 1.0;
+        }
+
+        // Trend ADX strength
+        if trend_adx > 40.0 {
+            strength += 1.5;
+        } else if trend_adx > 30.0 {
+            strength += 0.75;
+        }
+
+        // MACD momentum: expanding histogram = accelerating move
+        let macd_expansion = sig_macd.abs() > sig_prev_macd.abs() * 1.5;
+        if macd_expansion {
+            strength += 0.5;
+        }
+
+        // Entry RSI confirms pullback depth (deeper pullback = better entry)
+        if (is_buy && entry_rsi < 35.0) || (!is_buy && entry_rsi > 65.0) {
+            strength += 0.5;
+        }
+
+        strength.min(10.0)
+    }
+
     fn calculate_stops_and_targets(
         &self,
         direction: Direction,
@@ -109,11 +148,17 @@ impl Strategy for MultiTimeframeStrategy {
         // 3. Evaluate Entry Timeframe (e.g. 15MIN)
         let entry_rsi = entry_ind.rsi?;
         
+        // Detect if we are using the fallback (HOUR for trend/entry TF)
+        let using_fallback_tf = indicators_map.get(&self.trend_tf).is_none()
+            || indicators_map.get(&self.entry_tf).is_none();
+
         // Check alignment
         if is_trend_bullish && is_signal_bullish {
             // Wait for a slight pullback on the entry timeframe before firing
             if entry_rsi < 45.0 {
-                let strength = 9.0; // MTF signals are high conviction
+                let strength = self.calculate_signal_strength(
+                    trend_adx, sig_macd, sig_prev_macd, entry_rsi, true, using_fallback_tf,
+                );
                 let (stop_loss, take_profit, trailing_stop_distance) = self.calculate_stops_and_targets(Direction::Buy, price, entry_ind);
 
                 let reason = format!(
@@ -140,7 +185,9 @@ impl Strategy for MultiTimeframeStrategy {
         if is_trend_bearish && is_signal_bearish {
              // Wait for a slight pullback on the entry timeframe before firing
              if entry_rsi > 55.0 {
-                let strength = 9.0; 
+                let strength = self.calculate_signal_strength(
+                    trend_adx, sig_macd, sig_prev_macd, entry_rsi, false, using_fallback_tf,
+                );
                 let (stop_loss, take_profit, trailing_stop_distance) = self.calculate_stops_and_targets(Direction::Sell, price, entry_ind);
 
                 let reason = format!(
