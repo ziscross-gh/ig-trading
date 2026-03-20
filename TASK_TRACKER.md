@@ -1,8 +1,8 @@
 # TASK_TRACKER.md — IG Trading Engine
 
-**Last updated:** 2026-03-17 (Phase 14 fully live — H1 gate + alignment bonus, tick-built M15 candles, self-heal, disk persistence fixed)
-**Current phase:** Production-ready + Active trading. VOLATILE regime live. M15 scheme fully operational.
-**Current focus:** 🤖 Engine live & trading | ⚡ VOLATILE "need 2" scalp tier active | ✅ M15 candles built from live ticks | ⏳ IG rate limit reset pending (MINUTE_15 disk cache populating)
+**Last updated:** 2026-03-20 (Phase 16 — Gold momentum gate, ADX fallback, financing tracking, trading hours tightened)
+**Current phase:** Production-ready + Active trading. VOLATILE regime live. Gold strong-trend fix deployed.
+**Current focus:** 🤖 Engine live & trading | 📊 Gold momentum gate active (ADX fallback + dynamic consensus) | 💳 Overnight financing tracked | 🕐 Trading hours: 07:00–20:00 UTC only
 
 > 📦 Dashboard (`src/`) is **archived** — not maintained. All dashboard tasks removed.
 
@@ -29,6 +29,36 @@ For the full history of completed work and debt items, see `TECH_DEBT_AUDIT.md`.
 | 13 | Sticky Trade DNA | ✅ Complete |
 | 14 | M15 Bar Trading Scheme | ✅ Fully Live (enabled, trading, H1 gate + tick accumulator) |
 | 15 | VOLATILE Profitable Strategy | ✅ Complete |
+| 16 | Gold Strong-Trend Fix + Risk Refinements | ✅ Complete (2026-03-20) |
+
+---
+
+## Phase 16 — Gold Strong-Trend Fix + Risk Refinements (✅ 2026-03-20)
+
+> **Motivation:** Mar 19 night — Gold crashed 284 pts (07:00–11:00 UTC). Engine missed the entire move.
+> Root cause: H1 warmup failed (403 quota after restart) → `h1_snap.adx = None` → all ADX-dependent
+> gates silently skipped → RSI_Reversal + Bollinger fired BUY (RSI=8.76, oversold) → H1 bias leaned
+> BUY → H1 gate blocked every M15 SELL signal throughout the crash.
+
+| # | Task | Owner | Status | Notes |
+|---|------|-------|--------|-------|
+| 16.1 | Gold momentum gate — ADX fallback for Gates 3 & 4 | Claude | ✅ Done | `h1_snap.adx.or(m15_snap.adx)` — M15 ADX used when H1 not yet warmed (403/cold start). Mean-rev suppression and RSI extreme block now fire even when H1 REST warmup failed |
+| 16.2 | Dynamic consensus in strong-trend regime | Claude | ✅ Done | `mean_rev_suppressed` flag: when Gate 3 removes mean-rev signals, `min_consensus` drops to 1 for remaining momentum signals. Prevents 2/3 threshold unfairly rejecting 1 valid SELL after mean-rev BUYs stripped |
+| 16.3 | Price-slope bypass ADX fallback | Claude | ✅ Done | `h1_snap.adx.or(m15_snap.adx)` in bypass check — slope gate can now override H1 strategy-vote gate even when H1 ADX is None. Logs source as "H1" or "M15↑" |
+| 16.4 | Trading hours tightened — London/NY only | Claude | ✅ Done | `config/default.toml`: `start=07:00, end=20:00 UTC` (was 00:00–21:00). Prevents Asia session chop; EUR/USD -SGD 549 loss at 01:16 UTC was the trigger |
+| 16.5 | EUR/USD per-instrument rules tightened | Claude | ✅ Done | `min_consensus=2` (was 1), `adx_trend_lock_enabled=true` at ADX≥35, `max_daily_trades=3`, RSI extreme blocks (floor=20, ceiling=80 when ADX≥35) |
+| 16.6 | Gold per-instrument rules added | Claude | ✅ Done | `min_consensus=2`, mean-rev suppression weight=0 at ADX≥45, RSI extreme block (floor=15, ceiling=85 when ADX≥40), ATR% ceiling=1.8%, max 2 trades/day |
+| 16.7 | Overnight financing tracking | Claude | ✅ Done | Hourly `GET /history/transactions?type=INTEREST` poll in `event_loop/mod.rs`; stored in `DailyStats.financing_pnl`; shown in Telegram daily summary as separate line with Net Total |
+| 16.8 | OPU close-level fix (DELETED payload) | Claude | ✅ Done | Confirmed `opu.level` = actual fill price in DELETED events; `close_level` field correctly populated in `streaming_client.rs` |
+| 16.9 | CI green — fmt + clippy + security audit | Claude | ✅ Done | `cargo fmt` all files; fix unused `debug` import; fix manual range check in `m15_momentum_burst.rs`; bump `quinn-proto 0.11.14` (RUSTSEC-2026-0037); ignore `RUSTSEC-2023-0071` (rsa, no fix) |
+
+**Trade analysis that drove these changes (Mar 18–20):**
+
+| Instrument | W | L | BE | Net SGD | Issue found |
+|------------|---|---|----|---------|-------------|
+| EUR/USD | 4 | 1 | 0 | +~1400 | 1 loss at 01:16 UTC Asia session — fixed by trading hours |
+| Gold | 1 | 4 | 2 | -~900 | H1 mean-rev BUY blocked all SELL during 284pt crash — fixed by 16.1–16.3 |
+| Overall | 5 | 5 | 2 | +~55 | Win rate 36% → breaks even at 1:1 R:R |
 
 ---
 
@@ -169,9 +199,19 @@ For the full history of completed work and debt items, see `TECH_DEBT_AUDIT.md`.
 | Priority | Description | File(s) |
 |----------|-------------|---------|
 | Medium | Watchlist parse error: `Failed to decode IGWatchlistListResponse` — non-blocking, watchlist sync skips but engine continues | `event_loop/mod.rs` |
-| Low | MINUTE_15 disk cache not yet populated — IG API rate limit exhausted from multiple restarts; tick accumulator building from live ticks now; will auto-populate | `data/candles/` |
+| Low | IG 403 quota after multiple restarts — H1 REST warmup fails; tick accumulator builds M15 bars instead; ADX fallback (16.1) mitigates impact | `data/candles/` |
 | Low | Python test scripts (`test_ig_trade*.py`) fail in proxied/sandboxed environments — `ProxyError: 403 Forbidden`. Must run locally. | `test_ig_trade*.py` |
-| Low | OPU parse failures (unknown field `guaranteedStop`) — non-blocking, position updates still work | `event_loop/mod.rs` |
+| Low | rsa RUSTSEC-2023-0071 (Marvin Attack) — no upstream fix; ignored in audit.toml. Not exploitable in this context. | `Cargo.lock` |
+
+### Recently Fixed (2026-03-20)
+
+| Bug | Root Cause | Fix |
+|-----|-----------|-----|
+| Gold missed 284pt crash (Mar 19) | H1 ADX=None after 403 quota restart → mean-rev gates silently skipped → BUY bias blocked SELL | ADX fallback: `h1_snap.adx.or(m15_snap.adx)` in Gates 3, 4, and slope bypass (16.1, 16.3) |
+| Gold SELL blocked even with 1 valid momentum signal | `min_consensus=2` applied to pool AFTER mean-rev signals removed → 1/1 never reaches 2 | Dynamic consensus: `mean_rev_suppressed=true` → drops threshold to 1 (16.2) |
+| EUR/USD -SGD 549 loss at 01:16 UTC | Trading allowed 00:00–21:00 UTC; Asia session + 1/3 consensus + stale H1 | Trading hours → 07:00–20:00; min_consensus=2 for EUR/USD (16.4, 16.5) |
+| Overnight financing not tracked | IG financing charges not in OPU stream | Hourly REST poll `GET /history/transactions?type=INTEREST` → `DailyStats.financing_pnl` (16.7) |
+| P&L = 0 on Gold closes (apparent bug) | SL moved to entry by VOLATILE BE trigger (correct behaviour) | Confirmed expected: `level = openLevel = stopLevel` when breakeven SL hit |
 
 ### Recently Fixed (2026-03-17)
 
