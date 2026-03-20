@@ -1,6 +1,6 @@
 pub mod position_sizer;
 
-use chrono::{DateTime, Timelike, Utc, Datelike};
+use chrono::{DateTime, Datelike, Timelike, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use tracing::{debug, info, warn};
@@ -15,10 +15,10 @@ pub struct InstrumentSpec {
     pub min_deal_size: f64,
     pub max_deal_size: f64,
     pub pip_value: f64,
-    pub pip_scale: f64,              // 0.0001 for normal, 0.01 for JPY
+    pub pip_scale: f64, // 0.0001 for normal, 0.01 for JPY
     pub contract_size: f64,
     pub margin_requirement_pct: f64,
-    pub size_decimals: usize,        // 2 for standard indices/FX
+    pub size_decimals: usize,          // 2 for standard indices/FX
     pub min_guaranteed_stop_pips: f64, // Used to guard against IG API rejections
 }
 
@@ -26,7 +26,10 @@ impl InstrumentSpec {
     /// Get instrument spec from IG Markets epic code (hardcoded fallbacks)
     pub fn from_epic_fallback(epic: &str) -> Option<Self> {
         match epic {
-            "CS.D.CFIGOLD.CFI.IP" | "CS.D.CFDGOLD.CMG.IP" | "CS.D.GOLDUSD.CSD.IP" | "CS.D.GOLDUSD.CFD" => Some(Self {
+            "CS.D.CFIGOLD.CFI.IP"
+            | "CS.D.CFDGOLD.CMG.IP"
+            | "CS.D.GOLDUSD.CSD.IP"
+            | "CS.D.GOLDUSD.CFD" => Some(Self {
                 epic: epic.to_string(),
                 min_deal_size: 3.0,
                 max_deal_size: 100.0,
@@ -59,17 +62,19 @@ impl InstrumentSpec {
                 size_decimals: 2,
                 min_guaranteed_stop_pips: 8.0,
             }),
-            "CS.D.USDJPY.CSD.IP" | "CS.D.USDJPY.CFD" | "CS.D.EURJPY.CSD.IP" | "CS.D.EURJPY.CFD" => Some(Self {
-                epic: epic.to_string(),
-                min_deal_size: 0.2,
-                max_deal_size: 100.0,
-                pip_value: 8.01, // 1 std lot = 100k units = 1000 JPY/pip × ~0.00801 JPY/SGD
-                pip_scale: 0.01,
-                contract_size: 1.0,
-                margin_requirement_pct: 5.0,
-                size_decimals: 2,
-                min_guaranteed_stop_pips: 7.0,
-            }),
+            "CS.D.USDJPY.CSD.IP" | "CS.D.USDJPY.CFD" | "CS.D.EURJPY.CSD.IP" | "CS.D.EURJPY.CFD" => {
+                Some(Self {
+                    epic: epic.to_string(),
+                    min_deal_size: 0.2,
+                    max_deal_size: 100.0,
+                    pip_value: 8.01, // 1 std lot = 100k units = 1000 JPY/pip × ~0.00801 JPY/SGD
+                    pip_scale: 0.01,
+                    contract_size: 1.0,
+                    margin_requirement_pct: 5.0,
+                    size_decimals: 2,
+                    min_guaranteed_stop_pips: 7.0,
+                })
+            }
             "CS.D.AUDUSD.CSD.IP" | "CS.D.AUDUSD.CFD" => Some(Self {
                 epic: epic.to_string(),
                 min_deal_size: 0.5,
@@ -125,20 +130,22 @@ pub struct MacroEvent {
     pub blackout_mins: Option<u32>,
 }
 
-fn default_volatile_be_trigger() -> f64 { 0.3 }
+fn default_volatile_be_trigger() -> f64 {
+    0.3
+}
 
 /// Risk management configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct RiskConfig {
-    pub max_risk_per_trade: f64,           // Maximum % of account to risk per trade
-    pub max_daily_loss_pct: f64,           // Maximum daily loss % before stopping
-    pub max_weekly_drawdown_pct: f64,      // Maximum weekly drawdown % before pausing
-    pub max_daily_trades: u32,             // Maximum trades per day
-    pub max_open_positions: usize,         // Maximum concurrent open positions
-    pub max_correlated_positions: usize,   
+    pub max_risk_per_trade: f64, // Maximum % of account to risk per trade
+    pub max_daily_loss_pct: f64, // Maximum daily loss % before stopping
+    pub max_weekly_drawdown_pct: f64, // Maximum weekly drawdown % before pausing
+    pub max_daily_trades: u32,   // Maximum trades per day
+    pub max_open_positions: usize, // Maximum concurrent open positions
+    pub max_correlated_positions: usize,
     pub max_margin_usage_pct: f64,
-    pub min_risk_reward: f64,        // Minimum risk:reward ratio
+    pub min_risk_reward: f64, // Minimum risk:reward ratio
     pub sizing_method: SizingMethod,
     pub instrument_specs: HashMap<String, InstrumentSpec>,
     pub circuit_breaker: CircuitBreakerConfig,
@@ -208,9 +215,24 @@ impl Default for RiskConfig {
             // Daily London Open / ECB / EU data blocks removed — they fired every day and
             // blocked the best trading session (15:00–17:45 SGT) with zero news on most days.
             macro_events: vec![
-                MacroEvent { hour: 13, minute: 30, label: "NFP / CPI / Core PCE / Retail Sales".into(), blackout_mins: Some(30) },
-                MacroEvent { hour: 19, minute:  0, label: "FOMC Rate Decision / Fed Statement".into(),   blackout_mins: Some(60) },
-                MacroEvent { hour: 19, minute: 30, label: "FOMC Press Conference".into(),                blackout_mins: Some(45) },
+                MacroEvent {
+                    hour: 13,
+                    minute: 30,
+                    label: "NFP / CPI / Core PCE / Retail Sales".into(),
+                    blackout_mins: Some(30),
+                },
+                MacroEvent {
+                    hour: 19,
+                    minute: 0,
+                    label: "FOMC Rate Decision / Fed Statement".into(),
+                    blackout_mins: Some(60),
+                },
+                MacroEvent {
+                    hour: 19,
+                    minute: 30,
+                    label: "FOMC Press Conference".into(),
+                    blackout_mins: Some(45),
+                },
             ],
             allow_weekend_trading: false, // weekday spot only — enable when weekend epics are active
         }
@@ -369,10 +391,9 @@ impl RiskManager {
             let weekday = now.weekday();
             let hour = now.hour();
 
-            let is_weekend_closed =
-                weekday == Weekday::Sat                           // all day Saturday
+            let is_weekend_closed = weekday == Weekday::Sat                           // all day Saturday
                 || (weekday == Weekday::Fri && hour >= 22)       // Fri 22:00+ UTC = Sat 06:00 SGT
-                || (weekday == Weekday::Sun && hour < 23);       // Sun before 23:00 UTC = Mon 07:00 SGT
+                || (weekday == Weekday::Sun && hour < 23); // Sun before 23:00 UTC = Mon 07:00 SGT
 
             if is_weekend_closed && !self.config.allow_weekend_trading {
                 let reason = format!(
@@ -401,7 +422,7 @@ impl RiskManager {
         // Layer 2b: Macro Event Blackout Windows
         // Priority: live calendar (data/economic_calendar.json) → static macro_events fallback
         {
-            let now      = Utc::now();
+            let now = Utc::now();
             let now_secs = now.timestamp();
 
             if let Some(blocked_by) = check_live_calendar(now_secs) {
@@ -415,9 +436,11 @@ impl RiskManager {
                 if !self.config.macro_events.is_empty() {
                     for event in &self.config.macro_events {
                         let window_mins = event.hour * 60 + event.minute;
-                        let blackout    = event.blackout_mins.unwrap_or(self.config.news_blackout_mins);
+                        let blackout = event
+                            .blackout_mins
+                            .unwrap_or(self.config.news_blackout_mins);
                         let start = window_mins.saturating_sub(blackout);
-                        let end   = window_mins + blackout;
+                        let end = window_mins + blackout;
                         if now_mins >= start && now_mins < end {
                             let reason = format!(
                                 "Macro event blackout (static): {} at {:02}:{:02} UTC ±{}min (now {:02}:{:02} UTC)",
@@ -431,9 +454,9 @@ impl RiskManager {
                 } else if !self.config.news_blackout_windows_utc.is_empty() {
                     for (h, m) in &self.config.news_blackout_windows_utc {
                         let window_mins = h * 60 + m;
-                        let blackout    = self.config.news_blackout_mins;
+                        let blackout = self.config.news_blackout_mins;
                         let start = window_mins.saturating_sub(blackout);
-                        let end   = window_mins + blackout;
+                        let end = window_mins + blackout;
                         if now_mins >= start && now_mins < end {
                             let reason = format!(
                                 "News blackout window (static): {:02}:{:02} UTC ±{}min (now {:02}:{:02} UTC)",
@@ -493,7 +516,10 @@ impl RiskManager {
 
         // Check if already in this market
         if open_positions.iter().any(|pos| pos.epic == epic) {
-            let reason = format!("Already have an open position in {}", get_instrument_name(epic));
+            let reason = format!(
+                "Already have an open position in {}",
+                get_instrument_name(epic)
+            );
             warn!("{}", reason);
             return RiskVerdict::Rejected(reason);
         }
@@ -531,53 +557,57 @@ impl RiskManager {
         }
 
         // Layer 5b: Guaranteed Stop Distance Check (Limited Risk Account)
-    let mut adjusted_stop_loss = stop_loss;
-    let mut warning_note: Option<String> = None;
+        let mut adjusted_stop_loss = stop_loss;
+        let mut warning_note: Option<String> = None;
 
-    // Check IG minimum distances for guaranteed stops so we don't get rejected by API.
-    // If we're operating a limited risk account, this check is mandatory.
-    let instrument_spec = self.get_instrument_spec(epic);
+        // Check IG minimum distances for guaranteed stops so we don't get rejected by API.
+        // If we're operating a limited risk account, this check is mandatory.
+        let instrument_spec = self.get_instrument_spec(epic);
 
-    let req_min_stop_distance_pips = self.config.min_guaranteed_stop_distance.unwrap_or(instrument_spec.min_guaranteed_stop_pips);
-    let req_min_stop_distance_points = req_min_stop_distance_pips * instrument_spec.pip_scale;
-    let current_stop_distance = (entry_price - adjusted_stop_loss).abs();
+        let req_min_stop_distance_pips = self
+            .config
+            .min_guaranteed_stop_distance
+            .unwrap_or(instrument_spec.min_guaranteed_stop_pips);
+        let req_min_stop_distance_points = req_min_stop_distance_pips * instrument_spec.pip_scale;
+        let current_stop_distance = (entry_price - adjusted_stop_loss).abs();
 
-    if self.config.limited_risk_account && current_stop_distance < req_min_stop_distance_points {
-        let old_stop = adjusted_stop_loss;
-        // Widen the stop to just slightly over the guaranteed limit
-        let safe_distance = req_min_stop_distance_points * 1.05; // 5% buffer 
-        
-        if direction.to_lowercase() == "buy" {
-            adjusted_stop_loss = entry_price - safe_distance;
-        } else {
-            adjusted_stop_loss = entry_price + safe_distance;
-        }
+        if self.config.limited_risk_account && current_stop_distance < req_min_stop_distance_points
+        {
+            let old_stop = adjusted_stop_loss;
+            // Widen the stop to just slightly over the guaranteed limit
+            let safe_distance = req_min_stop_distance_points * 1.05; // 5% buffer
 
-        warning_note = Some(format!(
+            if direction.to_lowercase() == "buy" {
+                adjusted_stop_loss = entry_price - safe_distance;
+            } else {
+                adjusted_stop_loss = entry_price + safe_distance;
+            }
+
+            warning_note = Some(format!(
             "Guaranteed stop widened for {}: raw distance {:.5} < min allowed {:.5}. Shifted stop from {:.5} to {:.5}.",
             epic, current_stop_distance, req_min_stop_distance_points, old_stop, adjusted_stop_loss
         ));
-        if let Some(ref note) = warning_note {
-            info!("{}", note);
+            if let Some(ref note) = warning_note {
+                info!("{}", note);
+            }
         }
-    }
 
-    // Validate take profit
-    if take_profit <= 0.0 {
-        let reason = "Take profit must be set and greater than 0".to_string();
-        warn!("{}", reason);
-        return RiskVerdict::Rejected(reason);
-    }
+        // Validate take profit
+        if take_profit <= 0.0 {
+            let reason = "Take profit must be set and greater than 0".to_string();
+            warn!("{}", reason);
+            return RiskVerdict::Rejected(reason);
+        }
 
-    // Check risk:reward ratio using adjusted stop
-    let risk_distance = (entry_price - adjusted_stop_loss).abs();
-    let reward_distance = (take_profit - entry_price).abs();
+        // Check risk:reward ratio using adjusted stop
+        let risk_distance = (entry_price - adjusted_stop_loss).abs();
+        let reward_distance = (take_profit - entry_price).abs();
 
-    if reward_distance == 0.0 {
-        let reason = "Take profit must differ from entry price".to_string();
-        warn!("{}", reason);
-        return RiskVerdict::Rejected(reason);
-    }
+        if reward_distance == 0.0 {
+            let reason = "Take profit must differ from entry price".to_string();
+            warn!("{}", reason);
+            return RiskVerdict::Rejected(reason);
+        }
         let risk_reward_ratio = reward_distance / risk_distance;
         if risk_reward_ratio < self.config.min_risk_reward {
             let reason = format!(
@@ -607,14 +637,15 @@ impl RiskManager {
         let adjusted_size = raw_size * self.position_size_multiplier;
 
         // Clamp to instrument limits
-        let final_size = adjusted_size.max(instrument_spec.min_deal_size)
+        let final_size = adjusted_size
+            .max(instrument_spec.min_deal_size)
             .min(instrument_spec.max_deal_size);
 
         debug!(
             "Position sizing: raw={:.2}, multiplier={:.2}, final={:.2}",
             raw_size, self.position_size_multiplier, final_size
         );
-        
+
         // Final trailing stop distance logic:
         // 1. If strategy provided a specific distance, use it.
         // 2. Otherwise fall back to the initial stop-loss distance if trailing stops are globally enabled.
@@ -633,7 +664,7 @@ impl RiskManager {
             trailing_stop_distance: final_trailing_stop,
             strategy: strategy.to_string(),
             warning: warning_note,
-            order_type: None,   // defaulted to MARKET; overridden to LIMIT in VOLATILE regime
+            order_type: None, // defaulted to MARKET; overridden to LIMIT in VOLATILE regime
             entry_level: None,
         };
 
@@ -644,7 +675,12 @@ impl RiskManager {
 
         info!(
             "Trade approved: {} {} @ {} (size={:.2}) [daily trades: {}/{}]",
-            epic, direction, entry_price, final_size, self.daily_trades, self.config.max_daily_trades
+            epic,
+            direction,
+            entry_price,
+            final_size,
+            self.daily_trades,
+            self.config.max_daily_trades
         );
 
         RiskVerdict::Approved(adjusted_trade)
@@ -723,15 +759,18 @@ impl RiskManager {
         {
             self.position_size_multiplier = 0.5;
             self.circuit_breaker_active = true;
-            warn!(
-                "Circuit breaker REDUCE activated. Position size multiplier set to 0.5"
-            );
+            warn!("Circuit breaker REDUCE activated. Position size multiplier set to 0.5");
         }
 
         // If consecutive losses >= stop threshold, pause trading
         if self.consecutive_losses >= self.config.circuit_breaker.consecutive_losses_pause {
             self.is_paused = true;
-            self.paused_until = Some(Utc::now() + chrono::Duration::minutes(self.config.circuit_breaker.pause_duration_mins as i64));
+            self.paused_until = Some(
+                Utc::now()
+                    + chrono::Duration::minutes(
+                        self.config.circuit_breaker.pause_duration_mins as i64,
+                    ),
+            );
             warn!(
                 "Circuit breaker STOP activated. Trading paused for {} minutes after {} consecutive losses",
                 self.config.circuit_breaker.pause_duration_mins,
@@ -855,7 +894,10 @@ impl RiskManager {
                     adjusted.size = half_size;
                     info!(
                         "M15 trade approved: {} {} size={:.2} (halved from {:.2})",
-                        epic, direction, adjusted.size, half_size * 2.0
+                        epic,
+                        direction,
+                        adjusted.size,
+                        half_size * 2.0
                     );
                     RiskVerdict::Approved(adjusted)
                 }
@@ -865,7 +907,10 @@ impl RiskManager {
     }
 
     pub fn get_instrument_spec(&self, epic: &str) -> InstrumentSpec {
-        self.config.instrument_specs.get(epic).cloned()
+        self.config
+            .instrument_specs
+            .get(epic)
+            .cloned()
             .or_else(|| InstrumentSpec::from_epic_fallback(epic))
             .unwrap_or_else(|| InstrumentSpec {
                 epic: epic.to_string(),
@@ -970,10 +1015,14 @@ fn check_live_calendar(now_secs: i64) -> Option<String> {
 
     // Stale check: reject if fetched more than 26 hours ago
     let fetched_at = json["fetched_at"].as_str()?;
-    let fetched_ts = chrono::DateTime::parse_from_rfc3339(fetched_at).ok()?.timestamp();
+    let fetched_ts = chrono::DateTime::parse_from_rfc3339(fetched_at)
+        .ok()?
+        .timestamp();
     if now_secs - fetched_ts > 26 * 3600 {
-        debug!("Economic calendar is stale ({:.1}h old) — falling back to static blackouts",
-            (now_secs - fetched_ts) as f64 / 3600.0);
+        debug!(
+            "Economic calendar is stale ({:.1}h old) — falling back to static blackouts",
+            (now_secs - fetched_ts) as f64 / 3600.0
+        );
         return None;
     }
 
@@ -981,15 +1030,17 @@ fn check_live_calendar(now_secs: i64) -> Option<String> {
 
     for event in events {
         let dt_str = event["datetime_utc"].as_str()?;
-        let event_ts = chrono::DateTime::parse_from_rfc3339(dt_str).ok()?.timestamp();
+        let event_ts = chrono::DateTime::parse_from_rfc3339(dt_str)
+            .ok()?
+            .timestamp();
         let blackout_mins = event["blackout_mins"].as_u64().unwrap_or(30) as i64;
         let blackout_secs = blackout_mins * 60;
 
         let start = event_ts - blackout_secs;
-        let end   = event_ts + blackout_secs;
+        let end = event_ts + blackout_secs;
 
         if now_secs >= start && now_secs < end {
-            let title   = event["title"].as_str().unwrap_or("unknown");
+            let title = event["title"].as_str().unwrap_or("unknown");
             let country = event["country"].as_str().unwrap_or("?");
             let now_utc = chrono::Utc::now();
             return Some(format!(

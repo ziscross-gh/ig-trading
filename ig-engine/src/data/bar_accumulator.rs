@@ -1,5 +1,5 @@
-use std::collections::HashMap;
 use crate::indicators::Candle;
+use std::collections::HashMap;
 
 /// An in-progress OHLCV bar for one epic.
 #[derive(Debug, Clone)]
@@ -13,23 +13,33 @@ struct LiveBar {
 
 impl LiveBar {
     fn new(bar_ts: i64, price: f64) -> Self {
-        Self { bar_ts, open: price, high: price, low: price, close: price }
+        Self {
+            bar_ts,
+            open: price,
+            high: price,
+            low: price,
+            close: price,
+        }
     }
 
     fn update(&mut self, price: f64) {
-        if price > self.high { self.high = price; }
-        if price < self.low  { self.low  = price; }
+        if price > self.high {
+            self.high = price;
+        }
+        if price < self.low {
+            self.low = price;
+        }
         self.close = price;
     }
 
     fn to_candle(&self) -> Candle {
         Candle {
             timestamp: self.bar_ts,
-            open:      self.open,
-            high:      self.high,
-            low:       self.low,
-            close:     self.close,
-            volume:    0,
+            open: self.open,
+            high: self.high,
+            low: self.low,
+            close: self.close,
+            volume: 0,
         }
     }
 }
@@ -47,7 +57,10 @@ pub struct BarAccumulator {
 impl BarAccumulator {
     /// `resolution_secs`: bar length in seconds (e.g. 3600 for 1-hour bars).
     pub fn new(resolution_secs: i64) -> Self {
-        Self { resolution_secs, bars: HashMap::new() }
+        Self {
+            resolution_secs,
+            bars: HashMap::new(),
+        }
     }
 
     fn bar_ts(&self, ts: i64) -> i64 {
@@ -78,7 +91,8 @@ impl BarAccumulator {
                 Some(completed)
             }
             None => {
-                self.bars.insert(epic.to_string(), LiveBar::new(bar_ts, price));
+                self.bars
+                    .insert(epic.to_string(), LiveBar::new(bar_ts, price));
                 None
             }
         }
@@ -101,7 +115,7 @@ mod tests {
         let b = bars.get("EPIC").expect("Epic should be in bars");
         assert_eq!(b.open, 1.10);
         assert!((b.high - 1.15).abs() < 1e-10);
-        assert!((b.low  - 1.05).abs() < 1e-10);
+        assert!((b.low - 1.05).abs() < 1e-10);
         assert!((b.close - 1.05).abs() < 1e-10);
     }
 
@@ -115,9 +129,12 @@ mod tests {
         let completed = acc.update("EPIC", 1.30, base + 3600);
         assert!(completed.is_some());
         let c = completed.expect("Should have returned a completed candle");
-        assert_eq!(c.timestamp, acc.bars.get("EPIC").expect("Epic should be in bars").bar_ts - 3600);
-        assert!((c.open  - 1.10).abs() < 1e-10);
-        assert!((c.high  - 1.20).abs() < 1e-10);
+        assert_eq!(
+            c.timestamp,
+            acc.bars.get("EPIC").expect("Epic should be in bars").bar_ts - 3600
+        );
+        assert!((c.open - 1.10).abs() < 1e-10);
+        assert!((c.high - 1.20).abs() < 1e-10);
         assert!((c.close - 1.20).abs() < 1e-10);
     }
 }

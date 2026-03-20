@@ -21,8 +21,20 @@ pub struct M15MomentumBurstStrategy {
 }
 
 impl M15MomentumBurstStrategy {
-    pub fn new(weight: f64, rsi_min: f64, rsi_max: f64, atr_sl_multiplier: f64, atr_tp_multiplier: f64) -> Self {
-        Self { weight, rsi_min, rsi_max, atr_sl_multiplier, atr_tp_multiplier }
+    pub fn new(
+        weight: f64,
+        rsi_min: f64,
+        rsi_max: f64,
+        atr_sl_multiplier: f64,
+        atr_tp_multiplier: f64,
+    ) -> Self {
+        Self {
+            weight,
+            rsi_min,
+            rsi_max,
+            atr_sl_multiplier,
+            atr_tp_multiplier,
+        }
     }
 }
 
@@ -59,7 +71,7 @@ impl M15Strategy for M15MomentumBurstStrategy {
         let rsi = m15_snapshot.rsi?;
 
         // In RANGING: only fire at clear S/R extremes — momentum burst from oversold/overbought
-        if ranging_mode && !(rsi < 35.0 || rsi > 65.0) {
+        if ranging_mode && (35.0..=65.0).contains(&rsi) {
             return None;
         }
 
@@ -71,18 +83,26 @@ impl M15Strategy for M15MomentumBurstStrategy {
         // Strength: base 7.0 + ADX contribution
         let adx = m15_snapshot.adx.unwrap_or(0.0);
         let strength = 7.0_f64
-            + if adx > 40.0 { 2.0 } else if adx > 30.0 { 1.0 } else { 0.0 };
+            + if adx > 40.0 {
+                2.0
+            } else if adx > 30.0 {
+                1.0
+            } else {
+                0.0
+            };
 
         let sl_dist = atr * self.atr_sl_multiplier;
         let tp_dist = atr * self.atr_tp_multiplier;
 
-        let direction = if rsi >= self.rsi_min && rsi <= self.rsi_max
+        let direction = if rsi >= self.rsi_min
+            && rsi <= self.rsi_max
             && macd_hist > 0.0
             && macd_hist > prev_macd_hist
             && price > h1_ema200
         {
             Direction::Buy
-        } else if rsi >= (100.0 - self.rsi_max) && rsi <= (100.0 - self.rsi_min)
+        } else if rsi >= (100.0 - self.rsi_max)
+            && rsi <= (100.0 - self.rsi_min)
             && macd_hist < 0.0
             && macd_hist < prev_macd_hist
             && price < h1_ema200
@@ -93,7 +113,7 @@ impl M15Strategy for M15MomentumBurstStrategy {
         };
 
         let (stop_loss, take_profit) = match &direction {
-            Direction::Buy  => (price - sl_dist, price + tp_dist),
+            Direction::Buy => (price - sl_dist, price + tp_dist),
             Direction::Sell => (price + sl_dist, price - tp_dist),
         };
 

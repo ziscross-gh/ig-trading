@@ -7,15 +7,14 @@
 /// -DI > +DI = bearish trend
 use super::ADXValues;
 
-pub fn calculate(
-    highs: &[f64],
-    lows: &[f64],
-    closes: &[f64],
-    period: usize,
-) -> ADXValues {
+pub fn calculate(highs: &[f64], lows: &[f64], closes: &[f64], period: usize) -> ADXValues {
     let len = highs.len().min(lows.len()).min(closes.len());
     if len < period * 2 + 1 {
-        return ADXValues { adx: 0.0, plus_di: 0.0, minus_di: 0.0 };
+        return ADXValues {
+            adx: 0.0,
+            plus_di: 0.0,
+            minus_di: 0.0,
+        };
     }
 
     let period_f = period as f64;
@@ -25,20 +24,18 @@ pub fn calculate(
 
     // Initial sums
     for i in 1..=period {
-        let plus_dm = if highs[i] - highs[i - 1] > lows[i - 1] - lows[i]
-            && highs[i] - highs[i - 1] > 0.0
-        {
-            highs[i] - highs[i - 1]
-        } else {
-            0.0
-        };
-        let minus_dm = if lows[i - 1] - lows[i] > highs[i] - highs[i - 1]
-            && lows[i - 1] - lows[i] > 0.0
-        {
-            lows[i - 1] - lows[i]
-        } else {
-            0.0
-        };
+        let plus_dm =
+            if highs[i] - highs[i - 1] > lows[i - 1] - lows[i] && highs[i] - highs[i - 1] > 0.0 {
+                highs[i] - highs[i - 1]
+            } else {
+                0.0
+            };
+        let minus_dm =
+            if lows[i - 1] - lows[i] > highs[i] - highs[i - 1] && lows[i - 1] - lows[i] > 0.0 {
+                lows[i - 1] - lows[i]
+            } else {
+                0.0
+            };
         let tr = (highs[i] - lows[i])
             .max((highs[i] - closes[i - 1]).abs())
             .max((lows[i] - closes[i - 1]).abs());
@@ -51,20 +48,18 @@ pub fn calculate(
     // Wilder's smoothing
     let mut dx_values = Vec::new();
     for i in (period + 1)..len {
-        let plus_dm = if highs[i] - highs[i - 1] > lows[i - 1] - lows[i]
-            && highs[i] - highs[i - 1] > 0.0
-        {
-            highs[i] - highs[i - 1]
-        } else {
-            0.0
-        };
-        let minus_dm = if lows[i - 1] - lows[i] > highs[i] - highs[i - 1]
-            && lows[i - 1] - lows[i] > 0.0
-        {
-            lows[i - 1] - lows[i]
-        } else {
-            0.0
-        };
+        let plus_dm =
+            if highs[i] - highs[i - 1] > lows[i - 1] - lows[i] && highs[i] - highs[i - 1] > 0.0 {
+                highs[i] - highs[i - 1]
+            } else {
+                0.0
+            };
+        let minus_dm =
+            if lows[i - 1] - lows[i] > highs[i] - highs[i - 1] && lows[i - 1] - lows[i] > 0.0 {
+                lows[i - 1] - lows[i]
+            } else {
+                0.0
+            };
         let tr = (highs[i] - lows[i])
             .max((highs[i] - closes[i - 1]).abs())
             .max((lows[i] - closes[i - 1]).abs());
@@ -85,7 +80,11 @@ pub fn calculate(
     }
 
     if dx_values.len() < period {
-        return ADXValues { adx: 0.0, plus_di: 0.0, minus_di: 0.0 };
+        return ADXValues {
+            adx: 0.0,
+            plus_di: 0.0,
+            minus_di: 0.0,
+        };
     }
 
     // ADX = smoothed average of DX
@@ -116,6 +115,10 @@ mod tests {
         let closes: Vec<f64> = (0..n).map(|i| 100.0 + i as f64 * 1.0).collect();
 
         let result = calculate(&highs, &lows, &closes, 14);
-        assert!(result.adx > 20.0, "ADX should indicate trend, got {}", result.adx);
+        assert!(
+            result.adx > 20.0,
+            "ADX should indicate trend, got {}",
+            result.adx
+        );
     }
 }

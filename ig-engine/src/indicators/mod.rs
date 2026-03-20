@@ -4,13 +4,13 @@
 //! All indicators use ring buffers for O(1) updates on new candles.
 //! Calculations use f64 for speed — we only need rust_decimal for order sizing.
 
-pub mod sma;
-pub mod ema;
-pub mod rsi;
-pub mod macd;
+pub mod adx;
 pub mod atr;
 pub mod bollinger;
-pub mod adx;
+pub mod ema;
+pub mod macd;
+pub mod rsi;
+pub mod sma;
 pub mod stochastic;
 
 use serde::{Deserialize, Serialize};
@@ -38,7 +38,7 @@ pub struct IndicatorSnapshot {
     // Exponential Moving Averages
     pub ema_short: Option<f64>,
     pub ema_long: Option<f64>,
-    pub ema_200: Option<f64>,        // 200-period EMA for trend filter
+    pub ema_200: Option<f64>, // 200-period EMA for trend filter
 
     // Previous EMA values (for crossover detection)
     pub prev_ema_short: Option<f64>,
@@ -48,10 +48,10 @@ pub struct IndicatorSnapshot {
     pub rsi: Option<f64>,
 
     // MACD (flattened)
-    pub macd: Option<f64>,           // MACD line
-    pub macd_signal: Option<f64>,    // Signal line
+    pub macd: Option<f64>,        // MACD line
+    pub macd_signal: Option<f64>, // Signal line
     pub macd_histogram: Option<f64>,
-    pub prev_macd: Option<f64>,      // Previous MACD line
+    pub prev_macd: Option<f64>, // Previous MACD line
     pub prev_macd_histogram: Option<f64>,
 
     // ATR
@@ -266,10 +266,18 @@ impl IndicatorSet {
         adx_period: usize,
         stoch_period: usize,
     ) -> Self {
-        let max_period = *[short_period, long_period, trend_period, bb_period, adx_period, stoch_period, 200]
-            .iter()
-            .max()
-            .unwrap_or(&200);
+        let max_period = *[
+            short_period,
+            long_period,
+            trend_period,
+            bb_period,
+            adx_period,
+            stoch_period,
+            200,
+        ]
+        .iter()
+        .max()
+        .unwrap_or(&200);
 
         Self {
             short_period,
@@ -324,10 +332,15 @@ impl IndicatorSet {
     /// before they can trade, and including it would delay M15 warmup by 50+ hours when
     /// the engine starts without cached history.
     pub fn warmup_period(&self) -> usize {
-        let max_core = *[self.long_period, self.bb_period, self.adx_period, self.stoch_period]
-            .iter()
-            .max()
-            .unwrap_or(&21);
+        let max_core = *[
+            self.long_period,
+            self.bb_period,
+            self.adx_period,
+            self.stoch_period,
+        ]
+        .iter()
+        .max()
+        .unwrap_or(&21);
         max_core + 10 // e.g. max(21,20,14,14)+10 = 31 bars
     }
 

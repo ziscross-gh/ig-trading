@@ -1,14 +1,14 @@
 #![allow(dead_code)]
 use anyhow::Result;
-use tracing::{info, warn, error, debug};
 use serde::{Deserialize, Serialize};
 use tokio::time::{sleep, Duration};
+use tracing::{debug, error, info, warn};
 
 use crate::api::rest_client::IGRestClient;
-use crate::api::types::{IGTradeRequest, IGConfirmResponse};
 use crate::api::traits::TraderAPI;
-use crate::risk::AdjustedTrade;
+use crate::api::types::{IGConfirmResponse, IGTradeRequest};
 use crate::engine::state::Position;
+use crate::risk::AdjustedTrade;
 
 /// Configuration for order execution behavior
 #[derive(Debug, Clone)]
@@ -63,13 +63,16 @@ impl OrderManager {
         );
 
         // Build the trade request
-        // HYBRID LOGIC: 
+        // HYBRID LOGIC:
         // 1. JPY pairs MUST use JPY.
         // 2. Other major FX pairs (EUR, GBP, AUD) use USD.
         // 3. Everything else uses the account's base currency.
         let currency_code = if trade.epic.contains("JPY") {
             "JPY".to_string()
-        } else if trade.epic.contains("EURUSD") || trade.epic.contains("GBPUSD") || trade.epic.contains("AUDUSD") {
+        } else if trade.epic.contains("EURUSD")
+            || trade.epic.contains("GBPUSD")
+            || trade.epic.contains("AUDUSD")
+        {
             "USD".to_string()
         } else {
             currency.to_string()
@@ -85,7 +88,10 @@ impl OrderManager {
             epic: trade.epic.clone(),
             direction: trade.direction.clone(),
             size: trade.size,
-            order_type: trade.order_type.clone().unwrap_or_else(|| "MARKET".to_string()),
+            order_type: trade
+                .order_type
+                .clone()
+                .unwrap_or_else(|| "MARKET".to_string()),
             level: if is_limit { trade.entry_level } else { None },
             stop_level: Some(trade.stop_loss),
             stop_distance: None,
@@ -179,13 +185,23 @@ impl OrderManager {
         let max_retries = 3;
 
         while retry_count < max_retries {
-            match client.close_position(&position.deal_id, close_direction, position.size).await {
+            match client
+                .close_position(&position.deal_id, close_direction, position.size)
+                .await
+            {
                 Ok(resp) => {
                     close_response = Some(resp);
                     break;
                 }
-                Err(e) if e.to_string().contains("POSITION_NOT_FOUND") && retry_count < max_retries - 1 => {
-                    warn!("Position not found yet (replication delay). Retrying close... ({}/{})", retry_count + 1, max_retries);
+                Err(e)
+                    if e.to_string().contains("POSITION_NOT_FOUND")
+                        && retry_count < max_retries - 1 =>
+                {
+                    warn!(
+                        "Position not found yet (replication delay). Retrying close... ({}/{})",
+                        retry_count + 1,
+                        max_retries
+                    );
                     sleep(Duration::from_millis(500)).await;
                     retry_count += 1;
                 }
@@ -193,7 +209,8 @@ impl OrderManager {
             }
         }
 
-        let close_response = close_response.ok_or_else(|| anyhow::anyhow!("Failed to get close response after retries"))?;
+        let close_response = close_response
+            .ok_or_else(|| anyhow::anyhow!("Failed to get close response after retries"))?;
 
         info!(
             "Close submitted: deal_reference={}, status={:?}",

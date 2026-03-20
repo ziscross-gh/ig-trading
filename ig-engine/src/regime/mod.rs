@@ -23,8 +23,8 @@
 //! }
 //! ```
 
-use serde::Deserialize;
 use chrono::Utc;
+use serde::Deserialize;
 use tracing::{debug, info};
 
 use crate::engine::state::Signal;
@@ -46,7 +46,7 @@ impl std::fmt::Display for RegimeKind {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             RegimeKind::Trending => write!(f, "TRENDING"),
-            RegimeKind::Ranging  => write!(f, "RANGING"),
+            RegimeKind::Ranging => write!(f, "RANGING"),
             RegimeKind::Volatile => write!(f, "VOLATILE"),
         }
     }
@@ -55,9 +55,9 @@ impl std::fmt::Display for RegimeKind {
 /// Regime state for one instrument, as read from the JSON file.
 #[derive(Debug, Clone)]
 pub struct Regime {
-    pub kind:       RegimeKind,
+    pub kind: RegimeKind,
     pub confidence: f64,
-    pub timestamp:  i64,
+    pub timestamp: i64,
     pub instrument: String,
 }
 
@@ -65,10 +65,10 @@ pub struct Regime {
 
 #[derive(Deserialize)]
 struct RawEntry {
-    regime:     String,
+    regime: String,
     confidence: f64,
     instrument: String,
-    timestamp:  i64,
+    timestamp: i64,
 }
 
 // ── Constants ──────────────────────────────────────────────────────────────────
@@ -85,13 +85,13 @@ const REGIME_FILE: &str = "data/regime_latest.json";
 /// These adjust signal *strengths* before the ensemble vote, effectively
 /// re-weighting the influence of each strategy family without touching
 /// the underlying EnsembleVoter weights (which the adaptive system owns).
-const TRENDING_BOOST:   f64 = 1.5;   // trend family boosted
-const TRENDING_MUTE:    f64 = 0.3;   // reversion family muted
-const RANGING_BOOST:    f64 = 1.5;   // reversion family boosted
-const RANGING_MUTE:     f64 = 0.3;   // trend family muted
-const VOLATILE_MUTE:    f64 = 0.5;   // all strategies muted (0.5 lets scalp tier reach avg ≥ 6.0)
+const TRENDING_BOOST: f64 = 1.5; // trend family boosted
+const TRENDING_MUTE: f64 = 0.3; // reversion family muted
+const RANGING_BOOST: f64 = 1.5; // reversion family boosted
+const RANGING_MUTE: f64 = 0.3; // trend family muted
+const VOLATILE_MUTE: f64 = 0.5; // all strategies muted (0.5 lets scalp tier reach avg ≥ 6.0)
 
-const TREND_STRATEGIES:     &[&str] = &["MA_Crossover", "MACD_Momentum", "Multi_Timeframe"];
+const TREND_STRATEGIES: &[&str] = &["MA_Crossover", "MACD_Momentum", "Multi_Timeframe"];
 const REVERSION_STRATEGIES: &[&str] = &["RSI_Reversal", "Bollinger_Bands"];
 
 // ── Public API ─────────────────────────────────────────────────────────────────
@@ -112,21 +112,23 @@ pub fn read_regime(epic: &str) -> Option<Regime> {
     if age_secs > MAX_AGE_SECS {
         debug!(
             "Regime data for {} is stale ({} min old, max {}min) — ignoring",
-            epic, age_secs / 60, MAX_AGE_SECS / 60
+            epic,
+            age_secs / 60,
+            MAX_AGE_SECS / 60
         );
         return None;
     }
 
     let kind = match entry.regime.as_str() {
         "TRENDING" => RegimeKind::Trending,
-        "RANGING"  => RegimeKind::Ranging,
-        _          => RegimeKind::Volatile,   // includes "VOLATILE" and any unknown
+        "RANGING" => RegimeKind::Ranging,
+        _ => RegimeKind::Volatile, // includes "VOLATILE" and any unknown
     };
 
     Some(Regime {
         kind,
         confidence: entry.confidence,
-        timestamp:  entry.timestamp,
+        timestamp: entry.timestamp,
         instrument: entry.instrument,
     })
 }
@@ -149,12 +151,15 @@ pub fn read_regime(epic: &str) -> Option<Regime> {
 pub fn apply_regime_multipliers(signals: &mut [Signal], regime: &Regime) {
     let icon = match regime.kind {
         RegimeKind::Trending => "📈",
-        RegimeKind::Ranging  => "↔️",
+        RegimeKind::Ranging => "↔️",
         RegimeKind::Volatile => "⚡",
     };
     info!(
         "Regime {} {} (conf={:.2}) — adjusting {} signal strengths",
-        icon, regime.kind, regime.confidence, signals.len()
+        icon,
+        regime.kind,
+        regime.confidence,
+        signals.len()
     );
 
     for sig in signals.iter_mut() {
@@ -173,16 +178,30 @@ pub fn apply_regime_multipliers(signals: &mut [Signal], regime: &Regime) {
 fn regime_multiplier(kind: &RegimeKind, strategy: &str) -> f64 {
     match kind {
         RegimeKind::Trending => {
-            if TREND_STRATEGIES.contains(&strategy)           { TRENDING_BOOST }
-            else if REVERSION_STRATEGIES.contains(&strategy)  { TRENDING_MUTE }
-            else if strategy == "Stochastic_Momentum"         { VOLATILE_MUTE } // oscillator less useful in trend
-            else { 1.0 }
+            if TREND_STRATEGIES.contains(&strategy) {
+                TRENDING_BOOST
+            } else if REVERSION_STRATEGIES.contains(&strategy) {
+                TRENDING_MUTE
+            } else if strategy == "Stochastic_Momentum" {
+                VOLATILE_MUTE
+            }
+            // oscillator less useful in trend
+            else {
+                1.0
+            }
         }
         RegimeKind::Ranging => {
-            if REVERSION_STRATEGIES.contains(&strategy)       { RANGING_BOOST }
-            else if TREND_STRATEGIES.contains(&strategy)      { RANGING_MUTE }
-            else if strategy == "Stochastic_Momentum"         { 1.2 } // oscillators excel in ranging
-            else { 1.0 }
+            if REVERSION_STRATEGIES.contains(&strategy) {
+                RANGING_BOOST
+            } else if TREND_STRATEGIES.contains(&strategy) {
+                RANGING_MUTE
+            } else if strategy == "Stochastic_Momentum" {
+                1.2
+            }
+            // oscillators excel in ranging
+            else {
+                1.0
+            }
         }
         RegimeKind::Volatile => {
             // Differentiated VOLATILE multipliers (Phase 15.D):
@@ -199,13 +218,13 @@ fn regime_multiplier(kind: &RegimeKind, strategy: &str) -> f64 {
             //  Sentiment   → 1.0× often the cause of volatility
             match strategy {
                 "Stochastic_Momentum" => 1.2,
-                "RSI_Reversal"        => 1.0,
-                "Bollinger_Bands"     => 1.0,
-                "MACD_Momentum"       => 0.8,
-                "MA_Crossover"        => 0.3,
-                "Multi_Timeframe"     => 0.3,
-                "Gold_Sentiment"      => 1.0,
-                _                     => VOLATILE_MUTE,
+                "RSI_Reversal" => 1.0,
+                "Bollinger_Bands" => 1.0,
+                "MACD_Momentum" => 0.8,
+                "MA_Crossover" => 0.3,
+                "Multi_Timeframe" => 0.3,
+                "Gold_Sentiment" => 1.0,
+                _ => VOLATILE_MUTE,
             }
         }
     }

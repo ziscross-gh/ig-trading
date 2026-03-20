@@ -20,7 +20,11 @@ pub struct M15EmaMicrotrendStrategy {
 
 impl M15EmaMicrotrendStrategy {
     pub fn new(weight: f64, atr_sl_multiplier: f64, atr_tp_multiplier: f64) -> Self {
-        Self { weight, atr_sl_multiplier, atr_tp_multiplier }
+        Self {
+            weight,
+            atr_sl_multiplier,
+            atr_tp_multiplier,
+        }
     }
 }
 
@@ -51,8 +55,8 @@ impl M15Strategy for M15EmaMicrotrendStrategy {
             _ => return None,
         }
 
-        let ema_short = m15_snapshot.ema_short?;  // EMA9
-        let ema_long = m15_snapshot.ema_long?;    // EMA21
+        let ema_short = m15_snapshot.ema_short?; // EMA9
+        let ema_long = m15_snapshot.ema_long?; // EMA21
         let prev_ema_long = m15_snapshot.prev_ema_long?;
         let h1_ema_long = h1_snapshot.ema_long?;
         let h1_prev_ema_long = h1_snapshot.prev_ema_long?;
@@ -60,19 +64,27 @@ impl M15Strategy for M15EmaMicrotrendStrategy {
 
         let adx = m15_snapshot.adx.unwrap_or(0.0);
         let strength = 7.5_f64
-            + if adx > 35.0 { 1.5 } else if adx > 25.0 { 0.5 } else { 0.0 };
+            + if adx > 35.0 {
+                1.5
+            } else if adx > 25.0 {
+                0.5
+            } else {
+                0.0
+            };
 
         let sl_dist = atr * self.atr_sl_multiplier;
         let tp_dist = atr * self.atr_tp_multiplier;
 
         let direction = if ema_short > ema_long
             && ema_long > prev_ema_long        // M15 EMA21 slope positive
-            && h1_ema_long > h1_prev_ema_long  // H1 EMA21 slope positive (trend confirmation)
+            && h1_ema_long > h1_prev_ema_long
+        // H1 EMA21 slope positive (trend confirmation)
         {
             Direction::Buy
         } else if ema_short < ema_long
             && ema_long < prev_ema_long        // M15 EMA21 slope negative
-            && h1_ema_long < h1_prev_ema_long  // H1 EMA21 slope negative
+            && h1_ema_long < h1_prev_ema_long
+        // H1 EMA21 slope negative
         {
             Direction::Sell
         } else {
@@ -80,7 +92,7 @@ impl M15Strategy for M15EmaMicrotrendStrategy {
         };
 
         let (stop_loss, take_profit) = match &direction {
-            Direction::Buy  => (price - sl_dist, price + tp_dist),
+            Direction::Buy => (price - sl_dist, price + tp_dist),
             Direction::Sell => (price + sl_dist, price - tp_dist),
         };
 
@@ -92,7 +104,8 @@ impl M15Strategy for M15EmaMicrotrendStrategy {
             strategy: self.name().to_string(),
             reason: format!(
                 "M15 EMA9={:.4} vs EMA21={:.4} slope={:+.5} H1_slope={:+.5} ADX={:.1}",
-                ema_short, ema_long,
+                ema_short,
+                ema_long,
                 ema_long - prev_ema_long,
                 h1_ema_long - h1_prev_ema_long,
                 adx

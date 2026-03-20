@@ -1,28 +1,28 @@
-use std::sync::Arc;
-use tokio::sync::{broadcast, RwLock};
 use axum::{
     body::Body,
     http::{Request, StatusCode},
     response::Response,
 };
-use tower::util::ServiceExt; 
-use serde_json::json;
 use chrono::Utc;
+use serde_json::json;
+use std::sync::Arc;
+use tokio::sync::{broadcast, RwLock};
+use tower::util::ServiceExt;
 
-use ig_engine::engine::state::{EngineState};
 use ig_engine::engine::config::EngineConfig;
-use ig_engine::ipc::http_server::AppState;
+use ig_engine::engine::state::EngineState;
 use ig_engine::indicators::Candle;
+use ig_engine::ipc::http_server::AppState;
 
 #[tokio::test]
 async fn test_backtest_endpoint() {
     // 1. Setup EngineState with mock data
     let mut config = EngineConfig::default();
     config.markets.epics = vec!["CS.D.EURUSD.CSD.IP".to_string()];
-    
+
     let engine_state = Arc::new(RwLock::new(EngineState::new(config)));
     let (event_tx, _) = broadcast::channel(100);
-    
+
     // Populate with candles
     {
         let mut s = engine_state.write().await;
@@ -51,7 +51,10 @@ async fn test_backtest_endpoint() {
 
     // 2. Setup Router
     let app = axum::Router::new()
-        .route("/api/backtest", axum::routing::post(ig_engine::ipc::http_server::post_backtest))
+        .route(
+            "/api/backtest",
+            axum::routing::post(ig_engine::ipc::http_server::post_backtest),
+        )
         .with_state(app_state);
 
     // 3. Make Request
@@ -77,10 +80,12 @@ async fn test_backtest_endpoint() {
 
     // 4. Assert
     assert_eq!(response.status(), StatusCode::OK);
-    
-    let body = axum::body::to_bytes(response.into_body(), usize::MAX).await.expect("Failed to read body");
+
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .expect("Failed to read body");
     let body: serde_json::Value = serde_json::from_slice(&body).expect("Failed to parse body JSON");
-    
+
     assert_eq!(body["success"], true);
     assert_eq!(body["epic"], "CS.D.EURUSD.CSD.IP");
     assert_eq!(body["strategy"], "ma_crossover");
@@ -92,12 +97,12 @@ async fn test_backtest_endpoint_filtering() {
     // 1. Setup EngineState with mock data
     let mut config = EngineConfig::default();
     config.markets.epics = vec!["CS.D.EURUSD.CSD.IP".to_string()];
-    
+
     let engine_state = Arc::new(RwLock::new(EngineState::new(config)));
     let (event_tx, _) = broadcast::channel(100);
-    
+
     let base_ts = 1700000000;
-    
+
     // Populate with 100 candles, one per hour
     {
         let mut s = engine_state.write().await;
@@ -123,7 +128,10 @@ async fn test_backtest_endpoint_filtering() {
     };
 
     let app = axum::Router::new()
-        .route("/api/backtest", axum::routing::post(ig_engine::ipc::http_server::post_backtest))
+        .route(
+            "/api/backtest",
+            axum::routing::post(ig_engine::ipc::http_server::post_backtest),
+        )
         .with_state(app_state);
 
     // Request with range that should only include 60 candles (from 20 to 79)
@@ -150,10 +158,12 @@ async fn test_backtest_endpoint_filtering() {
         .expect("Oneshot call failed");
 
     assert_eq!(response.status(), StatusCode::OK);
-    
-    let body = axum::body::to_bytes(response.into_body(), usize::MAX).await.expect("Failed to read body");
+
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .expect("Failed to read body");
     let body: serde_json::Value = serde_json::from_slice(&body).expect("Failed to parse body JSON");
-    
+
     assert_eq!(body["success"], true);
     assert_eq!(body["candle_count"], 60);
 }

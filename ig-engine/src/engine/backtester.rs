@@ -1,7 +1,7 @@
-use serde::{Deserialize, Serialize};
+use crate::engine::state::Direction;
 use crate::indicators::{Candle, IndicatorSet};
 use crate::strategy::traits::Strategy;
-use crate::engine::state::Direction;
+use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BacktestTrade {
@@ -62,13 +62,13 @@ impl BacktestEngine {
         let mut trades = Vec::new();
         let mut active_trade: Option<BacktestTrade> = None;
         let mut indicators = IndicatorSet::default_config();
-        
+
         let mut peak = self.initial_balance;
         let mut max_drawdown = 0.0;
 
         for candle in candles {
             indicators.update(candle);
-            
+
             if !indicators.is_warmed_up() {
                 continue;
             }
@@ -83,12 +83,12 @@ impl BacktestEngine {
                         Direction::Buy => current_price - dist,
                         Direction::Sell => current_price + dist,
                     };
-                    
+
                     let should_update = match trade.direction {
                         Direction::Buy => new_sl > trade.stop_loss,
                         Direction::Sell => new_sl < trade.stop_loss,
                     };
-                    
+
                     if should_update {
                         trade.stop_loss = new_sl;
                     }
@@ -96,29 +96,41 @@ impl BacktestEngine {
 
                 // Check Exit Conditions (SL / TP)
                 let exit_reason = if trade.direction == Direction::Buy {
-                    if candle.low <= trade.stop_loss { Some("SL") }
-                    else if candle.high >= trade.take_profit { Some("TP") }
-                    else { None }
-                } else if candle.high >= trade.stop_loss { Some("SL") }
-                else if candle.low <= trade.take_profit { Some("TP") }
-                else { None };
+                    if candle.low <= trade.stop_loss {
+                        Some("SL")
+                    } else if candle.high >= trade.take_profit {
+                        Some("TP")
+                    } else {
+                        None
+                    }
+                } else if candle.high >= trade.stop_loss {
+                    Some("SL")
+                } else if candle.low <= trade.take_profit {
+                    Some("TP")
+                } else {
+                    None
+                };
 
                 if let Some(_reason) = exit_reason {
                     // Use candle high/low for exit price if hit during the bar for higher fidelity
-                    let exit_price = if _reason == "SL" { trade.stop_loss } else { trade.take_profit };
-                    
+                    let exit_price = if _reason == "SL" {
+                        trade.stop_loss
+                    } else {
+                        trade.take_profit
+                    };
+
                     trade.exit_price = Some(exit_price);
                     trade.exit_time = Some(candle.timestamp);
-                    
+
                     let pnl_pct = if trade.direction == Direction::Buy {
                         (exit_price - trade.entry_price) / trade.entry_price
                     } else {
                         (trade.entry_price - exit_price) / trade.entry_price
                     };
-                    
+
                     let trade_pnl = trade.size * pnl_pct * trade.entry_price;
                     trade.pnl = Some(trade_pnl);
-                    
+
                     self.current_balance += trade_pnl;
                     trades.push(trade);
 
@@ -141,20 +153,32 @@ impl BacktestEngine {
                 if let Some(snapshot) = indicators.snapshot() {
                     let mut snaps = std::collections::HashMap::new();
                     snaps.insert("HOUR".to_string(), snapshot);
-                    
+
                     if let Some(signal) = strategy.evaluate(epic, current_price, &snaps) {
                         // Use signal's stops if provided, else defaults
-                        let stop_loss = if signal.stop_loss > 0.0 { signal.stop_loss } else {
+                        let stop_loss = if signal.stop_loss > 0.0 {
+                            signal.stop_loss
+                        } else {
                             match signal.direction {
-                                Direction::Buy => current_price * (1.0 - self.default_stop_loss_pct / 100.0),
-                                Direction::Sell => current_price * (1.0 + self.default_stop_loss_pct / 100.0),
+                                Direction::Buy => {
+                                    current_price * (1.0 - self.default_stop_loss_pct / 100.0)
+                                }
+                                Direction::Sell => {
+                                    current_price * (1.0 + self.default_stop_loss_pct / 100.0)
+                                }
                             }
                         };
-                        
-                        let take_profit = if signal.take_profit > 0.0 { signal.take_profit } else {
+
+                        let take_profit = if signal.take_profit > 0.0 {
+                            signal.take_profit
+                        } else {
                             match signal.direction {
-                                Direction::Buy => current_price * (1.0 + self.default_take_profit_pct / 100.0),
-                                Direction::Sell => current_price * (1.0 - self.default_take_profit_pct / 100.0),
+                                Direction::Buy => {
+                                    current_price * (1.0 + self.default_take_profit_pct / 100.0)
+                                }
+                                Direction::Sell => {
+                                    current_price * (1.0 - self.default_take_profit_pct / 100.0)
+                                }
                             }
                         };
 
@@ -194,20 +218,22 @@ impl BacktestEngine {
         let total_pnl = self.current_balance - self.initial_balance;
         let total_pnl_pct = (total_pnl / self.initial_balance) * 100.0;
 
-        let total_gain: f64 = trades.iter()
+        let total_gain: f64 = trades
+            .iter()
             .map(|t| t.pnl.unwrap_or(0.0))
             .filter(|p| *p > 0.0)
             .sum();
-        let total_loss: f64 = trades.iter()
+        let total_loss: f64 = trades
+            .iter()
             .map(|t| t.pnl.unwrap_or(0.0))
             .filter(|p| *p < 0.0)
             .sum::<f64>()
             .abs();
-        
+
         let profit_factor = if total_loss > 0.0 {
             total_gain / total_loss
         } else if total_gain > 0.0 {
-            10.0 
+            10.0
         } else {
             0.0
         };

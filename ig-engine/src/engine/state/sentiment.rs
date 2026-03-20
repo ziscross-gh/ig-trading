@@ -1,6 +1,6 @@
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use chrono::{DateTime, Utc};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SentimentData {
@@ -28,24 +28,30 @@ impl GlobalSentimentRegistry {
     pub fn update(&mut self, market_id: String, long_pct: f64, short_pct: f64) {
         // Calculate score: (Long - Short) / 100
         let new_score = (long_pct - short_pct) / 100.0;
-        
-        let prev_score = self.data.get(&market_id)
+
+        let prev_score = self
+            .data
+            .get(&market_id)
             .map(|d| d.score)
             .unwrap_or(new_score);
 
-        self.data.insert(market_id.clone(), SentimentData {
-            market_id,
-            long_pct,
-            short_pct,
-            score: new_score,
-            prev_score,
-            updated_at: Utc::now(),
-        });
+        self.data.insert(
+            market_id.clone(),
+            SentimentData {
+                market_id,
+                long_pct,
+                short_pct,
+                score: new_score,
+                prev_score,
+                updated_at: Utc::now(),
+            },
+        );
     }
 
     /// Returns the absolute change in sentiment score since the last update
     pub fn get_velocity(&self, market_id: &str) -> f64 {
-        self.data.get(market_id)
+        self.data
+            .get(market_id)
             .map(|d| (d.score - d.prev_score).abs())
             .unwrap_or(0.0)
     }

@@ -89,12 +89,16 @@ impl M15Strategy for M15BollingerReversionStrategy {
 
         // Strength based on how extreme the %B is
         let strength = 7.0_f64
-            + if !(0.02..=0.98).contains(&percent_b) { 1.5 }
-              else if !(0.04..=0.96).contains(&percent_b) { 0.5 }
-              else { 0.0 };
+            + if !(0.02..=0.98).contains(&percent_b) {
+                1.5
+            } else if !(0.04..=0.96).contains(&percent_b) {
+                0.5
+            } else {
+                0.0
+            };
 
         let (stop_loss, take_profit) = match &direction {
-            Direction::Buy  => (price - sl_dist, bb_middle),
+            Direction::Buy => (price - sl_dist, bb_middle),
             Direction::Sell => (price + sl_dist, bb_middle),
         };
 

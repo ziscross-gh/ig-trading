@@ -1,5 +1,5 @@
-use thiserror::Error;
 use reqwest::StatusCode;
+use thiserror::Error;
 
 #[derive(Error, Debug, Clone)]
 pub enum IGError {
@@ -35,21 +35,18 @@ pub enum IGError {
 impl IGError {
     pub fn from_ig_code(status: StatusCode, code: &str, details: &str) -> Self {
         match code {
-            "error.public-api.exceeded-account-trading-limit" |
-            "error.public-api.exceeded-account-allowance" |
-            "error.public-api.exceeded-api-key-allowance" => {
+            "error.public-api.exceeded-account-trading-limit"
+            | "error.public-api.exceeded-account-allowance"
+            | "error.public-api.exceeded-api-key-allowance" => {
                 IGError::RateLimitExceeded(code.to_string())
             }
-            "error.security.client-token-invalid" |
-            "error.security.cst-token-invalid" => {
+            "error.security.client-token-invalid" | "error.security.cst-token-invalid" => {
                 IGError::InvalidToken(code.to_string())
             }
             "error.market.closed" | "error.market.offline" => {
                 IGError::MarketClosed(code.to_string())
             }
-            "error.trade.not-enough-funds" => {
-                IGError::InsufficientFunds(code.to_string())
-            }
+            "error.trade.not-enough-funds" => IGError::InsufficientFunds(code.to_string()),
             _ => {
                 if status == StatusCode::UNAUTHORIZED {
                     IGError::InvalidToken("Unauthorized".to_string())
@@ -68,7 +65,10 @@ impl IGError {
 
     /// Returns true if the error is likely transient and should be retried
     pub fn is_retryable(&self) -> bool {
-        matches!(self, IGError::RateLimitExceeded(_) | IGError::ConnectionError(_))
+        matches!(
+            self,
+            IGError::RateLimitExceeded(_) | IGError::ConnectionError(_)
+        )
     }
 
     /// Returns true if the error requires a full session re-authentication

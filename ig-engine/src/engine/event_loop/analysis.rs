@@ -1,17 +1,17 @@
-use std::sync::Arc;
-use tokio::sync::{RwLock, broadcast};
 use anyhow::Result;
-use tracing::{info, warn, error, debug};
 use chrono::Utc;
+use std::sync::Arc;
+use tokio::sync::{broadcast, RwLock};
+use tracing::{debug, error, info, warn};
 
-use crate::engine::config::{EngineConfig, EngineMode};
-use crate::engine::state::{EngineState, Direction, Position, Signal, get_instrument_name};
 use crate::api::rest_client::IGRestClient;
-use crate::risk::RiskManager;
-use crate::strategy::traits::{Strategy, M15Strategy};
-use crate::strategy::ensemble::EnsembleVoter;
+use crate::engine::config::{EngineConfig, EngineMode};
+use crate::engine::state::{get_instrument_name, Direction, EngineState, Position, Signal};
 use crate::ipc::events::EngineEvent;
 use crate::notifications::telegram::TelegramNotifier;
+use crate::risk::RiskManager;
+use crate::strategy::ensemble::EnsembleVoter;
+use crate::strategy::traits::{M15Strategy, Strategy};
 
 /// Analyze one or more markets and potentially execute trades
 #[allow(clippy::too_many_arguments)]
@@ -38,15 +38,26 @@ pub async fn analyze_market(
         let (bid, offer, mid_price, mkt_state) = {
             let s = state.read().await;
             if let Some(ms) = s.markets.live.get(epic) {
-                (ms.bid, ms.ask, (ms.bid + ms.ask) / 2.0, ms.market_state.clone())
+                (
+                    ms.bid,
+                    ms.ask,
+                    (ms.bid + ms.ask) / 2.0,
+                    ms.market_state.clone(),
+                )
             } else {
-                debug!("No market data yet for {} (waiting for Lightstreamer tick)", epic);
+                debug!(
+                    "No market data yet for {} (waiting for Lightstreamer tick)",
+                    epic
+                );
                 continue;
             }
         };
 
         if bid <= 0.0 || offer <= 0.0 {
-            debug!("[{}] Skipping analysis — bid={:.5} offer={:.5} (waiting for valid prices)", epic, bid, offer);
+            debug!(
+                "[{}] Skipping analysis — bid={:.5} offer={:.5} (waiting for valid prices)",
+                epic, bid, offer
+            );
             continue;
         }
 
@@ -56,7 +67,10 @@ pub async fn analyze_market(
         if let Some(ref state_str) = mkt_state {
             let upper = state_str.to_ascii_uppercase();
             if !upper.starts_with("TRADEABLE") {
-                info!("Market {} not tradeable (MARKET_STATE={}), skipping analysis", epic, state_str);
+                info!(
+                    "Market {} not tradeable (MARKET_STATE={}), skipping analysis",
+                    epic, state_str
+                );
                 continue;
             }
         }
@@ -79,23 +93,33 @@ pub async fn analyze_market(
 
             // Emitting events - just using HOUR as default stream visualization for now
             if let Some(snap_hour) = snapshot_map.get("HOUR") {
-                let _ = event_tx.send(EngineEvent::indicator_update(epic.clone(), snap_hour.clone()));
+                let _ = event_tx.send(EngineEvent::indicator_update(
+                    epic.clone(),
+                    snap_hour.clone(),
+                ));
             }
 
             if snapshot_map.is_empty() {
-                tracing::info!("[{}] Indicators not warmed up yet — skipping bar analysis", epic);
+                tracing::info!(
+                    "[{}] Indicators not warmed up yet — skipping bar analysis",
+                    epic
+                );
                 continue;
             }
 
             // Read per-instrument override (ADX range filter)
             let override_cfg = config.strategies.instrument_overrides.get(epic).cloned();
-            let adx_range_filter = override_cfg.as_ref().map(|o| o.adx_range_filter).unwrap_or(false);
-            let adx_range_max   = override_cfg.as_ref().and_then(|o| o.adx_range_max).unwrap_or(25.0);
+            let adx_range_filter = override_cfg
+                .as_ref()
+                .map(|o| o.adx_range_filter)
+                .unwrap_or(false);
+            let adx_range_max = override_cfg
+                .as_ref()
+                .and_then(|o| o.adx_range_max)
+                .unwrap_or(25.0);
 
             // Read current ADX from HOUR indicators (used by range filter below)
-            let current_adx: Option<f64> = snapshot_map
-                .get("HOUR")
-                .and_then(|s| s.adx);
+            let current_adx: Option<f64> = snapshot_map.get("HOUR").and_then(|s| s.adx);
 
             // Mean-reversion strategy names — suppressed when market is trending
             const REVERSION_STRATEGIES: &[&str] = &["RSI_Reversal", "Bollinger_Bands"];
@@ -108,7 +132,10 @@ pub async fn analyze_market(
                         if adx > adx_range_max {
                             debug!(
                                 "ADX range filter: skipping {} for {} (ADX={:.1} > {:.1})",
-                                strategy.name(), epic, adx, adx_range_max
+                                strategy.name(),
+                                epic,
+                                adx,
+                                adx_range_max
                             );
                             continue;
                         }
@@ -133,12 +160,9 @@ pub async fn analyze_market(
             const GOLD_EPIC: &str = "CS.D.CFIGOLD.CFI.IP";
             if epic.as_str() == GOLD_EPIC {
                 let atr = snapshot_map.get("HOUR").and_then(|s| s.atr);
-                if let Some(sent) = read_gold_sentiment(
-                    "data/gold_sentiment_latest.json",
-                    atr,
-                    mid_price,
-                    config,
-                ) {
+                if let Some(sent) =
+                    read_gold_sentiment("data/gold_sentiment_latest.json", atr, mid_price, config)
+                {
                     info!(
                         "Gold sentiment signal injected: {} strength={:.1} — {}",
                         sent.direction, sent.strength, sent.reason
@@ -167,19 +191,24 @@ pub async fn analyze_market(
             // the dominant strategy family gets a consensus boost and the other is muted.
             // Returns None silently when the file is missing or stale — no-op in that case.
             // Also capture the regime string for birth tracking (13.1) and VOLATILE gate (12.4).
-            let current_regime_str: Option<String> = crate::regime::read_regime(epic.as_str())
-                .map(|regime| {
+            let current_regime_str: Option<String> =
+                crate::regime::read_regime(epic.as_str()).map(|regime| {
                     crate::regime::apply_regime_multipliers(&mut signals, &regime);
                     regime.kind.to_string()
                 });
             if current_regime_str.is_none() {
-                debug!("No fresh regime data for {} — using unweighted signals", epic);
+                debug!(
+                    "No fresh regime data for {} — using unweighted signals",
+                    epic
+                );
             }
             let is_volatile_regime = current_regime_str.as_deref() == Some("VOLATILE");
 
             tracing::info!(
                 "[{}] Bar analysis: {}/{} strategies fired signals",
-                epic, signals.len(), strategies.len()
+                epic,
+                signals.len(),
+                strategies.len()
             );
 
             // ── H1 Direction Bias (Phase 14.E) ────────────────────────────────
@@ -194,26 +223,29 @@ pub async fn analyze_market(
                 let mut sell_count = 0usize;
                 for sig in &signals {
                     match sig.direction {
-                        Direction::Buy  => buy_count  += 1,
+                        Direction::Buy => buy_count += 1,
                         Direction::Sell => sell_count += 1,
                     }
                 }
                 let bias_direction = match buy_count.cmp(&sell_count) {
                     std::cmp::Ordering::Greater => Some(Direction::Buy),
-                    std::cmp::Ordering::Less    => Some(Direction::Sell),
-                    std::cmp::Ordering::Equal   => None,
+                    std::cmp::Ordering::Less => Some(Direction::Sell),
+                    std::cmp::Ordering::Equal => None,
                 };
                 debug!(
                     "[{}] H1 bias: {:?} ({} buy, {} sell)",
                     epic, bias_direction, buy_count, sell_count
                 );
                 let mut s = state.write().await;
-                s.markets.h1_bias.insert(epic.clone(), H1DirectionBias {
-                    direction: bias_direction,
-                    buy_count,
-                    sell_count,
-                    updated_at: Utc::now(),
-                });
+                s.markets.h1_bias.insert(
+                    epic.clone(),
+                    H1DirectionBias {
+                        direction: bias_direction,
+                        buy_count,
+                        sell_count,
+                        updated_at: Utc::now(),
+                    },
+                );
             }
 
             // ── VOLATILE scalp tier ───────────────────────────────────────────
@@ -223,7 +255,9 @@ pub async fn analyze_market(
             // (Stochastic 1.2×, RSI/Bollinger 1.0×, MACD 0.8×), signals are stronger than
             // the old flat 0.5× mute. Scalp fallback threshold updated to 7.5 in config
             // (was hardcoded 5.0 when all strategies were at 0.5×).
-            let (v_barrier, v_min_strength) = config.strategies.consensus_matrix
+            let (v_barrier, v_min_strength) = config
+                .strategies
+                .consensus_matrix
                 .get("volatile")
                 .map(|e| (e.barrier, e.min_strength))
                 .unwrap_or((2, 7.5)); // safe fallback if config key missing
@@ -231,7 +265,10 @@ pub async fn analyze_market(
             let (maybe_signal, volatile_scalp) = if is_volatile_regime {
                 match ensemble.vote(&signals) {
                     Some(sig) => (Some(sig), false),
-                    None      => (ensemble.vote_with_overrides(&signals, v_barrier, v_min_strength), true),
+                    None => (
+                        ensemble.vote_with_overrides(&signals, v_barrier, v_min_strength),
+                        true,
+                    ),
                 }
             } else {
                 (ensemble.vote(&signals), false)
@@ -266,8 +303,14 @@ pub async fn analyze_market(
                             let tp_dist = atr * tp_mult;
                             use crate::engine::state::Direction;
                             let (new_sl, new_tp) = match ensemble_signal.direction {
-                                Direction::Buy  => (ensemble_signal.price - sl_dist, ensemble_signal.price + tp_dist),
-                                Direction::Sell => (ensemble_signal.price + sl_dist, ensemble_signal.price - tp_dist),
+                                Direction::Buy => (
+                                    ensemble_signal.price - sl_dist,
+                                    ensemble_signal.price + tp_dist,
+                                ),
+                                Direction::Sell => (
+                                    ensemble_signal.price + sl_dist,
+                                    ensemble_signal.price - tp_dist,
+                                ),
                             };
                             info!(
                                 "[{}] VOLATILE SL/TP override: SL={:.5} ({:.2}×ATR) TP={:.5} ({:.2}×ATR)",
@@ -295,25 +338,36 @@ pub async fn analyze_market(
                     let lookback = config.strategies.h1_macro_trend_lookback.max(3);
                     let slope: Option<f64> = {
                         let s = state.read().await;
-                        s.markets.history.get_candles(epic.as_str(), "HOUR")
+                        s.markets
+                            .history
+                            .get_candles(epic.as_str(), "HOUR")
                             .and_then(|bars| {
                                 let n = bars.len();
-                                if n < 3 { return None; }
+                                if n < 3 {
+                                    return None;
+                                }
                                 let take = lookback.min(n);
-                                let closes: Vec<f64> = bars[n - take..].iter()
-                                    .map(|b| b.close)
-                                    .collect();
+                                let closes: Vec<f64> =
+                                    bars[n - take..].iter().map(|b| b.close).collect();
                                 // Simple linear regression slope
                                 let len = closes.len() as f64;
                                 let x_mean = (len - 1.0) / 2.0;
                                 let y_mean = closes.iter().sum::<f64>() / len;
-                                let num: f64 = closes.iter().enumerate()
+                                let num: f64 = closes
+                                    .iter()
+                                    .enumerate()
                                     .map(|(i, &y)| (i as f64 - x_mean) * (y - y_mean))
                                     .sum();
-                                let den: f64 = closes.iter().enumerate()
+                                let den: f64 = closes
+                                    .iter()
+                                    .enumerate()
                                     .map(|(i, _)| (i as f64 - x_mean).powi(2))
                                     .sum();
-                                if den == 0.0 { None } else { Some(num / den) }
+                                if den == 0.0 {
+                                    None
+                                } else {
+                                    Some(num / den)
+                                }
                             })
                     };
                     if let Some(slope_val) = slope {
@@ -346,7 +400,10 @@ pub async fn analyze_market(
                             s.add_signal_record(
                                 ensemble_signal.clone(),
                                 false,
-                                Some(format!("H1 macro trend gate: slope={:.6} blocks {:?}", slope_val, ensemble_signal.direction)),
+                                Some(format!(
+                                    "H1 macro trend gate: slope={:.6} blocks {:?}",
+                                    slope_val, ensemble_signal.direction
+                                )),
                             );
                             continue;
                         }
@@ -356,21 +413,31 @@ pub async fn analyze_market(
                 // ── 12.2 Macro Pause — Sentiment Velocity Guard ──────────────────
                 let macro_paused = {
                     let s = state.read().await;
-                    s.metrics.macro_pause_until
+                    s.metrics
+                        .macro_pause_until
                         .map(|until| chrono::Utc::now() < until)
                         .unwrap_or(false)
                 };
                 if macro_paused {
-                    warn!("[{}] Macro pause active (sentiment velocity spike) — skipping trade entry", epic);
+                    warn!(
+                        "[{}] Macro pause active (sentiment velocity spike) — skipping trade entry",
+                        epic
+                    );
                     let mut s = state.write().await;
-                    s.add_signal_record(ensemble_signal.clone(), false, Some("Macro pause: sentiment velocity spike".to_string()));
+                    s.add_signal_record(
+                        ensemble_signal.clone(),
+                        false,
+                        Some("Macro pause: sentiment velocity spike".to_string()),
+                    );
                     continue;
                 }
 
                 // ── 12.3 Dynamic Spread Gate ─────────────────────────────────────
                 let (current_spread, avg_spread) = {
                     let s = state.read().await;
-                    s.markets.live.get(epic.as_str())
+                    s.markets
+                        .live
+                        .get(epic.as_str())
                         .map(|ms| (ms.spread, ms.avg_spread))
                         .unwrap_or((0.0, 0.0))
                 };
@@ -384,7 +451,10 @@ pub async fn analyze_market(
                     s.add_signal_record(
                         ensemble_signal.clone(),
                         false,
-                        Some(format!("Spread gate: {:.5} > {:.5}", current_spread, spread_threshold)),
+                        Some(format!(
+                            "Spread gate: {:.5} > {:.5}",
+                            current_spread, spread_threshold
+                        )),
                     );
                     continue;
                 }
@@ -419,13 +489,14 @@ pub async fn analyze_market(
                                 equity: s.account.equity,
                                 available_margin: s.account.available,
                             },
-                            s.account.currency.clone()
+                            s.account.currency.clone(),
                         )
                     };
 
                     let open_positions = {
                         let s = state.read().await;
-                        s.trades.active
+                        s.trades
+                            .active
                             .iter()
                             .map(|p| crate::risk::OpenPosition {
                                 epic: p.epic.clone(),
@@ -466,7 +537,9 @@ pub async fn analyze_market(
                             // which IG would reject).  Clamping up to minimum would negate the
                             // half-size intent; skipping is the correct conservative action.
                             if volatile_scalp {
-                                let min_size = risk_manager.get_instrument_spec(epic.as_str()).min_deal_size;
+                                let min_size = risk_manager
+                                    .get_instrument_spec(epic.as_str())
+                                    .min_deal_size;
                                 let half_size = adjusted_trade.size * 0.5;
                                 if half_size < min_size {
                                     warn!(
@@ -477,18 +550,27 @@ pub async fn analyze_market(
                                     s.add_signal_record(
                                         ensemble_signal.clone(),
                                         false,
-                                        Some(format!("VOLATILE scalp skipped: half-size {:.2} < min {:.2}", half_size, min_size)),
+                                        Some(format!(
+                                            "VOLATILE scalp skipped: half-size {:.2} < min {:.2}",
+                                            half_size, min_size
+                                        )),
                                     );
                                     continue;
                                 }
                                 adjusted_trade.size = half_size;
-                                info!("[{}] VOLATILE scalp: size halved → {:.2}", epic, adjusted_trade.size);
+                                info!(
+                                    "[{}] VOLATILE scalp: size halved → {:.2}",
+                                    epic, adjusted_trade.size
+                                );
                             } else if is_volatile_regime {
                                 info!("[{}] VOLATILE full consensus → MARKET", epic);
                             }
 
                             if config.general.mode != EngineMode::Paper {
-                                match order_manager.execute_trade(client, &adjusted_trade, &account_currency).await {
+                                match order_manager
+                                    .execute_trade(client, &adjusted_trade, &account_currency)
+                                    .await
+                                {
                                     Ok(execution) => {
                                         let position = Position {
                                             deal_id: execution.deal_id.clone(),
@@ -516,7 +598,11 @@ pub async fn analyze_market(
                                         {
                                             let mut s = state.write().await;
                                             s.trades.active.push(position.clone());
-                                            s.add_signal_record(ensemble_signal.clone(), true, None);
+                                            s.add_signal_record(
+                                                ensemble_signal.clone(),
+                                                true,
+                                                None,
+                                            );
                                         }
 
                                         let _ = event_tx.send(EngineEvent::trade_executed(
@@ -535,14 +621,11 @@ pub async fn analyze_market(
                                         let t_sl = adjusted_trade.stop_loss;
                                         let t_tp = Some(adjusted_trade.take_profit);
                                         tokio::spawn(async move {
-                                            let _ = tg.send_trade_alert(
-                                                &t_epic,
-                                                &t_dir,
-                                                t_size,
-                                                t_price,
-                                                t_sl,
-                                                t_tp,
-                                            ).await;
+                                            let _ = tg
+                                                .send_trade_alert(
+                                                    &t_epic, &t_dir, t_size, t_price, t_sl, t_tp,
+                                                )
+                                                .await;
                                         });
                                     }
                                     Err(e) => {
@@ -555,7 +638,8 @@ pub async fn analyze_market(
                                         );
                                         // Short cooldown on failure — prevents immediate retry
                                         // on the next bar while IG recovers (e.g. 500 errors).
-                                        s.set_trade_cooldown(&ensemble_signal.epic, 300); // 5 min
+                                        s.set_trade_cooldown(&ensemble_signal.epic, 300);
+                                        // 5 min
                                     }
                                 }
                             } else {
@@ -656,7 +740,10 @@ pub async fn execute_manual_trigger(
         if let Some(ms) = s.markets.live.get(&epic) {
             (ms.bid, ms.ask, (ms.bid + ms.ask) / 2.0)
         } else {
-            return Err(anyhow::anyhow!("No market data available for {} to execute manual trigger", epic));
+            return Err(anyhow::anyhow!(
+                "No market data available for {} to execute manual trigger",
+                epic
+            ));
         }
     };
 
@@ -669,7 +756,11 @@ pub async fn execute_manual_trigger(
     // Calculate default SL/TP based on ATR if available, else use a fixed distance
     let indicators = {
         let s = state.read().await;
-        s.markets.indicators.get(&epic).and_then(|m| m.get("HOUR")).and_then(|i| i.snapshot())
+        s.markets
+            .indicators
+            .get(&epic)
+            .and_then(|m| m.get("HOUR"))
+            .and_then(|i| i.snapshot())
     };
 
     let (stop_loss, take_profit) = if let Some(snap) = indicators {
@@ -682,7 +773,7 @@ pub async fn execute_manual_trigger(
             }
         } else {
             // Fallback: 50 pips (rough estimation)
-            let dist = price * 0.005; 
+            let dist = price * 0.005;
             match dir {
                 crate::engine::state::Direction::Buy => (price - dist, price + dist * 2.0),
                 crate::engine::state::Direction::Sell => (price + dist, price - dist * 2.0),
@@ -690,7 +781,7 @@ pub async fn execute_manual_trigger(
         }
     } else {
         // Fallback: 50 pips (rough estimation)
-        let dist = price * 0.005; 
+        let dist = price * 0.005;
         match dir {
             crate::engine::state::Direction::Buy => (price - dist, price + dist * 2.0),
             crate::engine::state::Direction::Sell => (price + dist, price - dist * 2.0),
@@ -705,13 +796,15 @@ pub async fn execute_manual_trigger(
                 equity: s.account.equity,
                 available_margin: s.account.available,
             },
-            s.account.currency.clone()
+            s.account.currency.clone(),
         )
     };
 
     let open_positions = {
         let s = state.read().await;
-        s.trades.active.iter()
+        s.trades
+            .active
+            .iter()
             .map(|p| crate::risk::OpenPosition {
                 epic: p.epic.clone(),
                 direction: p.direction.to_string(),
@@ -739,7 +832,10 @@ pub async fn execute_manual_trigger(
         crate::risk::RiskVerdict::Approved(adjusted_trade) => {
             info!("Manual trigger APPROVED: {} {} @ {}", epic, dir, price);
             if config.general.mode != EngineMode::Paper {
-                match order_manager.execute_trade(client, &adjusted_trade, &account_currency).await {
+                match order_manager
+                    .execute_trade(client, &adjusted_trade, &account_currency)
+                    .await
+                {
                     Ok(execution) => {
                         let mut s = state.write().await;
                         let pos = Position {
@@ -761,7 +857,7 @@ pub async fn execute_manual_trigger(
                             opened_in_regime: None, // manual trigger — regime not tracked
                         };
                         s.trades.active.push(pos);
-                        
+
                         let _ = event_tx.send(EngineEvent::trade_executed(
                             execution.deal_id,
                             epic.clone(),
@@ -769,15 +865,17 @@ pub async fn execute_manual_trigger(
                             adjusted_trade.size,
                             execution.fill_price,
                         ));
-                        
-                        let _ = telegram.send_trade_alert(
-                            &epic, 
-                            &dir.to_string(), 
-                            adjusted_trade.size, 
-                            execution.fill_price,
-                            adjusted_trade.stop_loss,
-                            Some(adjusted_trade.take_profit)
-                        ).await;
+
+                        let _ = telegram
+                            .send_trade_alert(
+                                &epic,
+                                &dir.to_string(),
+                                adjusted_trade.size,
+                                execution.fill_price,
+                                adjusted_trade.stop_loss,
+                                Some(adjusted_trade.take_profit),
+                            )
+                            .await;
                     }
                     Err(e) => error!("Failed to execute manual trade: {}", e),
                 }
@@ -803,22 +901,22 @@ pub async fn execute_manual_trigger(
                     opened_in_regime: None,
                 };
                 s.trades.active.push(pos);
-                info!("Paper Trade (Manual): Created virtual position for {}", epic);
+                info!(
+                    "Paper Trade (Manual): Created virtual position for {}",
+                    epic
+                );
             }
         }
         crate::risk::RiskVerdict::Rejected(reason) => {
             warn!("Manual trigger REJECTED by risk manager: {}", reason);
             let alert_msg = format!(
-                "Manual trigger for {} rejected: {}\nTime: {}", 
-                get_instrument_name(&epic), 
+                "Manual trigger for {} rejected: {}\nTime: {}",
+                get_instrument_name(&epic),
                 reason,
                 (chrono::Utc::now() + chrono::Duration::hours(8)).format("%H:%M:%S SGT")
             );
-            
-            let _ = event_tx.send(EngineEvent::risk_alert(
-                alert_msg.clone(),
-                "high".into(),
-            ));
+
+            let _ = event_tx.send(EngineEvent::risk_alert(alert_msg.clone(), "high".into()));
 
             let _ = telegram.send_instrument_risk_alert(&epic, &reason).await;
         }
@@ -865,11 +963,11 @@ fn apply_signal_boosters(
     // ── Key Level Proximity Boost ────────────────────────────────────────────
     // Determine level grid based on instrument price magnitude.
     let level_size = if mid_price > 100.0 {
-        50.0   // Gold ~$2,900 → every $50
+        50.0 // Gold ~$2,900 → every $50
     } else if mid_price > 10.0 {
-        0.5    // JPY pairs ~150 → every 0.50
+        0.5 // JPY pairs ~150 → every 0.50
     } else {
-        0.005  // EUR/USD ~1.10 → every 0.0050
+        0.005 // EUR/USD ~1.10 → every 0.0050
     };
 
     let proximity = mid_price * 0.001; // 0.1% of price
@@ -928,11 +1026,14 @@ pub async fn analyze_market_m15(
                 None => continue,
             };
             let m15 = indicators.get("MINUTE_15").and_then(|i| i.snapshot());
-            let h1  = indicators.get("HOUR").and_then(|i| i.snapshot());
+            let h1 = indicators.get("HOUR").and_then(|i| i.snapshot());
             match (m15, h1) {
                 (Some(m), Some(h)) => (m, h),
                 _ => {
-                    debug!("[M15] {} — M15 indicators not warmed up yet, skipping", epic);
+                    debug!(
+                        "[M15] {} — M15 indicators not warmed up yet, skipping",
+                        epic
+                    );
                     continue;
                 }
             }
@@ -942,7 +1043,12 @@ pub async fn analyze_market_m15(
         let (bid, offer, mid_price, mkt_state) = {
             let s = state.read().await;
             if let Some(ms) = s.markets.live.get(epic.as_str()) {
-                (ms.bid, ms.ask, (ms.bid + ms.ask) / 2.0, ms.market_state.clone())
+                (
+                    ms.bid,
+                    ms.ask,
+                    (ms.bid + ms.ask) / 2.0,
+                    ms.market_state.clone(),
+                )
             } else {
                 continue;
             }
@@ -967,15 +1073,25 @@ pub async fn analyze_market_m15(
         // Run M15 strategies
         let mut signals: Vec<Signal> = Vec::new();
         for strategy in m15_strategies {
-            if let Some(sig) = strategy.evaluate_m15(epic, mid_price, &m15_snap, &h1_snap, &regime_str) {
-                debug!("[M15] {} signal from {}: {:?} strength={:.1}", epic, strategy.name(), sig.direction, sig.strength);
+            if let Some(sig) =
+                strategy.evaluate_m15(epic, mid_price, &m15_snap, &h1_snap, &regime_str)
+            {
+                debug!(
+                    "[M15] {} signal from {}: {:?} strength={:.1}",
+                    epic,
+                    strategy.name(),
+                    sig.direction,
+                    sig.strength
+                );
                 signals.push(sig);
             }
         }
 
         info!(
             "[M15] [{}] Bar analysis: {}/{} M15 strategies fired signals",
-            epic, signals.len(), m15_strategies.len()
+            epic,
+            signals.len(),
+            m15_strategies.len()
         );
 
         if signals.is_empty() {
@@ -992,14 +1108,21 @@ pub async fn analyze_market_m15(
         // use M15 ADX as a proxy so mean-rev suppression still activates.
         let mut mean_rev_suppressed = false; // set true when Gate 3 removes signals
         {
-            let ov_opt = config.strategies.instrument_overrides.get(epic.as_str()).cloned();
+            let ov_opt = config
+                .strategies
+                .instrument_overrides
+                .get(epic.as_str())
+                .cloned();
             if let Some(ref ov) = ov_opt {
-
                 // Gate 1: per-instrument daily trade limit
                 if let Some(max_daily) = ov.max_daily_trades {
                     let today_count = {
                         let s = state.read().await;
-                        *s.metrics.daily.trades_by_epic.get(epic.as_str()).unwrap_or(&0)
+                        *s.metrics
+                            .daily
+                            .trades_by_epic
+                            .get(epic.as_str())
+                            .unwrap_or(&0)
                     };
                     if today_count >= max_daily {
                         info!(
@@ -1029,8 +1152,8 @@ pub async fn analyze_market_m15(
                 // Gate 3: Mean-reversion signal suppression in strong trends
                 // When ADX > threshold, multiply RSI_Reversal and Bollinger strength
                 // by the weight factor (0.0 = silence, 0.3 = heavily penalise).
-                let mean_rev_strategies = ["RSI_Reversal", "Bollinger_Bands",
-                                           "M15_BollingerReversion"];
+                let mean_rev_strategies =
+                    ["RSI_Reversal", "Bollinger_Bands", "M15_BollingerReversion"];
                 if let (Some(suppress_weight), Some(suppress_adx)) = (
                     ov.mean_reversion_weight_in_strong_trend,
                     ov.mean_reversion_suppress_adx_min,
@@ -1040,7 +1163,11 @@ pub async fn analyze_market_m15(
                     let effective_adx = h1_snap.adx.or(m15_snap.adx);
                     if let Some(adx) = effective_adx {
                         if adx >= suppress_adx {
-                            let adx_source = if h1_snap.adx.is_some() { "H1" } else { "M15↑" };
+                            let adx_source = if h1_snap.adx.is_some() {
+                                "H1"
+                            } else {
+                                "M15↑"
+                            };
                             for sig in signals.iter_mut() {
                                 if mean_rev_strategies.contains(&sig.strategy.as_str()) {
                                     let old = sig.strength;
@@ -1048,8 +1175,13 @@ pub async fn analyze_market_m15(
                                     debug!(
                                         "[M15] [{}] Mean-rev suppression ({} ADX={:.1}>={:.1}): \
                                          {} strength {:.1}→{:.1}",
-                                        epic, adx_source, adx, suppress_adx,
-                                        sig.strategy, old, sig.strength
+                                        epic,
+                                        adx_source,
+                                        adx,
+                                        suppress_adx,
+                                        sig.strategy,
+                                        old,
+                                        sig.strength
                                     );
                                 }
                             }
@@ -1061,14 +1193,19 @@ pub async fn analyze_market_m15(
                                 info!(
                                     "[M15] [{}] Mean-rev suppression removed {}/{} signals \
                                      ({} ADX={:.1}>={}). Consensus will be lowered to 1.",
-                                    epic, before_count - signals.len(), before_count,
-                                    adx_source, adx, suppress_adx
+                                    epic,
+                                    before_count - signals.len(),
+                                    before_count,
+                                    adx_source,
+                                    adx,
+                                    suppress_adx
                                 );
                             }
                             if signals.is_empty() {
                                 info!(
                                     "[M15] [{}] All signals silenced by mean-rev suppression \
-                                     ({} ADX={:.1})", epic, adx_source, adx
+                                     ({} ADX={:.1})",
+                                    epic, adx_source, adx
                                 );
                                 continue;
                             }
@@ -1080,10 +1217,9 @@ pub async fn analyze_market_m15(
                 // When ADX > rsi_extreme_block_adx_min AND RSI is at an extreme,
                 // block mean-reversion signals in the "catching the knife" direction.
                 // ADX/RSI fallback: use M15 values when H1 not yet warmed up.
-                if let (Some(adx), Some(rsi)) = (
-                    h1_snap.adx.or(m15_snap.adx),
-                    h1_snap.rsi.or(m15_snap.rsi),
-                ) {
+                if let (Some(adx), Some(rsi)) =
+                    (h1_snap.adx.or(m15_snap.adx), h1_snap.rsi.or(m15_snap.rsi))
+                {
                     let adx_min = ov.rsi_extreme_block_adx_min.unwrap_or(f64::MAX);
                     if adx >= adx_min {
                         if let Some(floor) = ov.rsi_extreme_oversold_floor {
@@ -1096,8 +1232,7 @@ pub async fn analyze_market_m15(
                                         warn!(
                                             "[M15] [{}] RSI extreme block: RSI={:.1}<={:.1} \
                                              ADX={:.1} — blocked {} BUY from {}",
-                                            epic, rsi, floor, adx,
-                                            sig.direction, sig.strategy
+                                            epic, rsi, floor, adx, sig.direction, sig.strategy
                                         );
                                     }
                                     !blocked
@@ -1106,7 +1241,10 @@ pub async fn analyze_market_m15(
                                     info!(
                                         "[M15] [{}] RSI oversold block removed {} mean-rev BUY(s) \
                                          (RSI={:.1}, ADX={:.1})",
-                                        epic, before - signals.len(), rsi, adx
+                                        epic,
+                                        before - signals.len(),
+                                        rsi,
+                                        adx
                                     );
                                 }
                             }
@@ -1121,8 +1259,7 @@ pub async fn analyze_market_m15(
                                         warn!(
                                             "[M15] [{}] RSI extreme block: RSI={:.1}>={:.1} \
                                              ADX={:.1} — blocked {} SELL from {}",
-                                            epic, rsi, ceiling, adx,
-                                            sig.direction, sig.strategy
+                                            epic, rsi, ceiling, adx, sig.direction, sig.strategy
                                         );
                                     }
                                     !blocked
@@ -1131,7 +1268,10 @@ pub async fn analyze_market_m15(
                                     info!(
                                         "[M15] [{}] RSI overbought block removed {} mean-rev \
                                          SELL(s) (RSI={:.1}, ADX={:.1})",
-                                        epic, before - signals.len(), rsi, adx
+                                        epic,
+                                        before - signals.len(),
+                                        rsi,
+                                        adx
                                     );
                                 }
                             }
@@ -1152,7 +1292,9 @@ pub async fn analyze_market_m15(
                                 // Fallback: EMA crossover if insufficient history.
                                 let h1_lock_closes: Vec<f64> = {
                                     let s = state.read().await;
-                                    s.markets.history.get_candles(epic.as_str(), "HOUR")
+                                    s.markets
+                                        .history
+                                        .get_candles(epic.as_str(), "HOUR")
                                         .map(|v| v.iter().rev().take(4).map(|c| c.close).collect())
                                         .unwrap_or_default()
                                 };
@@ -1160,14 +1302,22 @@ pub async fn analyze_market_m15(
                                     let anchor = h1_lock_closes[h1_lock_closes.len() - 1];
                                     let slope = if anchor > 0.0 {
                                         (h1_lock_closes[0] - anchor) / anchor
-                                    } else { 0.0 };
+                                    } else {
+                                        0.0
+                                    };
                                     (slope > 0.001, slope < -0.001)
                                 } else {
                                     // fallback to EMA crossover
-                                    let up = h1_snap.ema_short.zip(h1_snap.ema_long)
-                                        .map(|(s, l)| s > l).unwrap_or(false);
-                                    let dn = h1_snap.ema_short.zip(h1_snap.ema_long)
-                                        .map(|(s, l)| s < l).unwrap_or(false);
+                                    let up = h1_snap
+                                        .ema_short
+                                        .zip(h1_snap.ema_long)
+                                        .map(|(s, l)| s > l)
+                                        .unwrap_or(false);
+                                    let dn = h1_snap
+                                        .ema_short
+                                        .zip(h1_snap.ema_long)
+                                        .map(|(s, l)| s < l)
+                                        .unwrap_or(false);
                                     (up, dn)
                                 };
                                 if trend_up || trend_down {
@@ -1190,7 +1340,9 @@ pub async fn analyze_market_m15(
                                         info!(
                                             "[M15] [{}] ADX trend-lock: {} signal(s) removed \
                                              (ADX={:.1}, trend={})",
-                                            epic, before - signals.len(), adx,
+                                            epic,
+                                            before - signals.len(),
+                                            adx,
                                             if trend_up { "UP" } else { "DOWN" }
                                         );
                                     }
@@ -1201,7 +1353,10 @@ pub async fn analyze_market_m15(
                 }
 
                 if signals.is_empty() {
-                    debug!("[M15] [{}] No signals remaining after instrument gates", epic);
+                    debug!(
+                        "[M15] [{}] No signals remaining after instrument gates",
+                        epic
+                    );
                     continue;
                 }
             }
@@ -1220,7 +1375,9 @@ pub async fn analyze_market_m15(
         if h1_alignment_bonus > 1.0 {
             let h1_dir: Option<Direction> = {
                 let s = state.read().await;
-                s.markets.h1_bias.get(epic.as_str())
+                s.markets
+                    .h1_bias
+                    .get(epic.as_str())
                     .and_then(|b| b.direction.clone())
             };
             if let Some(ref h1_direction) = h1_dir {
@@ -1259,11 +1416,15 @@ pub async fn analyze_market_m15(
             } else {
                 ov_opt.and_then(|o| o.min_consensus)
             };
-            let override_strength  = ov_opt.and_then(|o| o.min_avg_strength);
+            let override_strength = ov_opt.and_then(|o| o.min_avg_strength);
             if override_consensus.is_some() || override_strength.is_some() {
                 let mut local = m15_ensemble.clone();
-                if let Some(c) = override_consensus { local.min_consensus = c; }
-                if let Some(s) = override_strength  { local.min_avg_strength = s; }
+                if let Some(c) = override_consensus {
+                    local.min_consensus = c;
+                }
+                if let Some(s) = override_strength {
+                    local.min_avg_strength = s;
+                }
                 local.vote(&signals)
             } else {
                 m15_ensemble.vote(&signals)
@@ -1279,7 +1440,8 @@ pub async fn analyze_market_m15(
             // Check macro pause
             let macro_paused = {
                 let s = state.read().await;
-                s.metrics.macro_pause_until
+                s.metrics
+                    .macro_pause_until
                     .map(|until| chrono::Utc::now() < until)
                     .unwrap_or(false)
             };
@@ -1299,7 +1461,10 @@ pub async fn analyze_market_m15(
                 )
             };
             if !can_trade {
-                info!("[M15] {} — cooldown: max {} M15 trades/H1 candle reached", epic, config.strategies.m15_max_trades_per_h1);
+                info!(
+                    "[M15] {} — cooldown: max {} M15 trades/H1 candle reached",
+                    epic, config.strategies.m15_max_trades_per_h1
+                );
                 continue;
             }
 
@@ -1318,25 +1483,35 @@ pub async fn analyze_market_m15(
                             if let Some(thresh) = ov.adx_trend_lock_threshold {
                                 // ADX fallback: use M15 ADX when H1 not yet warmed up.
                                 let adx = h1_snap.adx.or(m15_snap.adx).unwrap_or(0.0);
-                                let adx_src = if h1_snap.adx.is_some() { "H1" } else { "M15↑" };
+                                let adx_src = if h1_snap.adx.is_some() {
+                                    "H1"
+                                } else {
+                                    "M15↑"
+                                };
                                 if adx >= thresh {
                                     // Read last 4 H1 closes (most recent first) to compute slope
                                     let h1_closes: Vec<f64> = {
                                         let s = state.read().await;
-                                        s.markets.history.get_candles(epic.as_str(), "HOUR")
-                                            .map(|v| v.iter().rev().take(4).map(|c| c.close).collect())
+                                        s.markets
+                                            .history
+                                            .get_candles(epic.as_str(), "HOUR")
+                                            .map(|v| {
+                                                v.iter().rev().take(4).map(|c| c.close).collect()
+                                            })
                                             .unwrap_or_default()
                                     };
                                     if h1_closes.len() >= 3 {
                                         let anchor = h1_closes[h1_closes.len() - 1];
                                         let slope_pct = if anchor > 0.0 {
                                             (h1_closes[0] - anchor) / anchor
-                                        } else { 0.0 };
+                                        } else {
+                                            0.0
+                                        };
                                         // 0.1% threshold: clear directional move over 3 H1 bars
                                         let slope_sell = slope_pct < -0.001;
-                                        let slope_buy  = slope_pct > 0.001;
+                                        let slope_buy = slope_pct > 0.001;
                                         let sig_sell = ensemble_signal.direction == Direction::Sell;
-                                        let sig_buy  = ensemble_signal.direction == Direction::Buy;
+                                        let sig_buy = ensemble_signal.direction == Direction::Buy;
                                         if (slope_sell && sig_sell) || (slope_buy && sig_buy) {
                                             bypass = true;
                                             info!(
@@ -1438,7 +1613,10 @@ pub async fn analyze_market_m15(
                 s.is_in_cooldown(epic.as_str())
             };
             if in_cooldown_m15 {
-                warn!("[M15][{}] Re-entry blocked — post-trade cooldown active", epic);
+                warn!(
+                    "[M15][{}] Re-entry blocked — post-trade cooldown active",
+                    epic
+                );
                 let mut s = state.write().await;
                 s.add_signal_record(
                     ensemble_signal.clone(),
@@ -1462,7 +1640,9 @@ pub async fn analyze_market_m15(
 
             let open_positions: Vec<crate::risk::OpenPosition> = {
                 let s = state.read().await;
-                s.trades.active.iter()
+                s.trades
+                    .active
+                    .iter()
                     .map(|p| crate::risk::OpenPosition {
                         epic: p.epic.clone(),
                         direction: p.direction.to_string(),
@@ -1496,7 +1676,10 @@ pub async fn analyze_market_m15(
                     }
 
                     if config.general.mode != EngineMode::Paper {
-                        match order_manager.execute_trade(client, &adjusted_trade, &account_currency).await {
+                        match order_manager
+                            .execute_trade(client, &adjusted_trade, &account_currency)
+                            .await
+                        {
                             Ok(execution) => {
                                 let position = Position {
                                     deal_id: execution.deal_id.clone(),
@@ -1518,7 +1701,11 @@ pub async fn analyze_market_m15(
                                     strategy: adjusted_trade.strategy.clone(),
                                     opened_at: Utc::now(),
                                     is_virtual: false,
-                                    opened_in_regime: if regime_str.is_empty() { None } else { Some(regime_str.clone()) },
+                                    opened_in_regime: if regime_str.is_empty() {
+                                        None
+                                    } else {
+                                        Some(regime_str.clone())
+                                    },
                                 };
                                 {
                                     let mut s = state.write().await;
@@ -1540,7 +1727,11 @@ pub async fn analyze_market_m15(
                                 let t_sl = adjusted_trade.stop_loss;
                                 let t_tp = Some(adjusted_trade.take_profit);
                                 tokio::spawn(async move {
-                                    let _ = tg.send_trade_alert(&t_epic, &t_dir, t_size, t_price, t_sl, t_tp).await;
+                                    let _ = tg
+                                        .send_trade_alert(
+                                            &t_epic, &t_dir, t_size, t_price, t_sl, t_tp,
+                                        )
+                                        .await;
                                 });
                             }
                             Err(e) => {
@@ -1552,7 +1743,8 @@ pub async fn analyze_market_m15(
                                     Some(format!("M15 execution failed: {}", e)),
                                 );
                                 // Short cooldown on failure — prevents retry on next bar
-                                s.set_trade_cooldown(&ensemble_signal.epic, 300); // 5 min
+                                s.set_trade_cooldown(&ensemble_signal.epic, 300);
+                                // 5 min
                             }
                         }
                     } else {
@@ -1574,12 +1766,20 @@ pub async fn analyze_market_m15(
                             strategy: adjusted_trade.strategy.clone(),
                             opened_at: Utc::now(),
                             is_virtual: true,
-                            opened_in_regime: if regime_str.is_empty() { None } else { Some(regime_str.clone()) },
+                            opened_in_regime: if regime_str.is_empty() {
+                                None
+                            } else {
+                                Some(regime_str.clone())
+                            },
                         };
                         {
                             let mut s = state.write().await;
                             s.trades.active.push(position);
-                            s.add_signal_record(ensemble_signal.clone(), true, Some("M15 Paper mode".to_string()));
+                            s.add_signal_record(
+                                ensemble_signal.clone(),
+                                true,
+                                Some("M15 Paper mode".to_string()),
+                            );
                         }
                     }
                 }
@@ -1606,11 +1806,11 @@ pub async fn analyze_market_m15(
 fn apply_m15_regime_multipliers(signals: &mut [Signal], regime: &str) {
     for sig in signals.iter_mut() {
         let multiplier = match (sig.strategy.as_str(), regime) {
-            ("M15_MomentumBurst",    "VOLATILE")  => 1.3,
-            ("M15_MomentumBurst",    "TRENDING")  => 1.2,
-            ("M15_MomentumBurst",    "RANGING")   => 1.0,  // allowed at RSI extremes only
-            ("M15_EmaMicrotrend",    "TRENDING")  => 1.2,
-            ("M15_EmaMicrotrend",    "VOLATILE")  => 1.2,  // EMA slope confirms volatile move direction
+            ("M15_MomentumBurst", "VOLATILE") => 1.3,
+            ("M15_MomentumBurst", "TRENDING") => 1.2,
+            ("M15_MomentumBurst", "RANGING") => 1.0, // allowed at RSI extremes only
+            ("M15_EmaMicrotrend", "TRENDING") => 1.2,
+            ("M15_EmaMicrotrend", "VOLATILE") => 1.2, // EMA slope confirms volatile move direction
             ("M15_BollingerReversion", "RANGING") => 1.2,
             _ => 1.0,
         };
@@ -1637,13 +1837,13 @@ fn read_gold_sentiment(
     config: &EngineConfig,
 ) -> Option<Signal> {
     // ── Read & parse ──────────────────────────────────────────────────────────
-    let raw  = std::fs::read_to_string(file_path).ok()?;
+    let raw = std::fs::read_to_string(file_path).ok()?;
     let json: serde_json::Value = serde_json::from_str(&raw).ok()?;
 
-    let ts         = json["timestamp"].as_i64()?;
-    let score      = json["score"].as_f64()?;
+    let ts = json["timestamp"].as_i64()?;
+    let score = json["score"].as_f64()?;
     let confidence = json["confidence"].as_f64().unwrap_or(0.5);
-    let mode       = json["mode"].as_str().unwrap_or("unknown").to_string();
+    let mode = json["mode"].as_str().unwrap_or("unknown").to_string();
     let drivers: Vec<String> = json["key_drivers"]
         .as_array()
         .map(|arr| {
@@ -1657,7 +1857,10 @@ fn read_gold_sentiment(
     // ── Stale check: reject if older than 30 minutes ──────────────────────────
     let age_secs = Utc::now().timestamp() - ts;
     if age_secs > 1800 {
-        debug!("Gold sentiment file is stale ({} s old) — skipping", age_secs);
+        debug!(
+            "Gold sentiment file is stale ({} s old) — skipping",
+            age_secs
+        );
         return None;
     }
 
@@ -1668,7 +1871,10 @@ fn read_gold_sentiment(
     } else if score <= -THRESHOLD {
         Direction::Sell
     } else {
-        debug!("Gold sentiment score {:.3} below threshold ±{} — skipping", score, THRESHOLD);
+        debug!(
+            "Gold sentiment score {:.3} below threshold ±{} — skipping",
+            score, THRESHOLD
+        );
         return None;
     };
 
@@ -1680,9 +1886,9 @@ fn read_gold_sentiment(
     let tp_mult = config.strategies.default_atr_tp_multiplier;
 
     let (stop_loss, take_profit) = match (atr, &direction) {
-        (Some(a), Direction::Buy)  => (mid_price - a * sl_mult, mid_price + a * tp_mult),
+        (Some(a), Direction::Buy) => (mid_price - a * sl_mult, mid_price + a * tp_mult),
         (Some(a), Direction::Sell) => (mid_price + a * sl_mult, mid_price - a * tp_mult),
-        (None, Direction::Buy)  => {
+        (None, Direction::Buy) => {
             let d = mid_price * 0.005;
             (mid_price - d, mid_price + d * 2.0)
         }
@@ -1702,16 +1908,16 @@ fn read_gold_sentiment(
     );
 
     Some(Signal {
-        id:         uuid::Uuid::new_v4().to_string(),
-        epic:       "CS.D.CFIGOLD.CFI.IP".to_string(),
+        id: uuid::Uuid::new_v4().to_string(),
+        epic: "CS.D.CFIGOLD.CFI.IP".to_string(),
         direction,
         strength,
-        strategy:   "Gold_Sentiment".to_string(),
+        strategy: "Gold_Sentiment".to_string(),
         reason,
-        price:      mid_price,
+        price: mid_price,
         stop_loss,
         take_profit,
         trailing_stop_distance: None,
-        timestamp:  Utc::now(),
+        timestamp: Utc::now(),
     })
 }

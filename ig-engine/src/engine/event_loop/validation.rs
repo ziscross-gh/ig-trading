@@ -1,6 +1,6 @@
+use crate::engine::config::{EngineConfig, EngineMode};
 use anyhow::Result;
 use tracing::{info, warn};
-use crate::engine::config::{EngineConfig, EngineMode};
 
 /// Validate configuration for obvious logical errors before engine start
 pub fn validate_config(config: &EngineConfig) -> Result<()> {
@@ -9,7 +9,8 @@ pub fn validate_config(config: &EngineConfig) -> Result<()> {
         if ma.enabled && ma.short_period >= ma.long_period {
             anyhow::bail!(
                 "ma_crossover: short_period ({}) must be less than long_period ({})",
-                ma.short_period, ma.long_period
+                ma.short_period,
+                ma.long_period
             );
         }
     }
@@ -19,7 +20,8 @@ pub fn validate_config(config: &EngineConfig) -> Result<()> {
         if rsi.enabled && rsi.oversold >= rsi.overbought {
             anyhow::bail!(
                 "rsi_divergence: oversold ({}) must be less than overbought ({})",
-                rsi.oversold, rsi.overbought
+                rsi.oversold,
+                rsi.overbought
             );
         }
     }
@@ -37,16 +39,36 @@ pub fn validate_config(config: &EngineConfig) -> Result<()> {
 
     // Consensus: can't require more strategies than are enabled
     let enabled_count = [
-        config.strategies.ma_crossover.as_ref().is_some_and(|s| s.enabled),
-        config.strategies.rsi_divergence.as_ref().is_some_and(|s| s.enabled),
-        config.strategies.macd_momentum.as_ref().is_some_and(|s| s.enabled),
-        config.strategies.bollinger_reversion.as_ref().is_some_and(|s| s.enabled),
-    ].iter().filter(|&&e| e).count();
+        config
+            .strategies
+            .ma_crossover
+            .as_ref()
+            .is_some_and(|s| s.enabled),
+        config
+            .strategies
+            .rsi_divergence
+            .as_ref()
+            .is_some_and(|s| s.enabled),
+        config
+            .strategies
+            .macd_momentum
+            .as_ref()
+            .is_some_and(|s| s.enabled),
+        config
+            .strategies
+            .bollinger_reversion
+            .as_ref()
+            .is_some_and(|s| s.enabled),
+    ]
+    .iter()
+    .filter(|&&e| e)
+    .count();
 
     if config.strategies.min_consensus > enabled_count {
         anyhow::bail!(
             "strategies.min_consensus ({}) cannot exceed the number of enabled strategies ({})",
-            config.strategies.min_consensus, enabled_count
+            config.strategies.min_consensus,
+            enabled_count
         );
     }
     if enabled_count == 0 {
@@ -64,7 +86,10 @@ pub fn validate_live_readiness(config: &EngineConfig, balance: f64) -> Result<()
         return Ok(());
     }
 
-    info!("🔍 Running live readiness checks (balance={:.2})...", balance);
+    info!(
+        "🔍 Running live readiness checks (balance={:.2})...",
+        balance
+    );
 
     // 1. Macro events — warn if empty (no NFP/FOMC blackouts)
     if config.risk.macro_events.is_empty() {
@@ -74,7 +99,10 @@ pub fn validate_live_readiness(config: &EngineConfig, balance: f64) -> Result<()
              Add macro_events to live.toml."
         );
     } else {
-        info!("✅ Macro events: {} blackout windows configured", config.risk.macro_events.len());
+        info!(
+            "✅ Macro events: {} blackout windows configured",
+            config.risk.macro_events.len()
+        );
     }
 
     // 2. Instrument spec completeness — warn for any epic missing a spec
@@ -95,13 +123,14 @@ pub fn validate_live_readiness(config: &EngineConfig, balance: f64) -> Result<()
             if let Some(spec) = config.risk.instrument_specs.get(epic.as_str()) {
                 // Estimate current price from pip_scale (order of magnitude only)
                 let assumed_price = if spec.pip_scale >= 1.0 {
-                    2700.0_f64   // Gold ~$2700
+                    2700.0_f64 // Gold ~$2700
                 } else if spec.pip_scale >= 0.01 {
-                    150.0_f64    // JPY pairs ~150
+                    150.0_f64 // JPY pairs ~150
                 } else {
-                    1.10_f64     // EUR/USD, GBP/USD ~1.10
+                    1.10_f64 // EUR/USD, GBP/USD ~1.10
                 };
-                let min_margin = spec.min_deal_size * assumed_price * spec.margin_requirement_pct / 100.0;
+                let min_margin =
+                    spec.min_deal_size * assumed_price * spec.margin_requirement_pct / 100.0;
                 let margin_pct_of_balance = min_margin / balance * 100.0;
 
                 if margin_pct_of_balance > config.risk.max_margin_usage_pct {

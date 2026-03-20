@@ -1,9 +1,9 @@
-use uuid::Uuid;
 use chrono::Utc;
+use uuid::Uuid;
 
-use crate::indicators::IndicatorSnapshot;
-use crate::engine::state::{Direction, Signal};
 use super::traits::Strategy;
+use crate::engine::state::{Direction, Signal};
+use crate::indicators::IndicatorSnapshot;
 
 /// Stochastic Momentum Strategy
 ///
@@ -187,7 +187,15 @@ mod tests {
     use super::*;
     use std::collections::HashMap;
 
-    fn make_snapshot(k: f64, d: f64, prev_k: f64, prev_d: f64, adx: f64, rsi: f64, atr: f64) -> IndicatorSnapshot {
+    fn make_snapshot(
+        k: f64,
+        d: f64,
+        prev_k: f64,
+        prev_d: f64,
+        adx: f64,
+        rsi: f64,
+        atr: f64,
+    ) -> IndicatorSnapshot {
         IndicatorSnapshot {
             stochastic_k: Some(k),
             stochastic_d: Some(d),

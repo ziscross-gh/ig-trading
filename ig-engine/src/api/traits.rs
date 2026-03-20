@@ -1,5 +1,5 @@
-use async_trait::async_trait;
 use crate::api::types::*;
+use async_trait::async_trait;
 
 /// Unified error type for the trading engine
 #[derive(Debug, thiserror::Error)]
@@ -23,10 +23,10 @@ pub enum EngineError {
 pub trait TraderAPI: Send + Sync {
     /// Fetch all accounts and their current balances
     async fn get_accounts(&mut self) -> Result<IGAccountsResponse, anyhow::Error>;
-    
+
     /// Get static instrument information (min sizes, pip values)
     async fn get_market(&mut self, epic: &str) -> Result<IGMarketResponse, anyhow::Error>;
-    
+
     /// Retrieve historical OHLCV data
     async fn get_price_history(
         &mut self,
@@ -34,13 +34,16 @@ pub trait TraderAPI: Send + Sync {
         resolution: &str,
         max: usize,
     ) -> Result<IGPriceHistoryResponse, anyhow::Error>;
-    
+
     /// Fetch current open positions from the broker
     async fn get_positions(&mut self) -> Result<IGPositionsResponse, anyhow::Error>;
-    
+
     /// Submit a new trade request (market or limit)
-    async fn open_position(&mut self, request: IGTradeRequest) -> Result<IGTradeResponse, anyhow::Error>;
-    
+    async fn open_position(
+        &mut self,
+        request: IGTradeRequest,
+    ) -> Result<IGTradeResponse, anyhow::Error>;
+
     /// Close an existing position via deal ID
     async fn close_position(
         &mut self,
@@ -48,7 +51,7 @@ pub trait TraderAPI: Send + Sync {
         direction: &str,
         size: f64,
     ) -> Result<IGTradeResponse, anyhow::Error>;
-    
+
     /// Retrieve confirmation for a pending deal reference
     async fn get_deal_confirmation(
         &mut self,

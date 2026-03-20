@@ -1,20 +1,44 @@
+use crate::risk::{CircuitBreakerConfig, RiskConfig, SizingMethod};
+use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use anyhow::Result;
-use crate::risk::{RiskConfig, SizingMethod, CircuitBreakerConfig};
 
-fn default_m15_min_consensus() -> usize { 1 }
-fn default_m15_min_avg_strength() -> f64 { 6.5 }
-fn default_m15_position_multiplier() -> f64 { 0.5 }
-fn default_m15_max_trades() -> u32 { 2 }
-fn default_h1_direction_gate() -> bool { true }
-fn default_h1_alignment_bonus() -> f64 { 1.2 }
-fn default_h1_macro_trend_gate() -> bool { true }
-fn default_h1_macro_trend_lookback() -> usize { 5 }
-fn default_volatile_atr_sl_multiplier() -> f64 { 0.75 }
-fn default_volatile_atr_tp_multiplier() -> f64 { 2.0 }
-fn default_post_trade_cooldown_secs() -> u64 { 1800 } // 30 min = 2 M15 bars
-fn default_require_h1_confirmation() -> bool { true }
+fn default_m15_min_consensus() -> usize {
+    1
+}
+fn default_m15_min_avg_strength() -> f64 {
+    6.5
+}
+fn default_m15_position_multiplier() -> f64 {
+    0.5
+}
+fn default_m15_max_trades() -> u32 {
+    2
+}
+fn default_h1_direction_gate() -> bool {
+    true
+}
+fn default_h1_alignment_bonus() -> f64 {
+    1.2
+}
+fn default_h1_macro_trend_gate() -> bool {
+    true
+}
+fn default_h1_macro_trend_lookback() -> usize {
+    5
+}
+fn default_volatile_atr_sl_multiplier() -> f64 {
+    0.75
+}
+fn default_volatile_atr_tp_multiplier() -> f64 {
+    2.0
+}
+fn default_post_trade_cooldown_secs() -> u64 {
+    1800
+} // 30 min = 2 M15 bars
+fn default_require_h1_confirmation() -> bool {
+    true
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EngineConfig {
@@ -356,8 +380,8 @@ impl EngineConfig {
 
     /// Load from environment variables (for Docker)
     pub fn from_env() -> Result<Self> {
-        let path = std::env::var("CONFIG_PATH")
-            .unwrap_or_else(|_| "config/default.toml".to_string());
+        let path =
+            std::env::var("CONFIG_PATH").unwrap_or_else(|_| "config/default.toml".to_string());
         Self::load(&path)
     }
 }
@@ -490,68 +514,77 @@ impl Default for EngineConfig {
                     // Strong trends (ADX=62.9), extreme RSI (8.76), high ATR (~1%).
                     // Mean-reversion strategies fire on oversold but trend keeps going.
                     // Result: 1W/4L → need highest bar of all instruments.
-                    m.insert("CS.D.CFIGOLD.CFI.IP".to_string(), InstrumentStrategyOverride {
-                        adx_range_filter: true,
-                        adx_range_max: Some(25.0),
-                        // Consensus: need 2/3 M15 strategies to agree (was 1/3)
-                        min_consensus: Some(2),
-                        min_avg_strength: Some(8.0),
-                        // ADX trend-lock: when ADX > 45, block counter-DI signals
-                        adx_trend_lock_enabled: true,
-                        adx_trend_lock_threshold: Some(45.0),
-                        // RSI extreme: when ADX > 40 AND RSI < 15, block mean-rev BUYs
-                        rsi_extreme_oversold_floor: Some(15.0),
-                        rsi_extreme_overbought_ceiling: Some(85.0),
-                        rsi_extreme_block_adx_min: Some(40.0),
-                        // Silence mean-reversion strategies when ADX > 45
-                        mean_reversion_weight_in_strong_trend: Some(0.0),
-                        mean_reversion_suppress_adx_min: Some(45.0),
-                        // Max 2 Gold trades per day
-                        max_daily_trades: Some(2),
-                        // Block if ATR% > 1.8% (extreme volatility spike)
-                        atr_pct_max_entry: Some(1.8),
-                    });
+                    m.insert(
+                        "CS.D.CFIGOLD.CFI.IP".to_string(),
+                        InstrumentStrategyOverride {
+                            adx_range_filter: true,
+                            adx_range_max: Some(25.0),
+                            // Consensus: need 2/3 M15 strategies to agree (was 1/3)
+                            min_consensus: Some(2),
+                            min_avg_strength: Some(8.0),
+                            // ADX trend-lock: when ADX > 45, block counter-DI signals
+                            adx_trend_lock_enabled: true,
+                            adx_trend_lock_threshold: Some(45.0),
+                            // RSI extreme: when ADX > 40 AND RSI < 15, block mean-rev BUYs
+                            rsi_extreme_oversold_floor: Some(15.0),
+                            rsi_extreme_overbought_ceiling: Some(85.0),
+                            rsi_extreme_block_adx_min: Some(40.0),
+                            // Silence mean-reversion strategies when ADX > 45
+                            mean_reversion_weight_in_strong_trend: Some(0.0),
+                            mean_reversion_suppress_adx_min: Some(45.0),
+                            // Max 2 Gold trades per day
+                            max_daily_trades: Some(2),
+                            // Block if ATR% > 1.8% (extreme volatility spike)
+                            atr_pct_max_entry: Some(1.8),
+                        },
+                    );
 
                     // ── EUR/USD: tighter after Asia session loss (Mar 20) ────────────────
                     // Loss at 01:16 UTC (Asia session) — 1/3 consensus too low overnight.
                     // Fix: require 2/3 M15 consensus + mild trend-lock at ADX>35.
                     // Trading hours now 07:00-20:00 UTC (London/NY only) in default.toml.
-                    m.insert("CS.D.EURUSD.CSD.IP".to_string(), InstrumentStrategyOverride {
-                        adx_range_filter: true,
-                        adx_range_max: Some(25.0),
-                        // Require 2/3 M15 strategies to agree (was 1/3)
-                        min_consensus: Some(2),
-                        min_avg_strength: Some(7.5),
-                        // Light trend-lock at ADX > 35 (strong trend)
-                        adx_trend_lock_enabled: true,
-                        adx_trend_lock_threshold: Some(35.0),
-                        // RSI extremes: block mean-reversion in strong trends
-                        rsi_extreme_oversold_floor: Some(20.0),
-                        rsi_extreme_overbought_ceiling: Some(80.0),
-                        rsi_extreme_block_adx_min: Some(35.0),
-                        // Max 3 trades per day (was 5)
-                        max_daily_trades: Some(3),
-                        ..Default::default()
-                    });
+                    m.insert(
+                        "CS.D.EURUSD.CSD.IP".to_string(),
+                        InstrumentStrategyOverride {
+                            adx_range_filter: true,
+                            adx_range_max: Some(25.0),
+                            // Require 2/3 M15 strategies to agree (was 1/3)
+                            min_consensus: Some(2),
+                            min_avg_strength: Some(7.5),
+                            // Light trend-lock at ADX > 35 (strong trend)
+                            adx_trend_lock_enabled: true,
+                            adx_trend_lock_threshold: Some(35.0),
+                            // RSI extremes: block mean-reversion in strong trends
+                            rsi_extreme_oversold_floor: Some(20.0),
+                            rsi_extreme_overbought_ceiling: Some(80.0),
+                            rsi_extreme_block_adx_min: Some(35.0),
+                            // Max 3 trades per day (was 5)
+                            max_daily_trades: Some(3),
+                            ..Default::default()
+                        },
+                    );
 
                     // ── USD/JPY: moderate restrictions (mixed results) ─────────────────
-                    m.insert("CS.D.USDJPY.CSD.IP".to_string(), InstrumentStrategyOverride {
-                        adx_range_filter: true,
-                        adx_range_max: Some(25.0),
-                        min_consensus: Some(2),
-                        min_avg_strength: Some(7.5),
-                        // Mild trend-lock at higher threshold than Gold
-                        adx_trend_lock_enabled: true,
-                        adx_trend_lock_threshold: Some(50.0),
-                        rsi_extreme_oversold_floor: Some(20.0),
-                        rsi_extreme_overbought_ceiling: Some(80.0),
-                        rsi_extreme_block_adx_min: Some(45.0),
-                        // Partial suppression (0.3×) not full silence
-                        mean_reversion_weight_in_strong_trend: Some(0.3),
-                        mean_reversion_suppress_adx_min: Some(50.0),
-                        max_daily_trades: Some(3),
-                        atr_pct_max_entry: Some(1.2),
-                    });
+                    m.insert(
+                        "CS.D.USDJPY.CSD.IP".to_string(),
+                        InstrumentStrategyOverride {
+                            adx_range_filter: true,
+                            adx_range_max: Some(25.0),
+                            min_consensus: Some(2),
+                            min_avg_strength: Some(7.5),
+                            // Mild trend-lock at higher threshold than Gold
+                            adx_trend_lock_enabled: true,
+                            adx_trend_lock_threshold: Some(50.0),
+                            rsi_extreme_oversold_floor: Some(20.0),
+                            rsi_extreme_overbought_ceiling: Some(80.0),
+                            rsi_extreme_block_adx_min: Some(45.0),
+                            // Partial suppression (0.3×) not full silence
+                            mean_reversion_weight_in_strong_trend: Some(0.3),
+                            mean_reversion_suppress_adx_min: Some(50.0),
+                            max_daily_trades: Some(3),
+                            atr_pct_max_entry: Some(1.2),
+                        },
+                    );
 
                     m
                 },

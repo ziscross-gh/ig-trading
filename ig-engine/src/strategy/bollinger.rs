@@ -1,9 +1,9 @@
-use uuid::Uuid;
 use chrono::Utc;
+use uuid::Uuid;
 
-use crate::indicators::IndicatorSnapshot;
-use crate::engine::state::{Direction, Signal};
 use super::traits::Strategy;
+use crate::engine::state::{Direction, Signal};
+use crate::indicators::IndicatorSnapshot;
 
 /// Bollinger Band Mean Reversion Strategy
 /// Generates BUY/SELL signals when price extremes are confirmed by other indicators
@@ -11,9 +11,9 @@ use super::traits::Strategy;
 pub struct BollingerStrategy {
     pub period: usize,
     #[allow(dead_code)]
-    pub std_dev: f64,          // stored for config round-trip; band calc is done by IndicatorSet
+    pub std_dev: f64, // stored for config round-trip; band calc is done by IndicatorSet
     #[allow(dead_code)]
-    pub weight: f64,            // reserved for ensemble weight override; ensemble manages weights by name
+    pub weight: f64, // reserved for ensemble weight override; ensemble manages weights by name
     pub atr_sl_multiplier: f64,
     #[allow(dead_code)]
     pub atr_tp_multiplier: f64, // reserved for future ATR-based TP; currently uses middle-band TP
@@ -21,7 +21,14 @@ pub struct BollingerStrategy {
 }
 
 impl BollingerStrategy {
-    pub fn new(period: usize, std_dev: f64, weight: f64, atr_sl_multiplier: f64, atr_tp_multiplier: f64, trailing_stop_pips: Option<f64>) -> Self {
+    pub fn new(
+        period: usize,
+        std_dev: f64,
+        weight: f64,
+        atr_sl_multiplier: f64,
+        atr_tp_multiplier: f64,
+        trailing_stop_pips: Option<f64>,
+    ) -> Self {
         Self {
             period,
             std_dev,
@@ -110,7 +117,12 @@ impl Strategy for BollingerStrategy {
         "Bollinger_Bands"
     }
 
-    fn evaluate(&self, epic: &str, price: f64, indicators_map: &std::collections::HashMap<String, IndicatorSnapshot>) -> Option<Signal> {
+    fn evaluate(
+        &self,
+        epic: &str,
+        price: f64,
+        indicators_map: &std::collections::HashMap<String, IndicatorSnapshot>,
+    ) -> Option<Signal> {
         // Fallback to "HOUR" timeframe for single-TF backward compatibility
         let indicators = indicators_map.get("HOUR")?;
 
@@ -127,12 +139,8 @@ impl Strategy for BollingerStrategy {
                 strength += 0.5;
             }
 
-            let (stop_loss, take_profit, trailing_stop_distance) = self.calculate_stops_and_targets(
-                Direction::Buy,
-                price,
-                indicators,
-                middle_band,
-            );
+            let (stop_loss, take_profit, trailing_stop_distance) =
+                self.calculate_stops_and_targets(Direction::Buy, price, indicators, middle_band);
 
             let reason = format!(
                 "Bollinger Mean Reversion BUY: percent_b={:.4} (near lower), RSI={:.2}",
@@ -163,12 +171,8 @@ impl Strategy for BollingerStrategy {
                 strength += 0.5;
             }
 
-            let (stop_loss, take_profit, trailing_stop_distance) = self.calculate_stops_and_targets(
-                Direction::Sell,
-                price,
-                indicators,
-                middle_band,
-            );
+            let (stop_loss, take_profit, trailing_stop_distance) =
+                self.calculate_stops_and_targets(Direction::Sell, price, indicators, middle_band);
 
             let reason = format!(
                 "Bollinger Mean Reversion SELL: percent_b={:.4} (near upper), RSI={:.2}",

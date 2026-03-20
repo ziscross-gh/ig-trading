@@ -1,7 +1,7 @@
-use serde::{Deserialize, Serialize};
+use super::backtester::{BacktestEngine, BacktestResult};
 use crate::indicators::Candle;
 use crate::strategy::ma_crossover::MACrossoverStrategy;
-use super::backtester::{BacktestEngine, BacktestResult};
+use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OptimizationResult {
@@ -50,10 +50,7 @@ impl Optimizer {
 
                 for &adx in &adx_range {
                     let strategy = MACrossoverStrategy::new(
-                        short,
-                        long,
-                        adx,
-                        1.0,  // Base weight
+                        short, long, adx, 1.0,  // Base weight
                         2.0,  // ATR SL multiplier
                         3.0,  // ATR TP multiplier
                         None, // Trailing stop (not used in grid search yet)
@@ -76,12 +73,12 @@ impl Optimizer {
         // Keep top 10
         let top_runs = runs.iter().take(10).cloned().collect::<Vec<_>>();
 
-        let best = top_runs
-            .first()
-            .ok_or_else(|| anyhow::anyhow!(
+        let best = top_runs.first().ok_or_else(|| {
+            anyhow::anyhow!(
                 "No valid optimization runs — check data and parameter ranges \
                  (every short period >= long period?)"
-            ))?;
+            )
+        })?;
 
         Ok(OptimizationResult {
             best_pnl: best.result.total_pnl,

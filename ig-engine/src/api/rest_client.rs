@@ -1,14 +1,14 @@
 #![allow(dead_code)]
+use chrono::{DateTime, Utc};
 use reqwest::{Client, Response, StatusCode};
 use serde::de::DeserializeOwned;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::Mutex;
 use tracing::{debug, error, info, warn};
-use chrono::{DateTime, Utc};
 
-use crate::api::types::*;
 use crate::api::traits::TraderAPI;
+use crate::api::types::*;
 use async_trait::async_trait;
 
 const DEMO_BASE_URL: &str = "https://demo-api.ig.com/gateway/deal";
@@ -106,9 +106,7 @@ impl IGRestClient {
             PROD_BASE_URL.to_string()
         };
 
-        let client = Client::builder()
-            .timeout(REQUEST_TIMEOUT)
-            .build()?;
+        let client = Client::builder().timeout(REQUEST_TIMEOUT).build()?;
 
         let mut ig_client = Self {
             client,
@@ -129,10 +127,18 @@ impl IGRestClient {
     }
 
     /// Authenticate with IG API using identifier and password
-    pub async fn authenticate(&mut self, identifier: &str, password: &str) -> Result<(), anyhow::Error> {
+    pub async fn authenticate(
+        &mut self,
+        identifier: &str,
+        password: &str,
+    ) -> Result<(), anyhow::Error> {
         let (password_to_send, is_encrypted) = match self.get_encryption_key().await {
             Ok(enc_resp) => {
-                match Self::encrypt_password(password, enc_resp.time_stamp, &enc_resp.encryption_key) {
+                match Self::encrypt_password(
+                    password,
+                    enc_resp.time_stamp,
+                    &enc_resp.encryption_key,
+                ) {
                     Ok(enc) => (enc, true),
                     Err(e) => {
                         warn!("Failed to encrypt password: {}", e);
@@ -169,7 +175,10 @@ impl IGRestClient {
         if response.status() != StatusCode::OK {
             let status = response.status();
             let error_text = response.text().await.unwrap_or_default();
-            error!("Authentication failed with status: {} ({})", status, error_text);
+            error!(
+                "Authentication failed with status: {} ({})",
+                status, error_text
+            );
             return Err(anyhow::anyhow!(
                 "Authentication failed: {} ({})",
                 status,
@@ -178,12 +187,18 @@ impl IGRestClient {
         }
 
         // Extract CST and X-SECURITY-TOKEN from response headers
-        let cst_val = response.headers().get("cst")
+        let cst_val = response
+            .headers()
+            .get("cst")
             .ok_or_else(|| anyhow::anyhow!("CST token not found in response headers"))?
-            .to_str()?.to_string();
-        let sec_val = response.headers().get("x-security-token")
+            .to_str()?
+            .to_string();
+        let sec_val = response
+            .headers()
+            .get("x-security-token")
             .ok_or_else(|| anyhow::anyhow!("X-SECURITY-TOKEN not found in response headers"))?
-            .to_str()?.to_string();
+            .to_str()?
+            .to_string();
 
         // Parse the response body to get lightstreamerEndpoint and currentAccountId
         let body: serde_json::Value = response.json().await?;
@@ -238,14 +253,19 @@ impl IGRestClient {
             .send()
             .await?;
 
-        self.handle_response::<EncryptionKeyResponse>(response).await
+        self.handle_response::<EncryptionKeyResponse>(response)
+            .await
     }
 
     /// Helper to encrypt the password using the acquired RSA key
-    fn encrypt_password(password: &str, timestamp: u64, key_base64: &str) -> Result<String, anyhow::Error> {
-        use base64::{Engine as _, engine::general_purpose::STANDARD as b64};
-        use rsa::{RsaPublicKey, Pkcs1v15Encrypt};
+    fn encrypt_password(
+        password: &str,
+        timestamp: u64,
+        key_base64: &str,
+    ) -> Result<String, anyhow::Error> {
+        use base64::{engine::general_purpose::STANDARD as b64, Engine as _};
         use rsa::pkcs8::DecodePublicKey;
+        use rsa::{Pkcs1v15Encrypt, RsaPublicKey};
 
         let der = b64.decode(key_base64)?;
         let pub_key = RsaPublicKey::from_public_key_der(&der)?;
@@ -253,10 +273,10 @@ impl IGRestClient {
         // IG requires base64 encoding the string before RSA encryption
         let raw_input = format!("{}|{}", password, timestamp);
         let input_bytes = b64.encode(raw_input.as_bytes());
-        
+
         let mut rng = rand::rngs::OsRng;
         let enc_data = pub_key.encrypt(&mut rng, Pkcs1v15Encrypt, input_bytes.as_bytes())?;
-        
+
         // Then base64 encode the RSA output
         Ok(b64.encode(&enc_data))
     }
@@ -268,21 +288,23 @@ impl TraderAPI for IGRestClient {
     async fn get_accounts(&mut self) -> Result<IGAccountsResponse, anyhow::Error> {
         self.apply_rate_limit().await;
         let url = format!("{}/accounts", self.base_url);
-        
+
         // Build manually to avoid build_request adding Version: 2
-        let mut request = self.client.get(&url)
+        let mut request = self
+            .client
+            .get(&url)
             .header("X-IG-API-KEY", &self.api_key)
             .header("Version", "1")
             .header("Content-Type", "application/json; charset=UTF-8")
             .header("Accept", "application/json; charset=UTF-8");
-        
+
         if let Some(cst) = &self.cst {
             request = request.header("CST", cst);
         }
         if let Some(sec) = &self.security_token {
             request = request.header("X-SECURITY-TOKEN", sec);
         }
-        
+
         let response = request.send().await?;
         self.handle_response::<IGAccountsResponse>(response).await
     }
@@ -301,13 +323,11 @@ impl TraderAPI for IGRestClient {
         max: usize,
     ) -> Result<IGPriceHistoryResponse, anyhow::Error> {
         self.apply_rate_limit().await;
-        let url = format!(
-            "{}/prices/{}/{}/{}",
-            self.base_url, epic, resolution, max
-        );
+        let url = format!("{}/prices/{}/{}/{}", self.base_url, epic, resolution, max);
         let builder = self.client.get(&url).header("Version", "1");
         let response = self.build_request(builder).send().await?;
-        self.handle_response::<IGPriceHistoryResponse>(response).await
+        self.handle_response::<IGPriceHistoryResponse>(response)
+            .await
     }
 
     /// Get list of open positions
@@ -317,12 +337,18 @@ impl TraderAPI for IGRestClient {
     }
 
     /// Open a new position
-    async fn open_position(&mut self, request: IGTradeRequest) -> Result<IGTradeResponse, anyhow::Error> {
+    async fn open_position(
+        &mut self,
+        request: IGTradeRequest,
+    ) -> Result<IGTradeResponse, anyhow::Error> {
         let url = format!("{}/positions/otc", self.base_url);
 
         let body = serde_json::to_value(&request)?;
 
-        info!("open_position payload: {}", serde_json::to_string(&body).unwrap_or_default());
+        info!(
+            "open_position payload: {}",
+            serde_json::to_string(&body).unwrap_or_default()
+        );
 
         self.post_request::<IGTradeResponse>(&url, body).await
     }
@@ -347,15 +373,17 @@ impl TraderAPI for IGRestClient {
         let mut retry_count = 0;
         loop {
             self.apply_rate_limit().await;
-            
+
             // Build the request manually to ensure all headers are correct
-            let mut request = self.client.post(&url)
+            let mut request = self
+                .client
+                .post(&url)
                 .header("X-IG-API-KEY", &self.api_key)
                 .header("Version", "1")
                 .header("_method", "DELETE")
                 .header("Content-Type", "application/json")
                 .json(&body);
-                
+
             if let Some(cst) = &self.cst {
                 request = request.header("CST", cst);
             }
@@ -387,20 +415,22 @@ impl TraderAPI for IGRestClient {
         let mut retry_count = 0;
         loop {
             self.apply_rate_limit().await;
-            
-            let mut request = self.client.get(&url)
+
+            let mut request = self
+                .client
+                .get(&url)
                 .header("X-IG-API-KEY", &self.api_key)
                 .header("Version", "1")
                 .header("Content-Type", "application/json")
                 .header("Accept", "application/json");
-                
+
             if let Some(cst) = &self.cst {
                 request = request.header("CST", cst);
             }
             if let Some(security_token) = &self.security_token {
                 request = request.header("X-SECURITY-TOKEN", security_token);
             }
-            
+
             let response = request.send().await?;
             match self.handle_response::<IGConfirmResponse>(response).await {
                 Ok(data) => return Ok(data),
@@ -545,7 +575,8 @@ impl TraderAPI for IGRestClient {
             request = request.header("X-SECURITY-TOKEN", sec);
         }
         let response = request.send().await?;
-        self.handle_response::<IGWatchlistMarketsResponse>(response).await
+        self.handle_response::<IGWatchlistMarketsResponse>(response)
+            .await
     }
 }
 
@@ -558,12 +589,14 @@ impl IGRestClient {
         info!("Refreshing session");
 
         // GET /session with Version 1 refreshes tokens
-        let mut request = self.client.get(&url)
+        let mut request = self
+            .client
+            .get(&url)
             .header("X-IG-API-KEY", &self.api_key)
             .header("Version", "1")
             .header("Content-Type", "application/json; charset=UTF-8")
             .header("Accept", "application/json; charset=UTF-8");
-        
+
         if let Some(cst) = &self.cst {
             request = request.header("CST", cst);
         }
@@ -587,7 +620,7 @@ impl IGRestClient {
                 debug!("CST token rotated/refreshed");
             }
         }
-        
+
         if let Some(sec) = response.headers().get("x-security-token") {
             if let Ok(sec_str) = sec.to_str() {
                 self.security_token = Some(sec_str.to_string());
@@ -609,7 +642,7 @@ impl IGRestClient {
     pub async fn get_today_financing(&mut self) -> Result<f64, anyhow::Error> {
         let now = Utc::now();
         let from = now.format("%Y-%m-%dT00:00:00").to_string();
-        let to   = now.format("%Y-%m-%dT23:59:59").to_string();
+        let to = now.format("%Y-%m-%dT23:59:59").to_string();
 
         let url = format!(
             "{}/history/transactions?type=INTEREST&from={}&to={}&pageSize=500",
@@ -618,7 +651,9 @@ impl IGRestClient {
 
         self.apply_rate_limit().await;
 
-        let mut request = self.client.get(&url)
+        let mut request = self
+            .client
+            .get(&url)
             .header("X-IG-API-KEY", &self.api_key)
             .header("Version", "2")
             .header("Content-Type", "application/json; charset=UTF-8")
@@ -631,17 +666,18 @@ impl IGRestClient {
             request = request.header("X-SECURITY-TOKEN", token);
         }
 
-        let response = request
-            .timeout(Duration::from_secs(15))
-            .send()
-            .await?;
+        let response = request.timeout(Duration::from_secs(15)).send().await?;
 
         let status = response.status();
         let body: serde_json::Value = response.json().await.unwrap_or_default();
 
         if !status.is_success() {
             let code = body["errorCode"].as_str().unwrap_or("unknown");
-            return Err(anyhow::anyhow!("Financing fetch failed {}: {}", status, code));
+            return Err(anyhow::anyhow!(
+                "Financing fetch failed {}: {}",
+                status,
+                code
+            ));
         }
 
         let mut total_financing = 0.0_f64;
@@ -649,7 +685,8 @@ impl IGRestClient {
             for txn in txns {
                 if let Some(pnl_str) = txn["profitAndLoss"].as_str() {
                     // Strip currency prefix e.g. "SD59.65" → 59.65, "SD-5.84" → -5.84
-                    let numeric: String = pnl_str.chars()
+                    let numeric: String = pnl_str
+                        .chars()
                         .filter(|c| c.is_ascii_digit() || *c == '-' || *c == '.')
                         .collect();
                     if let Ok(val) = numeric.parse::<f64>() {
@@ -658,7 +695,11 @@ impl IGRestClient {
                     }
                 }
             }
-            info!("Financing fetched: {} transactions, net = {:.2} SGD", txns.len(), total_financing);
+            info!(
+                "Financing fetched: {} transactions, net = {:.2} SGD",
+                txns.len(),
+                total_financing
+            );
         }
 
         Ok(total_financing)
@@ -670,10 +711,7 @@ impl IGRestClient {
 
         info!("Logging out from IG API");
 
-        let _response = self
-            .build_request(self.client.delete(&url))
-            .send()
-            .await?;
+        let _response = self.build_request(self.client.delete(&url)).send().await?;
 
         debug!("Successfully logged out");
         Ok(())
@@ -708,7 +746,10 @@ impl IGRestClient {
         let mut retry_count = 0;
         loop {
             self.apply_rate_limit().await;
-            let response = self.build_request(self.client.post(url).json(&body)).send().await?;
+            let response = self
+                .build_request(self.client.post(url).json(&body))
+                .send()
+                .await?;
             match self.handle_response::<T>(response).await {
                 Ok(data) => return Ok(data),
                 Err(e) if e.to_string().contains("UNAUTHORIZED") && retry_count < 1 => {
@@ -732,7 +773,10 @@ impl IGRestClient {
         let mut retry_count = 0;
         loop {
             self.apply_rate_limit().await;
-            let response = self.build_request(self.client.put(url).json(&body)).send().await?;
+            let response = self
+                .build_request(self.client.put(url).json(&body))
+                .send()
+                .await?;
             match self.handle_response::<T>(response).await {
                 Ok(data) => return Ok(data),
                 Err(e) if e.to_string().contains("UNAUTHORIZED") && retry_count < 1 => {
@@ -756,7 +800,15 @@ impl IGRestClient {
         let mut retry_count = 0;
         loop {
             self.apply_rate_limit().await;
-            let response = self.build_request(self.client.delete(url).json(&body).header("_method", "DELETE")).send().await?;
+            let response = self
+                .build_request(
+                    self.client
+                        .delete(url)
+                        .json(&body)
+                        .header("_method", "DELETE"),
+                )
+                .send()
+                .await?;
             match self.handle_response::<T>(response).await {
                 Ok(data) => return Ok(data),
                 Err(e) if e.to_string().contains("UNAUTHORIZED") && retry_count < 1 => {
@@ -805,11 +857,18 @@ impl IGRestClient {
             // Extract IG's machine-readable errorCode from the JSON body if present.
             let ig_code = serde_json::from_str::<serde_json::Value>(&error_text)
                 .ok()
-                .and_then(|v| v.get("errorCode").and_then(|c| c.as_str()).map(|s| s.to_string()))
+                .and_then(|v| {
+                    v.get("errorCode")
+                        .and_then(|c| c.as_str())
+                        .map(|s| s.to_string())
+                })
                 .unwrap_or_default();
 
             let ig_error = crate::api::errors::IGError::from_ig_code(status, &ig_code, &error_text);
-            error!("API request failed with status {}: {} (Code: {})", status, error_text, ig_code);
+            error!(
+                "API request failed with status {}: {} (Code: {})",
+                status, error_text, ig_code
+            );
 
             // Surface auth failures as the "UNAUTHORIZED" sentinel string so that
             // the retry wrappers (get_request, post_request, etc.) can re-authenticate.
@@ -824,7 +883,12 @@ impl IGRestClient {
         match serde_json::from_str::<T>(&body_text) {
             Ok(data) => Ok(data),
             Err(e) => {
-                error!("Failed to decode response body as {}: {}. Body: {}", std::any::type_name::<T>(), e, body_text);
+                error!(
+                    "Failed to decode response body as {}: {}. Body: {}",
+                    std::any::type_name::<T>(),
+                    e,
+                    body_text
+                );
                 Err(anyhow::anyhow!("error decoding response body"))
             }
         }

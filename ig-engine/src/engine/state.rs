@@ -2,15 +2,15 @@
 pub mod sentiment;
 pub use sentiment::{GlobalSentimentRegistry, SentimentData};
 
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, VecDeque};
-use chrono::{DateTime, Utc};
 
+use crate::data::bar_accumulator::BarAccumulator;
+use crate::data::candle_store::CandleStore;
 use crate::engine::config::EngineConfig;
 use crate::indicators::IndicatorSet;
-use crate::data::candle_store::CandleStore;
-use crate::data::bar_accumulator::BarAccumulator;
-use crate::learning::adaptive_weights::{WeightAdjustment, AdaptiveWeightManager};
+use crate::learning::adaptive_weights::{AdaptiveWeightManager, WeightAdjustment};
 use crate::learning::scorecard::StrategyScorecard;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -56,7 +56,7 @@ pub fn get_instrument_name(epic: &str) -> String {
         // Gold variants
         "CS.D.CFIGOLD.CFI.IP" => "Spot Gold (SGD1)".to_string(),
         "CS.D.CFDGOLD.CMG.IP" => "Spot Gold ($1)".to_string(),
-        "CS.D.GOL.CFD"        => "Spot Gold".to_string(),
+        "CS.D.GOL.CFD" => "Spot Gold".to_string(),
         "CS.D.XAUUSD.CFD" | "CS.D.GOLDUSD.CFD" => "Gold (XAU/USD)".to_string(),
         "IX.D.SUNGOLD.CFI.IP" => "Weekend Spot Gold".to_string(),
         // Forex — demo (*.CSD.IP) and live (*.CFD) variants
@@ -332,7 +332,8 @@ impl M15CooldownTracker {
 
     /// Record a new M15 trade for this epic in the current H1 candle.
     pub fn record_trade(&mut self, epic: &str, h1_ts: i64) {
-        let entry = self.trades_per_h1_candle
+        let entry = self
+            .trades_per_h1_candle
             .entry(epic.to_string())
             .or_insert((h1_ts, 0));
         if entry.0 != h1_ts {
@@ -368,7 +369,7 @@ impl EngineState {
         for epic in &config.markets.epics {
             let mut tf_map = HashMap::new();
             tf_map.insert("HOUR".to_string(), IndicatorSet::default_config());
-            
+
             // If multi-timeframe is enabled, initialize those timeframes as well
             if let Some(mtf) = &config.strategies.multi_timeframe {
                 if mtf.enabled {
@@ -377,7 +378,7 @@ impl EngineState {
                     tf_map.insert(mtf.entry_tf.clone(), IndicatorSet::default_config());
                 }
             }
-            
+
             indicators.insert(epic.clone(), tf_map);
         }
 
@@ -403,7 +404,7 @@ impl EngineState {
                 live: HashMap::new(),
                 indicators,
                 history: CandleStore::new(),
-                bar_accumulator: BarAccumulator::new(3600),    // 1-hour bars
+                bar_accumulator: BarAccumulator::new(3600), // 1-hour bars
                 bar_accumulator_m15: BarAccumulator::new(900), // 15-minute bars
                 h1_bias: HashMap::new(),
             },
@@ -448,11 +449,16 @@ impl EngineState {
     /// Only updates: `instrument_overrides`, `min_consensus`, `min_avg_strength`.
     /// Risk parameters (`max_risk_per_trade`, `max_daily_loss_pct`, etc.) are
     /// intentionally never modified by hot-reload — those require a full restart.
-    pub fn reload_strategy_config(&mut self, new_strategies: crate::engine::config::StrategiesConfig) {
+    pub fn reload_strategy_config(
+        &mut self,
+        new_strategies: crate::engine::config::StrategiesConfig,
+    ) {
         self.config.strategies.instrument_overrides = new_strategies.instrument_overrides;
-        self.config.strategies.min_consensus        = new_strategies.min_consensus;
-        self.config.strategies.min_avg_strength     = new_strategies.min_avg_strength;
-        tracing::info!("Strategy config hot-reloaded: instrument_overrides + consensus thresholds updated");
+        self.config.strategies.min_consensus = new_strategies.min_consensus;
+        self.config.strategies.min_avg_strength = new_strategies.min_avg_strength;
+        tracing::info!(
+            "Strategy config hot-reloaded: instrument_overrides + consensus thresholds updated"
+        );
     }
 
     pub fn check_daily_reset(&mut self) {
@@ -472,7 +478,12 @@ impl EngineState {
     pub fn record_trade_result_for_epic(&mut self, pnl: f64, epic: Option<&str>) {
         self.metrics.daily.trades += 1;
         if let Some(e) = epic {
-            *self.metrics.daily.trades_by_epic.entry(e.to_string()).or_insert(0) += 1;
+            *self
+                .metrics
+                .daily
+                .trades_by_epic
+                .entry(e.to_string())
+                .or_insert(0) += 1;
         }
         self.metrics.daily.pnl += pnl;
 
@@ -508,7 +519,12 @@ impl EngineState {
         }
     }
 
-    pub fn add_signal_record(&mut self, signal: Signal, was_executed: bool, rejection_reason: Option<String>) {
+    pub fn add_signal_record(
+        &mut self,
+        signal: Signal,
+        was_executed: bool,
+        rejection_reason: Option<String>,
+    ) {
         self.trades.signal_records.push_back(SignalRecord {
             signal,
             was_executed,
@@ -534,15 +550,23 @@ impl EngineState {
     /// Set a re-entry cooldown for the given epic.
     /// Call this whenever a position closes (TP or SL hit).
     pub fn set_trade_cooldown(&mut self, epic: &str, cooldown_secs: u64) {
-        if cooldown_secs == 0 { return; }
+        if cooldown_secs == 0 {
+            return;
+        }
         let until = Utc::now() + chrono::Duration::seconds(cooldown_secs as i64);
         self.trades.cooldowns.insert(epic.to_string(), until);
-        tracing::info!("[{}] Re-entry cooldown set — blocked for {}s until {}", epic, cooldown_secs, until.format("%H:%M:%S UTC"));
+        tracing::info!(
+            "[{}] Re-entry cooldown set — blocked for {}s until {}",
+            epic,
+            cooldown_secs,
+            until.format("%H:%M:%S UTC")
+        );
     }
 
     /// Returns true if the epic is currently in cooldown (re-entry blocked).
     pub fn is_in_cooldown(&self, epic: &str) -> bool {
-        self.trades.cooldowns
+        self.trades
+            .cooldowns
             .get(epic)
             .map(|&until| Utc::now() < until)
             .unwrap_or(false)

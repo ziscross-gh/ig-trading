@@ -1,7 +1,7 @@
-use std::collections::HashMap;
-use crate::engine::state::{LearningSnapshot, StrategyLearningEntry, SessionStats, Session};
-use crate::learning::scorecard::{StrategyScorecard};
+use crate::engine::state::{LearningSnapshot, Session, SessionStats, StrategyLearningEntry};
 use crate::learning::adaptive_weights::AdaptiveWeightManager;
+use crate::learning::scorecard::StrategyScorecard;
+use std::collections::HashMap;
 
 /// Build a serialisable `LearningSnapshot` from the current scorecard and weight manager.
 pub fn build_learning_snapshot(
@@ -25,7 +25,11 @@ pub fn build_learning_snapshot(
                 .iter()
                 .filter_map(|&s| {
                     let sp = scorecard.get_session_performance(&name, s)?;
-                    let pf = if sp.profit_factor.is_finite() { sp.profit_factor } else { 99.0 };
+                    let pf = if sp.profit_factor.is_finite() {
+                        sp.profit_factor
+                    } else {
+                        99.0
+                    };
                     Some((
                         s.label().to_string(),
                         SessionStats {
@@ -39,7 +43,11 @@ pub fn build_learning_snapshot(
             Some(StrategyLearningEntry {
                 name,
                 win_rate: perf.win_rate,
-                profit_factor: if perf.profit_factor.is_finite() { perf.profit_factor } else { 99.0 },
+                profit_factor: if perf.profit_factor.is_finite() {
+                    perf.profit_factor
+                } else {
+                    99.0
+                },
                 current_multiplier,
                 effective_weight,
                 max_consecutive_losses: perf.max_consecutive_losses,

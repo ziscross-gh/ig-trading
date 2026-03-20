@@ -1,7 +1,11 @@
 [advisories]
 vulnerability = "deny"
 unmaintained = "warn"
-yanked = "deny"
+yanked = "warn"  # downgraded from deny: js-sys 0.3.87 yanked (transitive dep, no direct fix)
+
+# RUSTSEC-2023-0071: rsa Marvin Attack — no fix available upstream.
+# Transitive dep via sqlx-mysql; not exploitable in this server context.
+ignore = ["RUSTSEC-2023-0071"]
 
 [licenses]
 unlicensed = "deny"

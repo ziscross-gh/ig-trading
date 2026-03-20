@@ -1,14 +1,14 @@
-use ig_engine::api::rest_client::IGRestClient;
-use ig_engine::api::types::IGTradeRequest;
-use ig_engine::api::traits::TraderAPI;
 use dotenvy::dotenv;
+use ig_engine::api::rest_client::IGRestClient;
+use ig_engine::api::traits::TraderAPI;
+use ig_engine::api::types::IGTradeRequest;
 use std::env;
 use tokio::time::{sleep, Duration};
 
 #[tokio::main]
 async fn main() -> Result<(), anyhow::Error> {
     dotenv().ok();
-    
+
     println!("============================================================");
     println!(" 🧪 IG RUST API LAB — Standalone Injector");
     println!("============================================================");
@@ -25,7 +25,9 @@ async fn main() -> Result<(), anyhow::Error> {
 
     // 2. Get account currency
     let accounts = client.get_accounts().await?;
-    let account_currency = accounts.accounts.first()
+    let account_currency = accounts
+        .accounts
+        .first()
         .map(|a| a.currency.clone())
         .unwrap_or_else(|| "USD".to_string());
     println!("💰 Account Currency: {}", account_currency);
@@ -47,18 +49,23 @@ async fn main() -> Result<(), anyhow::Error> {
         if pos_resp.positions.is_empty() {
             println!("📭 No open positions found.");
         } else {
-            println!("{:<20} | {:<25} | {:<4} | {:<6} | {:<10} | {:<10} | {:<10}", 
-                "Deal ID", "Market", "Dir", "Size", "Entry", "Current", "PnL (Est)");
+            println!(
+                "{:<20} | {:<25} | {:<4} | {:<6} | {:<10} | {:<10} | {:<10}",
+                "Deal ID", "Market", "Dir", "Size", "Entry", "Current", "PnL (Est)"
+            );
             println!("{}", "-".repeat(95));
             for wrapper in pos_resp.positions {
                 let p = wrapper.position;
                 let m = wrapper.market;
-                
+
                 let current_price = match client.get_market(&m.epic).await {
-                    Ok(minfo) => (minfo.snapshot.bid.unwrap_or(0.0) + minfo.snapshot.offer.unwrap_or(0.0)) / 2.0,
+                    Ok(minfo) => {
+                        (minfo.snapshot.bid.unwrap_or(0.0) + minfo.snapshot.offer.unwrap_or(0.0))
+                            / 2.0
+                    }
                     Err(_) => 0.0,
                 };
-                
+
                 let pnl = if p.direction == "BUY" {
                     (current_price - p.level) * p.size
                 } else {
@@ -66,15 +73,23 @@ async fn main() -> Result<(), anyhow::Error> {
                 };
 
                 let adj_pnl = if m.epic.contains("JPY") {
-                    pnl * 100.0 
+                    pnl * 100.0
                 } else if m.epic.contains("GOLD") {
                     pnl
                 } else {
                     pnl * 10000.0
                 };
 
-                println!("{:<20} | {:<25} | {:<4} | {:<6} | {:<10.5} | {:<10.5} | {:<10.2}", 
-                    p.deal_id, m.instrument_name.unwrap_or_default(), p.direction, p.size, p.level, current_price, adj_pnl);
+                println!(
+                    "{:<20} | {:<25} | {:<4} | {:<6} | {:<10.5} | {:<10.5} | {:<10.2}",
+                    p.deal_id,
+                    m.instrument_name.unwrap_or_default(),
+                    p.direction,
+                    p.size,
+                    p.level,
+                    current_price,
+                    adj_pnl
+                );
             }
         }
         return Ok(());
@@ -87,7 +102,10 @@ async fn main() -> Result<(), anyhow::Error> {
             let mut profitable = Vec::new();
             for wrapper in pos_resp.positions {
                 let current_price = match client.get_market(&wrapper.market.epic).await {
-                    Ok(minfo) => (minfo.snapshot.bid.unwrap_or(0.0) + minfo.snapshot.offer.unwrap_or(0.0)) / 2.0,
+                    Ok(minfo) => {
+                        (minfo.snapshot.bid.unwrap_or(0.0) + minfo.snapshot.offer.unwrap_or(0.0))
+                            / 2.0
+                    }
                     Err(_) => 0.0,
                 };
                 let pnl = if wrapper.position.direction == "BUY" {
@@ -106,7 +124,11 @@ async fn main() -> Result<(), anyhow::Error> {
                 return Ok(());
             }
             let deal_id = &args[2];
-            pos_resp.positions.into_iter().filter(|w| w.position.deal_id == *deal_id).collect()
+            pos_resp
+                .positions
+                .into_iter()
+                .filter(|w| w.position.deal_id == *deal_id)
+                .collect()
         };
 
         if positions_to_process.is_empty() {
@@ -118,12 +140,21 @@ async fn main() -> Result<(), anyhow::Error> {
             let p = &wrapper.position;
             let m = &wrapper.market;
             let close_direction = if p.direction == "BUY" { "SELL" } else { "BUY" };
-            println!("🎬 Closing position {}: {} {} of {:?}...", p.deal_id, close_direction, p.size, m.instrument_name);
-            
-            match client.close_position(&p.deal_id, close_direction, p.size).await {
+            println!(
+                "🎬 Closing position {}: {} {} of {:?}...",
+                p.deal_id, close_direction, p.size, m.instrument_name
+            );
+
+            match client
+                .close_position(&p.deal_id, close_direction, p.size)
+                .await
+            {
                 Ok(resp) => {
-                    println!("✅ Close submitted! Deal Reference: {}", resp.deal_reference);
-                },
+                    println!(
+                        "✅ Close submitted! Deal Reference: {}",
+                        resp.deal_reference
+                    );
+                }
                 Err(e) => println!("❌ Failed to close {}: {}", p.deal_id, e),
             }
         }
@@ -137,26 +168,50 @@ async fn main() -> Result<(), anyhow::Error> {
 
     let market_info = client.get_market(epic).await?;
     println!("📈 Market Name: {}", market_info.instrument.name);
-    println!("💹 Allowed Currencies: {:?}", market_info.instrument.currencies.iter().map(|c| &c.code).collect::<Vec<_>>());
-    
+    println!(
+        "💹 Allowed Currencies: {:?}",
+        market_info
+            .instrument
+            .currencies
+            .iter()
+            .map(|c| &c.code)
+            .collect::<Vec<_>>()
+    );
+
     let currency_code = if epic.contains("JPY") {
         "JPY".to_string()
-    } else if epic.contains("EURUSD") || epic.contains("GBPUSD") || epic.contains("AUDUSD") { 
-        "USD".to_string() 
+    } else if epic.contains("EURUSD") || epic.contains("GBPUSD") || epic.contains("AUDUSD") {
+        "USD".to_string()
     } else {
         account_currency.clone()
     };
 
     let bid = market_info.snapshot.bid.unwrap_or(0.0);
     let offer = market_info.snapshot.offer.unwrap_or(0.0);
-    let price = if request_direction == "BUY" { offer } else { bid };
-    
-    let pip_scale = if epic.contains("JPY") { 0.01 } else if epic.contains("GOLD") { 1.0 } else { 0.0001 };
-    
-    let (stop_level, limit_level) = if request_direction == "BUY" {
-        (Some(price - 1000.0 * pip_scale), Some(price + 2000.0 * pip_scale))
+    let price = if request_direction == "BUY" {
+        offer
     } else {
-        (Some(price + 1000.0 * pip_scale), Some(price - 1000.0 * pip_scale))
+        bid
+    };
+
+    let pip_scale = if epic.contains("JPY") {
+        0.01
+    } else if epic.contains("GOLD") {
+        1.0
+    } else {
+        0.0001
+    };
+
+    let (stop_level, limit_level) = if request_direction == "BUY" {
+        (
+            Some(price - 1000.0 * pip_scale),
+            Some(price + 2000.0 * pip_scale),
+        )
+    } else {
+        (
+            Some(price + 1000.0 * pip_scale),
+            Some(price - 1000.0 * pip_scale),
+        )
     };
 
     let request = IGTradeRequest {
@@ -165,8 +220,8 @@ async fn main() -> Result<(), anyhow::Error> {
         size,
         order_type: "MARKET".to_string(),
         level: None,
-        stop_level, 
-        stop_distance: None, 
+        stop_level,
+        stop_distance: None,
         limit_level,
         currency_code: Some(currency_code),
         guaranteed_stop: Some(false),
@@ -175,23 +230,33 @@ async fn main() -> Result<(), anyhow::Error> {
         expiry: "-".to_string(),
     };
 
-    println!("🚀 Injecting trade: {} {} of {} @ {} (SL={:?}, TP={:?})...", 
-        request_direction, size, epic, price, stop_level, limit_level);
-    
+    println!(
+        "🚀 Injecting trade: {} {} of {} @ {} (SL={:?}, TP={:?})...",
+        request_direction, size, epic, price, stop_level, limit_level
+    );
+
     let resp = client.open_position(request).await?;
-    println!("✅ Trade SUBMITTED! Deal Reference: {}", resp.deal_reference);
-    
+    println!(
+        "✅ Trade SUBMITTED! Deal Reference: {}",
+        resp.deal_reference
+    );
+
     for i in 0..10 {
         sleep(Duration::from_secs(1)).await;
         match client.get_deal_confirmation(&resp.deal_reference).await {
             Ok(conf) => {
-                println!("📊 Result [Attempt {}]: deal_status={}, reason={:?}, deal_id={}", 
-                    i+1, conf.deal_status, conf.reason, conf.deal_id);
+                println!(
+                    "📊 Result [Attempt {}]: deal_status={}, reason={:?}, deal_id={}",
+                    i + 1,
+                    conf.deal_status,
+                    conf.reason,
+                    conf.deal_id
+                );
                 if conf.deal_status != "PENDING" {
                     break;
                 }
             }
-            Err(e) => println!("⏳ [Attempt {}] Waiting for confirmation... ({})", i+1, e),
+            Err(e) => println!("⏳ [Attempt {}] Waiting for confirmation... ({})", i + 1, e),
         }
     }
 

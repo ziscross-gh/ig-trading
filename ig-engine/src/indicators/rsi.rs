@@ -65,7 +65,11 @@ mod tests {
     fn test_rsi_all_gains() {
         let closes: Vec<f64> = (1..=20).map(|x| x as f64).collect();
         let rsi = calculate(&closes, 14);
-        assert!(rsi > 95.0, "All gains should give RSI near 100, got {}", rsi);
+        assert!(
+            rsi > 95.0,
+            "All gains should give RSI near 100, got {}",
+            rsi
+        );
     }
 
     #[test]

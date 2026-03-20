@@ -1,20 +1,20 @@
-use uuid::Uuid;
 use chrono::Utc;
+use uuid::Uuid;
 
-use crate::indicators::IndicatorSnapshot;
-use crate::engine::state::{Direction, Signal};
 use super::traits::Strategy;
+use crate::engine::state::{Direction, Signal};
+use crate::indicators::IndicatorSnapshot;
 
 /// Adaptive Moving Average Crossover Strategy
 /// Generates BUY/SELL signals based on EMA crossovers with trend confirmation via ADX
 #[derive(Clone, Debug)]
 pub struct MACrossoverStrategy {
     #[allow(dead_code)]
-    pub short_period: usize,    // stored for config round-trip; EMA calc is done by IndicatorSet
+    pub short_period: usize, // stored for config round-trip; EMA calc is done by IndicatorSet
     pub long_period: usize,
     pub adx_threshold: f64,
     #[allow(dead_code)]
-    pub weight: f64,            // reserved for ensemble weight override; ensemble manages weights by name
+    pub weight: f64, // reserved for ensemble weight override; ensemble manages weights by name
     pub atr_sl_multiplier: f64,
     pub atr_tp_multiplier: f64,
     pub trailing_stop_pips: Option<f64>,
@@ -117,7 +117,12 @@ impl Strategy for MACrossoverStrategy {
         "MA_Crossover"
     }
 
-    fn evaluate(&self, epic: &str, price: f64, indicators_map: &std::collections::HashMap<String, IndicatorSnapshot>) -> Option<Signal> {
+    fn evaluate(
+        &self,
+        epic: &str,
+        price: f64,
+        indicators_map: &std::collections::HashMap<String, IndicatorSnapshot>,
+    ) -> Option<Signal> {
         // Fallback to "HOUR" timeframe for single-TF backward compatibility
         let indicators = indicators_map.get("HOUR")?;
 
@@ -143,7 +148,8 @@ impl Strategy for MACrossoverStrategy {
             }
 
             let strength = self.calculate_signal_strength(indicators);
-            let (stop_loss, take_profit, trailing_stop_distance) = self.calculate_stops_and_targets(Direction::Buy, price, indicators);
+            let (stop_loss, take_profit, trailing_stop_distance) =
+                self.calculate_stops_and_targets(Direction::Buy, price, indicators);
 
             let reason = format!(
                 "EMA Crossover BUY: Short({:.2}) > Long({:.2}), ADX={:.2}",
@@ -173,7 +179,8 @@ impl Strategy for MACrossoverStrategy {
             }
 
             let strength = self.calculate_signal_strength(indicators);
-            let (stop_loss, take_profit, trailing_stop_distance) = self.calculate_stops_and_targets(Direction::Sell, price, indicators);
+            let (stop_loss, take_profit, trailing_stop_distance) =
+                self.calculate_stops_and_targets(Direction::Sell, price, indicators);
 
             let reason = format!(
                 "EMA Crossover SELL: Short({:.2}) < Long({:.2}), ADX={:.2}",

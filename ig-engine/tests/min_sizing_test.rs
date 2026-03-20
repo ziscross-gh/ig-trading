@@ -1,4 +1,4 @@
-use ig_engine::risk::{RiskManager, RiskConfig, AccountInfo, RiskVerdict};
+use ig_engine::risk::{AccountInfo, RiskConfig, RiskManager, RiskVerdict};
 
 #[test]
 fn test_minimum_sizing_logic() {
@@ -6,10 +6,10 @@ fn test_minimum_sizing_logic() {
     config.max_open_positions = 10;
     config.max_risk_per_trade = 0.5; // 0.5% risk
     config.trading_hours_utc = None; // Disable for test
-    config.macro_events = vec![];    // Disable for test
-    
+    config.macro_events = vec![]; // Disable for test
+
     let mut rm = RiskManager::new(config);
-    
+
     // Simulate a SMALL account: $1,000 SGD
     let account = AccountInfo {
         balance: 1000.0,
@@ -60,7 +60,7 @@ fn test_minimum_sizing_logic() {
     match verdict_gold {
         RiskVerdict::Approved(trade) => {
             println!("⚠️  GOLD Approved: Size={:.2} (Min=3.0) - NOTE: This exceeds 0.5% risk due to min sizing!", trade.size);
-        },
+        }
         RiskVerdict::Rejected(reason) => {
             println!("✅ GOLD Correctly Rejected for small account: {}", reason);
         }
