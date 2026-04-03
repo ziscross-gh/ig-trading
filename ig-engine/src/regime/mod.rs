@@ -23,9 +23,10 @@
 //! }
 //! ```
 
-use chrono::Utc;
-use serde::Deserialize;
-use tracing::{debug, info};
+use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+use tracing::{debug, info, warn};
 
 use crate::engine::state::Signal;
 
@@ -174,6 +175,85 @@ pub fn apply_regime_multipliers(signals: &mut [Signal], regime: &Regime) {
         }
     }
 }
+
+// ── Regime Persistence Tracking ───────────────────────────────────────────────
+
+/// Path for the regime persistence file (tracks how long each instrument
+/// has remained in the same regime).
+const PERSISTENCE_FILE: &str = "data/regime_persistence.json";
+
+/// Per-instrument persistence record.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PersistenceEntry {
+    pub regime: String,
+    pub since: DateTime<Utc>,
+}
+
+/// Full persistence state: epic -> PersistenceEntry.
+pub type RegimePersistence = HashMap<String, PersistenceEntry>;
+
+/// Read the persistence file from disk. Returns an empty map if the file
+/// is missing, unreadable, or contains invalid JSON.
+fn load_persistence() -> RegimePersistence {
+    match std::fs::read_to_string(PERSISTENCE_FILE) {
+        Ok(raw) => serde_json::from_str(&raw).unwrap_or_else(|e| {
+            warn!(
+                "regime_persistence.json parse error (starting fresh): {}",
+                e
+            );
+            HashMap::new()
+        }),
+        Err(_) => HashMap::new(), // file not yet created — first run
+    }
+}
+
+/// Write persistence state back to disk. Logs a warning on failure but
+/// does not propagate the error (non-critical bookkeeping).
+fn save_persistence(state: &RegimePersistence) {
+    match serde_json::to_string_pretty(state) {
+        Ok(json) => {
+            if let Err(e) = std::fs::write(PERSISTENCE_FILE, json) {
+                warn!("Failed to write regime_persistence.json: {}", e);
+            }
+        }
+        Err(e) => warn!("Failed to serialize regime persistence: {}", e),
+    }
+}
+
+/// Update persistence for `epic` with the given `current_regime` string
+/// (e.g. "VOLATILE", "TRENDING", "RANGING") and return how many days
+/// the regime has been unchanged.
+///
+/// - If the regime changed → reset the timestamp, return 0.
+/// - If the regime is the same → keep the timestamp, return elapsed days.
+/// - If there is no prior record → create one, return 0.
+pub fn update_persistence_and_get_days(epic: &str, current_regime: &str) -> u64 {
+    let mut state = load_persistence();
+    let now = Utc::now();
+
+    let days = match state.get(epic) {
+        Some(entry) if entry.regime == current_regime => {
+            let elapsed = now.signed_duration_since(entry.since);
+            elapsed.num_days().max(0) as u64
+        }
+        _ => {
+            // Regime changed or first time — reset
+            state.insert(
+                epic.to_string(),
+                PersistenceEntry {
+                    regime: current_regime.to_string(),
+                    since: now,
+                },
+            );
+            0
+        }
+    };
+
+    save_persistence(&state);
+    days
+}
+
+// ── Internal helpers ─────────────────────────────────────────────────────────
 
 fn regime_multiplier(kind: &RegimeKind, strategy: &str) -> f64 {
     match kind {

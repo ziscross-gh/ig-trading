@@ -196,6 +196,32 @@ pub async fn analyze_market(
                     crate::regime::apply_regime_multipliers(&mut signals, &regime);
                     regime.kind.to_string()
                 });
+
+            // ── Regime persistence tracking ─────────────────────────────────────
+            // Track how many days the current regime has been unchanged for this
+            // epic. Used by the regime cooldown subsystem to relax VOLATILE
+            // restrictions when they persist beyond the configured threshold.
+            let regime_persistence_days: u64 = current_regime_str
+                .as_deref()
+                .map(|r| crate::regime::update_persistence_and_get_days(epic.as_str(), r))
+                .unwrap_or(0);
+
+            // Check if regime cooldown applies (VOLATILE for longer than threshold)
+            let regime_cooldown_active = current_regime_str.as_deref() == Some("VOLATILE")
+                && config
+                    .strategies
+                    .regime_cooldown_days
+                    .is_some_and(|threshold| regime_persistence_days >= threshold);
+
+            if regime_cooldown_active {
+                info!(
+                    "[{}] Regime cooldown active: VOLATILE for {} days (threshold: {} days) — relaxing restrictions",
+                    epic,
+                    regime_persistence_days,
+                    config.strategies.regime_cooldown_days.unwrap_or(0)
+                );
+            }
+
             if current_regime_str.is_none() {
                 debug!(
                     "No fresh regime data for {} — using unweighted signals",
@@ -294,11 +320,36 @@ pub async fn analyze_market(
                 // Override to 0.75×SL / 2.0×TP: R:R = 2.67, TP reachable in a wave.
                 // The early BE snap (Phase 15.C) then locks profit at 30% of the
                 // tighter SL distance — catching profit on the wave, not waiting for 4×ATR.
+                //
+                // Regime cooldown: if VOLATILE has persisted beyond regime_cooldown_days,
+                // use relaxed intermediate multipliers instead of the tight VOLATILE ones.
+                // This prevents the restrictive VOLATILE parameters from becoming the
+                // permanent (losing) default when the classifier stays VOLATILE for weeks.
                 if is_volatile_regime {
                     if let Some(h1_snap) = snapshot_map.get("HOUR") {
                         if let Some(atr) = h1_snap.atr {
-                            let sl_mult = config.strategies.volatile_atr_sl_multiplier;
-                            let tp_mult = config.strategies.volatile_atr_tp_multiplier;
+                            let (sl_mult, tp_mult) = if regime_cooldown_active {
+                                let cd_sl = config
+                                    .strategies
+                                    .regime_cooldown_sl_multiplier
+                                    .unwrap_or(1.25);
+                                let cd_tp = config
+                                    .strategies
+                                    .regime_cooldown_tp_multiplier
+                                    .unwrap_or(3.0);
+                                info!(
+                                    "[{}] Regime cooldown SL/TP: {:.2}x / {:.2}x (relaxed from {:.2}x / {:.2}x)",
+                                    epic, cd_sl, cd_tp,
+                                    config.strategies.volatile_atr_sl_multiplier,
+                                    config.strategies.volatile_atr_tp_multiplier
+                                );
+                                (cd_sl, cd_tp)
+                            } else {
+                                (
+                                    config.strategies.volatile_atr_sl_multiplier,
+                                    config.strategies.volatile_atr_tp_multiplier,
+                                )
+                            };
                             let sl_dist = atr * sl_mult;
                             let tp_dist = atr * tp_mult;
                             use crate::engine::state::Direction;

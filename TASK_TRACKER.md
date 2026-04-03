@@ -1,8 +1,8 @@
 # TASK_TRACKER.md — IG Trading Engine
 
-**Last updated:** 2026-03-20 (Phase 16 — Gold momentum gate, ADX fallback, financing tracking, trading hours tightened)
-**Current phase:** Production-ready + Active trading. VOLATILE regime live. Gold strong-trend fix deployed.
-**Current focus:** 🤖 Engine live & trading | 📊 Gold momentum gate active (ADX fallback + dynamic consensus) | 💳 Overnight financing tracked | 🕐 Trading hours: 07:00–20:00 UTC only
+**Last updated:** 2026-04-03 (Phase 17 — Trading performance fixes: breakeven snap loosened, VOLATILE SL/TP widened, M15 consensus raised, USDJPY tightened, SUNGOLD removed, regime cooldown system added)
+**Current phase:** Production-ready + Active trading. VOLATILE regime live + cooldown system. Gold strong-trend fix deployed.
+**Current focus:** 🤖 Engine live & trading | 📊 Gold momentum gate active | 🔄 Regime cooldown active (7-day VOLATILE → relaxed SL/TP) | 🕐 Trading hours: 07:00–20:00 UTC only
 
 > 📦 Dashboard (`src/`) is **archived** — not maintained. All dashboard tasks removed.
 
@@ -51,14 +51,36 @@ For the full history of completed work and debt items, see `TECH_DEBT_AUDIT.md`.
 | 16.7 | Overnight financing tracking | Claude | ✅ Done | Hourly `GET /history/transactions?type=INTEREST` poll in `event_loop/mod.rs`; stored in `DailyStats.financing_pnl`; shown in Telegram daily summary as separate line with Net Total |
 | 16.8 | OPU close-level fix (DELETED payload) | Claude | ✅ Done | Confirmed `opu.level` = actual fill price in DELETED events; `close_level` field correctly populated in `streaming_client.rs` |
 | 16.9 | CI green — fmt + clippy + security audit | Claude | ✅ Done | `cargo fmt` all files; fix unused `debug` import; fix manual range check in `m15_momentum_burst.rs`; bump `quinn-proto 0.11.14` (RUSTSEC-2026-0037); ignore `RUSTSEC-2023-0071` (rsa, no fix) |
+| 16.10 | VOLATILE SL multiplier widened 0.75→1.0, TP 2.0→2.5 | Claude | ✅ Done | `config/default.toml` + Rust defaults in `engine/config.rs`. R:R = 2.5/1.0 = 2.5 — exactly clears `min_risk_reward = 2.5`. Reduces premature SL hits in VOLATILE swings. |
 
-**Trade analysis that drove these changes (Mar 18–20):**
+**Trade analysis that drove Phase 16 changes (Mar 18–20):**
 
 | Instrument | W | L | BE | Net SGD | Issue found |
 |------------|---|---|----|---------|-------------|
 | EUR/USD | 4 | 1 | 0 | +~1400 | 1 loss at 01:16 UTC Asia session — fixed by trading hours |
 | Gold | 1 | 4 | 2 | -~900 | H1 mean-rev BUY blocked all SELL during 284pt crash — fixed by 16.1–16.3 |
 | Overall | 5 | 5 | 2 | +~55 | Win rate 36% → breaks even at 1:1 R:R |
+
+---
+
+## Phase 17 — Trading Performance Fixes (✅ 2026-04-03)
+
+> **Motivation:** 3-week trade analysis (Mar 9 – Apr 2) revealed: 33% win rate, trades stopped out in 2-10 min,
+> breakeven snap too aggressive (0.225 ATR trigger), VOLATILE regime stuck for weeks making tight stops permanent,
+> EURUSD BUY stop-loss streak (4 consecutive), USDJPY 0% win rate, SUNGOLD -72K sizing catastrophe.
+
+| # | Task | Owner | Status | Notes |
+|---|------|-------|--------|-------|
+| 17.1 | Loosen breakeven snap 0.3→0.5 | Claude | ✅ Done | `volatile_breakeven_trigger` in `default.toml`, `config.rs`, `risk/mod.rs`. Trades now need 50% of SL distance in profit before BE snap (was 30%). Combined with Fix 17.2: trigger moves from 0.225 ATR → 0.5 ATR — 2.2× more room |
+| 17.2 | Widen VOLATILE SL/TP multipliers | Claude | ✅ Done | SL: 0.75→1.0, TP: 2.0→2.5. R:R = 2.5 (passes strict `<` check vs `min_risk_reward=2.5`). `default.toml` + `config.rs` defaults |
+| 17.3 | Raise M15 global consensus 1→2 | Claude | ✅ Done | `default_m15_min_consensus()` returns 2. Added `m15_min_consensus = 2` to `default.toml`. All 3 active instruments already had per-instrument override=2, this makes the global default safe for future instruments |
+| 17.4 | Tighten USDJPY min_avg_strength 7.5→8.0 | Claude | ✅ Done | `config.rs` instrument override. Raises signal quality bar — every USDJPY trade in Mar 12–31 lost or broke even |
+| 17.5 | Remove SUNGOLD from weekend_epics | Claude | ✅ Done | `weekend_epics = []` in `default.toml`, removed `[strategies.weekend_overrides."IX.D.SUNGOLD.CFI.IP"]` section. Prevents -72K sizing catastrophe (missing InstrumentSpec → wrong pip_value fallback) |
+| 17.6 | Regime cooldown system | Claude | ✅ Done | New subsystem: tracks regime persistence in `data/regime_persistence.json`. After `regime_cooldown_days` (default 7) of continuous VOLATILE, relaxes SL→1.25×ATR, TP→3.0×ATR, disables BE snap. Config: `regime_cooldown_*` fields in `StrategiesConfig`. Applied in `analysis.rs` (SL/TP) + `handlers.rs` (BE snap skip) |
+
+**Net effect of 17.1 + 17.2:** BE snap trigger = 0.5 × 1.0 ATR = **0.5 ATR** (was 0.3 × 0.75 ATR = 0.225 ATR). 2.2× more breathing room before stop snaps to entry.
+
+**Net effect of 17.6 after 7 days VOLATILE:** SL relaxes to 1.25×ATR, TP to 3.0×ATR (R:R = 2.4), BE snap disabled entirely. Progressive normalization instead of permanent restriction.
 
 ---
 

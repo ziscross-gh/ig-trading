@@ -38,6 +38,13 @@ pub async fn handle_position_monitoring(
         // Read config values here — cannot acquire another lock inside this write lock
         let volatile_breakeven_trigger = s.config.risk.volatile_breakeven_trigger;
         let cooldown_secs = s.config.strategies.post_trade_cooldown_secs;
+        // Regime cooldown config — read here to avoid borrow conflicts inside the loop
+        let regime_cooldown_days = s.config.strategies.regime_cooldown_days;
+        let regime_cooldown_disable_be_snap = s
+            .config
+            .strategies
+            .regime_cooldown_disable_be_snap
+            .unwrap_or(true);
 
         for (idx, position) in s.trades.active.iter_mut().enumerate() {
             if let Some(&current_price) = price_map.get(&position.epic) {
@@ -79,7 +86,30 @@ pub async fn handle_position_monitoring(
                     // snapping to BE. Price reversed, turning profit into loss.
                     // Fix: trigger BE at `volatile_breakeven_trigger` fraction of trail_dist
                     // (default 0.3 = 30%, e.g. 71 pips on a 237-pip SL).
-                    if birth_regime == "VOLATILE" {
+                    //
+                    // Regime cooldown: if VOLATILE has persisted beyond the configured
+                    // threshold, skip the aggressive BE snap entirely and let the
+                    // trailing stop handle risk management. Prolonged VOLATILE means
+                    // the market has adapted — the tight BE snap cuts winners short.
+                    let be_snap_cooldown_active = regime_cooldown_disable_be_snap
+                        && current_is_volatile
+                        && regime_cooldown_days.is_some_and(|threshold| {
+                            let days = crate::regime::update_persistence_and_get_days(
+                                &position.epic,
+                                "VOLATILE",
+                            );
+                            if days >= threshold {
+                                info!(
+                                    "[{}] Regime cooldown: skipping BE snap (VOLATILE for {} days, threshold {} days)",
+                                    position.epic, days, threshold
+                                );
+                                true
+                            } else {
+                                false
+                            }
+                        });
+
+                    if birth_regime == "VOLATILE" && !be_snap_cooldown_active {
                         let profit_dist = match position.direction {
                             Direction::Buy => current_price - position.open_price,
                             Direction::Sell => position.open_price - current_price,

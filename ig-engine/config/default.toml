@@ -21,9 +21,7 @@ epics = [
     "CS.D.USDJPY.CSD.IP",
     "CS.D.CFIGOLD.CFI.IP",
 ]
-weekend_epics = [
-    "IX.D.SUNGOLD.CFI.IP",
-]
+weekend_epics = []
 context_market_ids = ["USDIND"]
 
 [risk]
@@ -39,7 +37,7 @@ max_daily_trades = 20
 limited_risk_account = false
 use_trailing_stop = true
 trailing_stop_min_pips = 5.0
-volatile_breakeven_trigger = 0.3   # Phase 15.C — snap SL to BE when profit >= 30% of SL distance (VOLATILE trades)
+volatile_breakeven_trigger = 0.5   # Phase 15.C — snap SL to BE when profit >= 50% of SL distance (VOLATILE trades)
 allowed_sessions = ["Asia", "London", "UsOverlap"]
 trading_hours_utc = [0, 21]
 allow_weekend_trading = true
@@ -47,6 +45,7 @@ news_blackout_windows_utc = []
 instrument_specs = {}
 
 [strategies]
+m15_min_consensus = 2
 min_consensus = 3
 min_avg_strength = 7.5
 default_atr_sl_multiplier = 1.5
@@ -55,22 +54,24 @@ h1_direction_gate_enabled = true   # Phase 14.E — block M15 entries against H1
 h1_alignment_bonus = 1.2           # Phase 14.E — boost M15 signals that agree with H1 direction (1.0 = off)
 h1_macro_trend_gate_enabled = true # Phase 15.B — block H1 entries that trade against recent H1 price trend (skipped in VOLATILE)
 h1_macro_trend_lookback = 5        # Phase 15.B — number of H1 closes used to compute slope (min 3)
-volatile_atr_sl_multiplier = 0.75  # Phase 15.D — tighter SL for VOLATILE wave trades (0.75×ATR, R:R=2.67)
-volatile_atr_tp_multiplier = 2.0   # Phase 15.D — achievable TP for VOLATILE waves (2.0×ATR vs default 4.0×)
+volatile_atr_sl_multiplier = 1.0   # Phase 15.D — wider SL for VOLATILE wave trades (1.0×ATR, R:R=2.5)
+volatile_atr_tp_multiplier = 2.5   # Phase 15.D — achievable TP for VOLATILE waves (2.5×ATR vs default 4.0×)
 post_trade_cooldown_secs = 1800    # Phase 15.E — block re-entry on same epic for 30 min after any TP/SL close
 require_h1_confirmation = true     # Phase 16.A — block M15 cold-start trades until H1 has established a direction
+
+# Regime cooldown — relax VOLATILE restrictions after prolonged VOLATILE persistence.
+# When VOLATILE lasts > regime_cooldown_days, the tight SL/TP and BE snap become
+# counterproductive. Cooldown uses intermediate multipliers between VOLATILE and normal.
+regime_cooldown_days = 7              # days before relaxation kicks in (comment out to disable)
+regime_cooldown_sl_multiplier = 1.25  # between VOLATILE 1.0× and normal 1.5×
+regime_cooldown_tp_multiplier = 3.0   # between VOLATILE 2.5× and normal 4.0×
+regime_cooldown_disable_be_snap = true # skip aggressive BE snap after cooldown (trailing stop handles risk)
 
 [strategies.consensus_matrix]
 trending = { barrier = 3, min_strength = 7.5 }
 ranging  = { barrier = 3, min_strength = 7.5 }
-volatile = { barrier = 2, min_strength = 7.5 }  # scalp fallback: 2 strategies avg ≥ 7.5 (recalibrated for Phase 15.D multipliers)
+volatile = { barrier = 2, min_strength = 7.5 }  # scalp fallback: 2 strategies avg ≥ 7.5 (recalibrated for Phase 15.D — 1.0×SL / 2.5×TP, R:R=2.5)
 
-# TACTICAL OVERRIDE: Weekend Gold in VOLATILE Regime
-[strategies.weekend_overrides."IX.D.SUNGOLD.CFI.IP"]
-min_consensus = 2
-min_avg_strength = 8.5
-atr_sl_multiplier = 1.5
-atr_tp_multiplier = 4.5
 
 [strategies.ma_crossover]
 enabled = true

@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 fn default_m15_min_consensus() -> usize {
-    1
+    2
 }
 fn default_m15_min_avg_strength() -> f64 {
     6.5
@@ -28,16 +28,28 @@ fn default_h1_macro_trend_lookback() -> usize {
     5
 }
 fn default_volatile_atr_sl_multiplier() -> f64 {
-    0.75
+    1.0
 }
 fn default_volatile_atr_tp_multiplier() -> f64 {
-    2.0
+    2.5
 }
 fn default_post_trade_cooldown_secs() -> u64 {
     1800
 } // 30 min = 2 M15 bars
 fn default_require_h1_confirmation() -> bool {
     true
+}
+fn default_regime_cooldown_days() -> Option<u64> {
+    Some(7)
+}
+fn default_regime_cooldown_sl_multiplier() -> Option<f64> {
+    Some(1.25)
+}
+fn default_regime_cooldown_tp_multiplier() -> Option<f64> {
+    Some(3.0)
+}
+fn default_regime_cooldown_disable_be_snap() -> Option<bool> {
+    Some(true)
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -148,12 +160,12 @@ pub struct StrategiesConfig {
     #[serde(default = "default_h1_macro_trend_lookback")]
     pub h1_macro_trend_lookback: usize,
     /// ATR SL multiplier used for H1 ensemble signals in VOLATILE regime.
-    /// Tighter stop (0.75× default) so the wave TP is reachable and BE snaps earlier.
+    /// Wider stop (1.0× ATR) reduces premature SL hits in VOLATILE swings.
     /// Must preserve R:R >= 2.5: volatile_atr_tp / volatile_atr_sl >= 2.5.
     #[serde(default = "default_volatile_atr_sl_multiplier")]
     pub volatile_atr_sl_multiplier: f64,
     /// ATR TP multiplier used for H1 ensemble signals in VOLATILE regime.
-    /// 2.0× ATR is achievable in a strong volatile wave (vs 4.0× which is rarely hit).
+    /// 2.5× ATR gives R:R = 2.5 at the wider SL (vs 4.0× which is rarely hit).
     #[serde(default = "default_volatile_atr_tp_multiplier")]
     pub volatile_atr_tp_multiplier: f64,
     /// Seconds to block re-entry on the same epic after any trade closes (TP or SL).
@@ -167,6 +179,24 @@ pub struct StrategiesConfig {
     /// has no data. Default: true.
     #[serde(default = "default_require_h1_confirmation")]
     pub require_h1_confirmation: bool,
+
+    // ── Regime cooldown ─────────────────────────────────────────────────────
+    // When VOLATILE persists for many days, the tight SL/TP and BE snap become
+    // the permanent (losing) default. After `regime_cooldown_days`, relax the
+    // VOLATILE restrictions to intermediate values between VOLATILE and normal.
+
+    /// Days before VOLATILE restrictions start relaxing (None = disabled).
+    #[serde(default = "default_regime_cooldown_days")]
+    pub regime_cooldown_days: Option<u64>,
+    /// SL multiplier after cooldown kicks in (between VOLATILE 1.0 and normal 1.5).
+    #[serde(default = "default_regime_cooldown_sl_multiplier")]
+    pub regime_cooldown_sl_multiplier: Option<f64>,
+    /// TP multiplier after cooldown kicks in (between VOLATILE 2.5 and normal 4.0).
+    #[serde(default = "default_regime_cooldown_tp_multiplier")]
+    pub regime_cooldown_tp_multiplier: Option<f64>,
+    /// Whether to disable the breakeven snap after cooldown (let trailing stop handle risk).
+    #[serde(default = "default_regime_cooldown_disable_be_snap")]
+    pub regime_cooldown_disable_be_snap: Option<bool>,
 }
 
 /// Regime-specific consensus threshold entry (Phase 12.1).
@@ -433,7 +463,7 @@ impl Default for EngineConfig {
                 min_guaranteed_stop_distance: None,
                 use_trailing_stop: false,
                 trailing_stop_min_pips: 5.0,
-                volatile_breakeven_trigger: 0.3,
+                volatile_breakeven_trigger: 0.5,
                 allowed_sessions: vec![
                     crate::engine::state::Session::Asia,
                     crate::engine::state::Session::London,
@@ -571,7 +601,7 @@ impl Default for EngineConfig {
                             adx_range_filter: true,
                             adx_range_max: Some(25.0),
                             min_consensus: Some(2),
-                            min_avg_strength: Some(7.5),
+                            min_avg_strength: Some(8.0),
                             // Mild trend-lock at higher threshold than Gold
                             adx_trend_lock_enabled: true,
                             adx_trend_lock_threshold: Some(50.0),
@@ -594,10 +624,14 @@ impl Default for EngineConfig {
                 h1_alignment_bonus: 1.2,
                 h1_macro_trend_gate_enabled: true,
                 h1_macro_trend_lookback: 5,
-                volatile_atr_sl_multiplier: 0.75,
-                volatile_atr_tp_multiplier: 2.0,
+                volatile_atr_sl_multiplier: 1.0,
+                volatile_atr_tp_multiplier: 2.5,
                 post_trade_cooldown_secs: 1800,
                 require_h1_confirmation: true,
+                regime_cooldown_days: Some(7),
+                regime_cooldown_sl_multiplier: Some(1.25),
+                regime_cooldown_tp_multiplier: Some(3.0),
+                regime_cooldown_disable_be_snap: Some(true),
             },
             trading_hours: TradingHoursConfig {
                 start: "07:00".to_string(),

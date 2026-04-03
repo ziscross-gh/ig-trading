@@ -24,7 +24,7 @@ An autonomous algorithmic trading system for **IG Markets**, built with:
 
 > 📦 A Next.js dashboard exists in `src/` but is **archived** — not maintained. Focus is bot engine + Telegram only.
 
-**Current status:** Phases 1–15 + 14.A–I complete. Demo mode live and trading. M15 dual-timeframe scheme fully operational. RL position sizing (8.6) is the only long-term remaining item.
+**Current status:** Phases 1–17 + 14.A–I complete. Demo mode live and trading. M15 dual-timeframe scheme fully operational. Regime cooldown system active (7-day VOLATILE → relaxed SL/TP). RL position sizing (8.6) is the only long-term remaining item.
 
 ---
 
