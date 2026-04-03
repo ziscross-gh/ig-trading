@@ -31,6 +31,7 @@ impl SessionManager {
         identifier: String,
         password: String,
         environment: Environment,
+        rate_limit_per_minute: u32,
     ) -> Result<Self, anyhow::Error> {
         info!(
             "Creating session with environment: {}",
@@ -41,7 +42,14 @@ impl SessionManager {
             }
         );
 
-        let client = IGRestClient::new(api_key, identifier, password, environment.is_demo()).await?;
+        let client = IGRestClient::new(
+            api_key,
+            identifier,
+            password,
+            environment.is_demo(),
+            rate_limit_per_minute,
+        )
+        .await?;
 
         let session_manager = Self {
             client,
@@ -57,7 +65,10 @@ impl SessionManager {
     /// # Arguments
     ///
     /// * `refresh_interval_mins` - Interval in minutes after which to refresh the session
-    pub async fn refresh_if_needed(&mut self, refresh_interval_mins: u64) -> Result<(), anyhow::Error> {
+    pub async fn refresh_if_needed(
+        &mut self,
+        refresh_interval_mins: u64,
+    ) -> Result<(), anyhow::Error> {
         let now = Utc::now();
         let time_since_refresh = now.signed_duration_since(self.last_refresh);
         let refresh_threshold = Duration::from_secs(refresh_interval_mins * 60);

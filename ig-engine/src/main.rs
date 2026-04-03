@@ -11,13 +11,13 @@
 use anyhow::Result;
 use std::sync::Arc;
 use tokio::sync::{broadcast, RwLock};
-use tracing::{info, error};
+use tracing::{error, info};
 
+use ig_engine::engine;
 use ig_engine::engine::config::EngineConfig;
 use ig_engine::engine::state::EngineState;
-use ig_engine::ipc::EngineEvent;
 use ig_engine::ipc;
-use ig_engine::engine;
+use ig_engine::ipc::EngineEvent;
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -41,8 +41,10 @@ async fn main() -> Result<()> {
         .with_writer(non_blocking);
 
     tracing_subscriber::registry()
-        .with(tracing_subscriber::EnvFilter::try_from_default_env()
-            .unwrap_or_else(|_| "ig_engine=info,tower_http=info".into()))
+        .with(
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| "ig_engine=info,tower_http=info".into()),
+        )
         .with(stdout_layer)
         .with(file_layer)
         .init();
@@ -50,16 +52,20 @@ async fn main() -> Result<()> {
     info!("=== IG Trading Engine v{} ===", env!("CARGO_PKG_VERSION"));
 
     // Load configuration
-    let config_path = std::env::var("CONFIG_PATH")
-        .unwrap_or_else(|_| "config/default.toml".to_string());
+    let config_path =
+        std::env::var("CONFIG_PATH").unwrap_or_else(|_| "config/default.toml".to_string());
     let config = EngineConfig::load(&config_path)?;
     info!("Configuration loaded from {}", config_path);
-    info!("Mode: {:?}, Markets: {}", config.general.mode, config.markets.epics.len());
+    info!(
+        "Mode: {:?}, Markets: {}",
+        config.general.mode,
+        config.markets.epics.len()
+    );
 
     // Write PID file so weekly_reoptimise.sh can send SIGUSR1 for hot-reload
     let pid = std::process::id();
     match std::fs::write("ig-engine.pid", pid.to_string()) {
-        Ok(_)  => info!("PID {} written to ig-engine.pid", pid),
+        Ok(_) => info!("PID {} written to ig-engine.pid", pid),
         Err(e) => tracing::warn!("Could not write ig-engine.pid: {}", e),
     }
 
@@ -86,12 +92,12 @@ async fn main() -> Result<()> {
     // require a full restart and are never changed by this handler.
     #[cfg(unix)]
     {
-        let state_reload      = state.clone();
+        let state_reload = state.clone();
         let config_path_reload = config_path.clone();
         tokio::spawn(async move {
             use tokio::signal::unix::{signal, SignalKind};
             let mut usr1 = match signal(SignalKind::user_defined1()) {
-                Ok(s)  => s,
+                Ok(s) => s,
                 Err(e) => {
                     tracing::error!("Failed to register SIGUSR1 handler: {}", e);
                     return;
@@ -107,10 +113,7 @@ async fn main() -> Result<()> {
                         info!("Strategy config hot-reloaded successfully via SIGUSR1");
                     }
                     Err(e) => {
-                        tracing::error!(
-                            "Config reload failed — keeping existing config: {}",
-                            e
-                        );
+                        tracing::error!("Config reload failed — keeping existing config: {}", e);
                     }
                 }
             }
@@ -120,7 +123,7 @@ async fn main() -> Result<()> {
     // Run the main engine loop with graceful shutdown handling
     info!("Starting engine event loop...");
     let loop_event_tx = event_tx.clone();
-    
+
     tokio::select! {
         res = engine::event_loop::run(state, event_tx) => {
             if let Err(e) = res {

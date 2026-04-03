@@ -1,14 +1,14 @@
 #![allow(dead_code)]
 use anyhow::Result;
-use tracing::{info, warn, error, debug};
 use serde::{Deserialize, Serialize};
 use tokio::time::{sleep, Duration};
+use tracing::{debug, error, info, warn};
 
 use crate::api::rest_client::IGRestClient;
-use crate::api::types::{IGTradeRequest, IGConfirmResponse};
 use crate::api::traits::TraderAPI;
-use crate::risk::AdjustedTrade;
+use crate::api::types::{IGConfirmResponse, IGTradeRequest};
 use crate::engine::state::Position;
+use crate::risk::AdjustedTrade;
 
 /// Configuration for order execution behavior
 #[derive(Debug, Clone)]
@@ -55,31 +55,49 @@ impl OrderManager {
         &self,
         client: &mut IGRestClient,
         trade: &AdjustedTrade,
+        currency: &str,
     ) -> Result<ExecutionResult> {
         info!(
-            "Executing trade: {} {} {} @ SL={} TP={}",
-            trade.direction, trade.size, trade.epic, trade.stop_loss, trade.take_profit
+            "Executing trade: {} {} {} @ SL={} TP={} ({})",
+            trade.direction, trade.size, trade.epic, trade.stop_loss, trade.take_profit, currency
         );
 
         // Build the trade request
+        // HYBRID LOGIC:
+        // 1. JPY pairs MUST use JPY.
+        // 2. Other major FX pairs (EUR, GBP, AUD) use USD.
+        // 3. Everything else uses the account's base currency.
+        let currency_code = if trade.epic.contains("JPY") {
+            "JPY".to_string()
+        } else if trade.epic.contains("EURUSD")
+            || trade.epic.contains("GBPUSD")
+            || trade.epic.contains("AUDUSD")
+        {
+            "USD".to_string()
+        } else {
+            currency.to_string()
+        };
+
         // NOTE: Limited risk accounts REQUIRE guaranteed_stop = true.
-        // Guaranteed stops have a premium but cap your maximum loss absolutely.
-        // Trailing stops are NOT available on limited risk accounts.
+        // However, some markets on Demo reject guaranteed stops for various reasons (Code 11).
+        // For now, we use the global config to decide.
+        // 12.4: Use LIMIT order type when requested (VOLATILE regime gate).
+        // For LIMIT orders, `level` is the desired entry price; stop/limit are distances from there.
+        let is_limit = trade.order_type.as_deref() == Some("LIMIT");
         let request = IGTradeRequest {
             epic: trade.epic.clone(),
             direction: trade.direction.clone(),
             size: trade.size,
-            order_type: "MARKET".to_string(),
-            level: None,
+            order_type: trade
+                .order_type
+                .clone()
+                .unwrap_or_else(|| "MARKET".to_string()),
+            level: if is_limit { trade.entry_level } else { None },
             stop_level: Some(trade.stop_loss),
             stop_distance: None,
             limit_level: Some(trade.take_profit),
-            currency_code: Some(if trade.epic.contains("EURUSD") || trade.epic.contains("GBPUSD") || trade.epic.contains("USDJPY") { 
-                "USD".to_string() 
-            } else {
-                "SGD".to_string()
-            }),
-            guaranteed_stop: Some(true),
+            currency_code: Some(currency_code),
+            guaranteed_stop: Some(self.config.guaranteed_stop),
             trailing_stop: None, // NOT available on limited risk accounts
             force_open: Some(true),
             expiry: "-".to_string(),
@@ -167,13 +185,23 @@ impl OrderManager {
         let max_retries = 3;
 
         while retry_count < max_retries {
-            match client.close_position(&position.deal_id, close_direction, position.size).await {
+            match client
+                .close_position(&position.deal_id, close_direction, position.size)
+                .await
+            {
                 Ok(resp) => {
                     close_response = Some(resp);
                     break;
                 }
-                Err(e) if e.to_string().contains("POSITION_NOT_FOUND") && retry_count < max_retries - 1 => {
-                    warn!("Position not found yet (replication delay). Retrying close... ({}/{})", retry_count + 1, max_retries);
+                Err(e)
+                    if e.to_string().contains("POSITION_NOT_FOUND")
+                        && retry_count < max_retries - 1 =>
+                {
+                    warn!(
+                        "Position not found yet (replication delay). Retrying close... ({}/{})",
+                        retry_count + 1,
+                        max_retries
+                    );
                     sleep(Duration::from_millis(500)).await;
                     retry_count += 1;
                 }
@@ -181,7 +209,8 @@ impl OrderManager {
             }
         }
 
-        let close_response = close_response.ok_or_else(|| anyhow::anyhow!("Failed to get close response after retries"))?;
+        let close_response = close_response
+            .ok_or_else(|| anyhow::anyhow!("Failed to get close response after retries"))?;
 
         info!(
             "Close submitted: deal_reference={}, status={:?}",
@@ -194,11 +223,18 @@ impl OrderManager {
             .await?;
 
         let close_price = confirm_response.level.unwrap_or(0.0);
-        let pnl = if position.direction.to_string() == "BUY" {
-            (close_price - position.open_price) * position.size
+        // Use the same pip_value formula as handlers.rs to get account-currency PnL.
+        // Raw price diff × size gives wrong results for FX (ignores pip_value / pip_scale).
+        let spec = crate::risk::InstrumentSpec::from_epic_fallback(&position.epic);
+        let (pip_scale, pip_value) = spec
+            .map(|s| (s.pip_scale, s.pip_value))
+            .unwrap_or((0.0001, 1.0));
+        let price_diff = if position.direction.to_string() == "BUY" {
+            close_price - position.open_price
         } else {
-            (position.open_price - close_price) * position.size
+            position.open_price - close_price
         };
+        let pnl = (price_diff / pip_scale) * pip_value * position.size;
 
         let close_result = CloseResult {
             deal_id: confirm_response.deal_id.clone(),

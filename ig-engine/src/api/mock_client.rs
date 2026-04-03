@@ -1,13 +1,13 @@
-use async_trait::async_trait;
-use crate::api::types::*;
 use crate::api::traits::TraderAPI;
-use std::collections::HashMap;
+use crate::api::types::*;
+use async_trait::async_trait;
 use chrono::Utc;
+use std::collections::HashMap;
 use uuid::Uuid;
 
 pub struct MockTraderClient {
     pub positions: HashMap<String, Position>,
-    pub position_epics: HashMap<String, String>,  // deal_id → epic
+    pub position_epics: HashMap<String, String>, // deal_id → epic
     pub account_balance: f64,
     pub next_prices: HashMap<String, f64>,
 }
@@ -53,10 +53,18 @@ impl TraderAPI for MockTraderClient {
         Ok(IGMarketResponse {
             instrument: IGInstrument {
                 epic: epic.to_string(),
+                market_id: None,
                 name: format!("Mock {}", epic),
                 instrument_type: "CURRENCIES".to_string(),
                 unit: "SHARE".to_string(),
                 streaming_prices_available: true,
+                currencies: vec![IGCurrency {
+                    code: "USD".to_string(),
+                    symbol: "$".to_string(),
+                    base_exchange_rate: 1.0,
+                    exchange_rate: 1.0,
+                    is_default: true,
+                }],
             },
             snapshot: IGSnapshot {
                 market_status: "TRADEABLE".to_string(),
@@ -82,10 +90,22 @@ impl TraderAPI for MockTraderClient {
             let time = now - chrono::Duration::hours(i as i64);
             prices.push(IGPriceSnapshot {
                 snapshot_time: time.to_rfc3339(),
-                open_price: IGPriceValue { bid: 1.18, ask: 1.1802 },
-                close_price: IGPriceValue { bid: 1.181, ask: 1.1812 },
-                high_price: IGPriceValue { bid: 1.182, ask: 1.1822 },
-                low_price: IGPriceValue { bid: 1.179, ask: 1.1792 },
+                open_price: IGPriceValue {
+                    bid: 1.18,
+                    ask: 1.1802,
+                },
+                close_price: IGPriceValue {
+                    bid: 1.181,
+                    ask: 1.1812,
+                },
+                high_price: IGPriceValue {
+                    bid: 1.182,
+                    ask: 1.1822,
+                },
+                low_price: IGPriceValue {
+                    bid: 1.179,
+                    ask: 1.1792,
+                },
                 last_traded_volume: Some(100.0),
             });
         }
@@ -93,21 +113,32 @@ impl TraderAPI for MockTraderClient {
     }
 
     async fn get_positions(&mut self) -> Result<IGPositionsResponse, anyhow::Error> {
-        let positions: Vec<PositionWrapper> = self.positions.iter().map(|(deal_id, pos)| {
-            let epic = self.position_epics.get(deal_id).cloned().unwrap_or_default();
-            PositionWrapper {
-                position: pos.clone(),
-                market: MarketData {
-                    epic,
-                    instrument_name: None,
-                    expiry: None,
-                },
-            }
-        }).collect();
+        let positions: Vec<PositionWrapper> = self
+            .positions
+            .iter()
+            .map(|(deal_id, pos)| {
+                let epic = self
+                    .position_epics
+                    .get(deal_id)
+                    .cloned()
+                    .unwrap_or_default();
+                PositionWrapper {
+                    position: pos.clone(),
+                    market: MarketData {
+                        epic,
+                        instrument_name: None,
+                        expiry: None,
+                    },
+                }
+            })
+            .collect();
         Ok(IGPositionsResponse { positions })
     }
 
-    async fn open_position(&mut self, request: IGTradeRequest) -> Result<IGTradeResponse, anyhow::Error> {
+    async fn open_position(
+        &mut self,
+        request: IGTradeRequest,
+    ) -> Result<IGTradeResponse, anyhow::Error> {
         let deal_reference = Uuid::new_v4().to_string();
         let deal_id = format!("DIA_{}", deal_reference);
 
@@ -123,7 +154,8 @@ impl TraderAPI for MockTraderClient {
         };
 
         self.positions.insert(deal_id.clone(), position);
-        self.position_epics.insert(deal_id.clone(), request.epic.clone());
+        self.position_epics
+            .insert(deal_id.clone(), request.epic.clone());
 
         Ok(IGTradeResponse {
             deal_reference,
@@ -161,7 +193,7 @@ impl TraderAPI for MockTraderClient {
             reason: None,
         })
     }
-    
+
     async fn get_deal_confirmation(
         &mut self,
         deal_reference: &str,
@@ -182,5 +214,34 @@ impl TraderAPI for MockTraderClient {
             reason: Some("SUCCESS".to_string()),
             affected_deals: None,
         })
+    }
+
+    /// Returns a neutral 50/50 sentiment stub for any market_id.
+    async fn get_client_sentiment(
+        &mut self,
+        market_id: &str,
+    ) -> Result<IGSentimentResponse, anyhow::Error> {
+        Ok(IGSentimentResponse {
+            market_id: market_id.to_string(),
+            long_position_percentage: 50.0,
+            short_position_percentage: 50.0,
+        })
+    }
+
+    /// Returns an empty activity list stub (no IG API in mock mode).
+    async fn get_account_activity(
+        &mut self,
+        _from: &str,
+        _to: &str,
+    ) -> Result<Vec<IGActivity>, anyhow::Error> {
+        Ok(vec![])
+    }
+
+    /// Returns an empty watchlist markets stub (no IG API in mock mode).
+    async fn get_watchlist_by_name(
+        &mut self,
+        _name: &str,
+    ) -> Result<IGWatchlistMarketsResponse, anyhow::Error> {
+        Ok(IGWatchlistMarketsResponse { markets: vec![] })
     }
 }

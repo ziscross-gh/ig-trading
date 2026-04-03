@@ -3,13 +3,12 @@
 //! Fed by ClosedTrade records. Provides win rates, profit factors, and session
 //! breakdowns that the AdaptiveWeightManager uses to adjust ensemble weights.
 
-use std::collections::HashMap;
 use chrono::Timelike;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use tracing::debug;
 
 use crate::engine::state::{ClosedTrade, Session};
-
 
 /// Performance snapshot for one strategy (optionally filtered by market/session).
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -18,9 +17,9 @@ pub struct StrategyPerf {
     pub total_trades: usize,
     pub wins: usize,
     pub losses: usize,
-    pub win_rate: f64,           // 0.0–1.0
+    pub win_rate: f64, // 0.0–1.0
     pub avg_pnl: f64,
-    pub profit_factor: f64,      // gross_wins / gross_losses (∞ if no losses)
+    pub profit_factor: f64, // gross_wins / gross_losses (∞ if no losses)
     pub avg_hold_secs: f64,
     pub max_consecutive_losses: u32,
 }
@@ -118,9 +117,17 @@ impl StrategyScorecard {
     }
 
     /// Get performance for a strategy in a specific session.
-    pub fn get_session_performance(&self, strategy: &str, session: Session) -> Option<StrategyPerf> {
+    pub fn get_session_performance(
+        &self,
+        strategy: &str,
+        session: Session,
+    ) -> Option<StrategyPerf> {
         let records = self.records.get(strategy)?;
-        let filtered: Vec<_> = records.iter().filter(|r| r.session == session).cloned().collect();
+        let filtered: Vec<_> = records
+            .iter()
+            .filter(|r| r.session == session)
+            .cloned()
+            .collect();
         if filtered.is_empty() {
             return None;
         }
@@ -152,14 +159,30 @@ impl StrategyScorecard {
         let total = records.len();
         let wins = records.iter().filter(|r| r.is_win).count();
         let losses = total - wins;
-        let win_rate = if total > 0 { wins as f64 / total as f64 } else { 0.0 };
+        let win_rate = if total > 0 {
+            wins as f64 / total as f64
+        } else {
+            0.0
+        };
 
         let total_pnl: f64 = records.iter().map(|r| r.pnl).sum();
-        let avg_pnl = if total > 0 { total_pnl / total as f64 } else { 0.0 };
+        let avg_pnl = if total > 0 {
+            total_pnl / total as f64
+        } else {
+            0.0
+        };
 
         let gross_wins: f64 = records.iter().filter(|r| r.pnl > 0.0).map(|r| r.pnl).sum();
-        let gross_losses: f64 = records.iter().filter(|r| r.pnl < 0.0).map(|r| r.pnl.abs()).sum();
-        let profit_factor = if gross_losses > 0.0 { gross_wins / gross_losses } else { f64::INFINITY };
+        let gross_losses: f64 = records
+            .iter()
+            .filter(|r| r.pnl < 0.0)
+            .map(|r| r.pnl.abs())
+            .sum();
+        let profit_factor = if gross_losses > 0.0 {
+            gross_wins / gross_losses
+        } else {
+            f64::INFINITY
+        };
 
         let avg_hold_secs = if total > 0 {
             records.iter().map(|r| r.hold_secs as f64).sum::<f64>() / total as f64
@@ -196,8 +219,8 @@ impl StrategyScorecard {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use chrono::Utc;
     use crate::engine::state::{ClosedTrade, Direction};
+    use chrono::Utc;
 
     fn make_trade(strategy: &str, epic: &str, pnl: f64, hour: u32) -> ClosedTrade {
         let opened = Utc::now()
@@ -220,6 +243,7 @@ mod tests {
             opened_at: opened,
             closed_at: opened + chrono::Duration::minutes(30),
             is_virtual: false,
+            opened_in_regime: None,
         }
     }
 
@@ -233,7 +257,9 @@ mod tests {
             sc.update(&make_trade("MA_Crossover", "EURUSD", pnl, 10));
         }
 
-        let perf = sc.get_performance("MA_Crossover").expect("MA performance should exist");
+        let perf = sc
+            .get_performance("MA_Crossover")
+            .expect("MA performance should exist");
         assert_eq!(perf.total_trades, 10);
         assert_eq!(perf.wins, 7);
         assert!((perf.win_rate - 0.7).abs() < 0.01);
@@ -273,10 +299,14 @@ mod tests {
             sc.update(&make_trade("MACD", "EURUSD", -15.0, 10));
         }
 
-        let asia = sc.get_session_performance("MACD", Session::Asia).expect("Asia performance should exist");
+        let asia = sc
+            .get_session_performance("MACD", Session::Asia)
+            .expect("Asia performance should exist");
         assert!((asia.win_rate - 1.0).abs() < 0.01);
 
-        let london = sc.get_session_performance("MACD", Session::London).expect("London performance should exist");
+        let london = sc
+            .get_session_performance("MACD", Session::London)
+            .expect("London performance should exist");
         assert!((london.win_rate - 0.0).abs() < 0.01);
     }
 
@@ -287,7 +317,9 @@ mod tests {
         for pnl in pnls {
             sc.update(&make_trade("BB", "USDJPY", pnl, 12));
         }
-        let perf = sc.get_performance("BB").expect("BB performance should exist");
+        let perf = sc
+            .get_performance("BB")
+            .expect("BB performance should exist");
         assert_eq!(perf.max_consecutive_losses, 3);
     }
 }

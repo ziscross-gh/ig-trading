@@ -3,9 +3,9 @@
 //! Every N closed trades, recalculates weights using rolling win rate and profit factor.
 //! Uses EMA smoothing to prevent whip-sawing and clamps weights to safe bounds.
 
-use std::collections::HashMap;
-use tracing::{info, debug};
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+use tracing::{debug, info};
 
 use super::scorecard::StrategyScorecard;
 
@@ -63,9 +63,8 @@ pub struct AdaptiveWeightManager {
 
 impl AdaptiveWeightManager {
     pub fn new(base_weights: HashMap<String, f64>, config: AdaptiveConfig) -> Self {
-        let multipliers: HashMap<String, f64> = base_weights.keys()
-            .map(|k| (k.clone(), 1.0))
-            .collect();
+        let multipliers: HashMap<String, f64> =
+            base_weights.keys().map(|k| (k.clone(), 1.0)).collect();
 
         Self {
             config,
@@ -108,8 +107,13 @@ impl AdaptiveWeightManager {
                 let raw_multiplier = Self::compute_multiplier(perf.win_rate, perf.profit_factor);
 
                 // EMA smooth the multiplier
-                let prev = self.current_multipliers.get(&strategy).copied().unwrap_or(1.0);
-                let smoothed = prev * (1.0 - self.config.ema_alpha) + raw_multiplier * self.config.ema_alpha;
+                let prev = self
+                    .current_multipliers
+                    .get(&strategy)
+                    .copied()
+                    .unwrap_or(1.0);
+                let smoothed =
+                    prev * (1.0 - self.config.ema_alpha) + raw_multiplier * self.config.ema_alpha;
 
                 // Clamp to safe bounds
                 let clamped = smoothed
@@ -183,19 +187,19 @@ impl AdaptiveWeightManager {
     ///   - `< 0.8`  → penalise
     fn compute_multiplier(win_rate: f64, profit_factor: f64) -> f64 {
         let wr_score = if win_rate >= 0.6 {
-            1.0 + (win_rate - 0.6) * 0.75  // 0.6→1.0, 0.8→1.15, 1.0→1.3
+            1.0 + (win_rate - 0.6) * 0.75 // 0.6→1.0, 0.8→1.15, 1.0→1.3
         } else if win_rate >= 0.4 {
-            0.8 + (win_rate - 0.4) * 1.0    // 0.4→0.8, 0.5→0.9, 0.6→1.0
+            0.8 + (win_rate - 0.4) * 1.0 // 0.4→0.8, 0.5→0.9, 0.6→1.0
         } else {
-            0.5 + win_rate * 0.75           // 0.0→0.5, 0.2→0.65, 0.4→0.8
+            0.5 + win_rate * 0.75 // 0.0→0.5, 0.2→0.65, 0.4→0.8
         };
 
         let pf_score = if profit_factor >= 1.5 {
             1.0 + ((profit_factor - 1.5) * 0.1).min(0.3) // Cap bonus at +0.3
         } else if profit_factor >= 0.8 {
-            0.85 + (profit_factor - 0.8) * 0.21  // 0.8→0.85, 1.5→1.0
+            0.85 + (profit_factor - 0.8) * 0.21 // 0.8→0.85, 1.5→1.0
         } else {
-            0.5 + profit_factor * 0.44            // 0.0→0.5, 0.8→0.85
+            0.5 + profit_factor * 0.44 // 0.0→0.5, 0.8→0.85
         };
 
         // Weighted blend: 70% win rate, 30% profit factor
@@ -206,8 +210,8 @@ impl AdaptiveWeightManager {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::learning::scorecard::StrategyScorecard;
     use crate::engine::state::{ClosedTrade, Direction};
+    use crate::learning::scorecard::StrategyScorecard;
 
     fn make_trade(strategy: &str, pnl: f64) -> ClosedTrade {
         let now = chrono::Utc::now();
@@ -226,6 +230,7 @@ mod tests {
             opened_at: now,
             closed_at: now + chrono::Duration::minutes(30),
             is_virtual: false,
+            opened_in_regime: None,
         }
     }
 
@@ -233,11 +238,14 @@ mod tests {
     fn test_no_adjustment_below_min_trades() {
         let mut sc = StrategyScorecard::new(50);
         let base_weights: HashMap<String, f64> = [("MA".into(), 1.0)].into();
-        let mut mgr = AdaptiveWeightManager::new(base_weights, AdaptiveConfig {
-            min_trades_for_adjustment: 20,
-            recalc_interval: 5,
-            ..Default::default()
-        });
+        let mut mgr = AdaptiveWeightManager::new(
+            base_weights,
+            AdaptiveConfig {
+                min_trades_for_adjustment: 20,
+                recalc_interval: 5,
+                ..Default::default()
+            },
+        );
 
         // Only 10 trades — should not adjust
         for _ in 0..10 {
@@ -248,7 +256,10 @@ mod tests {
         // Either None (no change) or Some with weight still ~1.0
         if let Some(weights) = result {
             let w = weights.get("MA").expect("MA weight should exist");
-            assert!((*w - 1.0).abs() < 0.01, "Should not adjust with only 10 trades");
+            assert!(
+                (*w - 1.0).abs() < 0.01,
+                "Should not adjust with only 10 trades"
+            );
         }
     }
 
@@ -256,11 +267,14 @@ mod tests {
     fn test_winning_strategy_gets_boosted() {
         let mut sc = StrategyScorecard::new(50);
         let base_weights: HashMap<String, f64> = [("MA".into(), 1.0)].into();
-        let mut mgr = AdaptiveWeightManager::new(base_weights, AdaptiveConfig {
-            min_trades_for_adjustment: 10,
-            recalc_interval: 5,
-            ..Default::default()
-        });
+        let mut mgr = AdaptiveWeightManager::new(
+            base_weights,
+            AdaptiveConfig {
+                min_trades_for_adjustment: 10,
+                recalc_interval: 5,
+                ..Default::default()
+            },
+        );
 
         // 80% win rate — strong performer
         for i in 0..25 {
@@ -270,19 +284,30 @@ mod tests {
 
         let result = mgr.maybe_recalculate(&sc);
         assert!(result.is_some(), "Should have recalculated");
-        let w = result.expect("Recalculation failed").get("MA").expect("MA weight should exist").clone();
-        assert!(w > 1.0, "Winning strategy should have weight > 1.0, got {}", w);
+        let w = result
+            .expect("Recalculation failed")
+            .get("MA")
+            .expect("MA weight should exist")
+            .clone();
+        assert!(
+            w > 1.0,
+            "Winning strategy should have weight > 1.0, got {}",
+            w
+        );
     }
 
     #[test]
     fn test_losing_strategy_gets_penalised() {
         let mut sc = StrategyScorecard::new(50);
         let base_weights: HashMap<String, f64> = [("BAD".into(), 1.0)].into();
-        let mut mgr = AdaptiveWeightManager::new(base_weights, AdaptiveConfig {
-            min_trades_for_adjustment: 10,
-            recalc_interval: 5,
-            ..Default::default()
-        });
+        let mut mgr = AdaptiveWeightManager::new(
+            base_weights,
+            AdaptiveConfig {
+                min_trades_for_adjustment: 10,
+                recalc_interval: 5,
+                ..Default::default()
+            },
+        );
 
         // 20% win rate — poor performer
         for i in 0..25 {
@@ -292,15 +317,27 @@ mod tests {
 
         let result = mgr.maybe_recalculate(&sc);
         assert!(result.is_some());
-        let w = result.expect("Recalculation failed").get("BAD").expect("BAD weight should exist").clone();
-        assert!(w < 1.0, "Losing strategy should have weight < 1.0, got {}", w);
+        let w = result
+            .expect("Recalculation failed")
+            .get("BAD")
+            .expect("BAD weight should exist")
+            .clone();
+        assert!(
+            w < 1.0,
+            "Losing strategy should have weight < 1.0, got {}",
+            w
+        );
     }
 
     #[test]
     fn test_multiplier_clamping() {
         // Extreme win rate shouldn't exceed max multiplier
         let mult = AdaptiveWeightManager::compute_multiplier(1.0, 5.0);
-        assert!(mult <= 2.0 + 0.01, "Multiplier should be clamped, got {}", mult);
+        assert!(
+            mult <= 2.0 + 0.01,
+            "Multiplier should be clamped, got {}",
+            mult
+        );
 
         // Extreme loss rate shouldn't go below min
         let mult = AdaptiveWeightManager::compute_multiplier(0.0, 0.0);

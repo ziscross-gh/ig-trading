@@ -17,9 +17,9 @@ pub mod ipc;
 pub mod learning;
 /// Notification services (Telegram, etc.)
 pub mod notifications;
+/// ML regime classifier reader (TRENDING / RANGING / VOLATILE)
+pub mod regime;
 /// Hard-gated risk management and position sizing
 pub mod risk;
 /// Trading strategies and ensemble logic
 pub mod strategy;
-/// ML regime classifier reader (TRENDING / RANGING / VOLATILE)
-pub mod regime;

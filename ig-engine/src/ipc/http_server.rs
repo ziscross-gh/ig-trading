@@ -1,26 +1,27 @@
 use axum::{
-    extract::{ws::{Message, WebSocket, WebSocketUpgrade}, Query, State},
+    extract::{
+        ws::{Message, WebSocket, WebSocketUpgrade},
+        Query, State,
+    },
     routing::{get, post, put},
     Json, Router,
 };
-use tracing::{info, error, info_span};
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::sync::Arc;
 use tokio::sync::{broadcast, RwLock};
 use tower_http::cors::CorsLayer;
+use tracing::{error, info, info_span};
 
-use crate::engine::state::{EngineState, EngineStatus, get_instrument_name};
+use crate::engine::backtester::BacktestEngine;
 use crate::engine::config::EngineMode;
+use crate::engine::optimizer::{OptimizationResult, Optimizer};
+use crate::engine::state::{get_instrument_name, EngineState, EngineStatus};
 use crate::ipc::events::EngineEvent;
-use crate::engine::optimizer::{Optimizer, OptimizationResult};
-use crate::engine::backtester::{BacktestEngine};
 use crate::strategy::{
-    ma_crossover::MACrossoverStrategy,
-    rsi_reversal::RSIReversalStrategy,
-    macd_momentum::MACDMomentumStrategy,
-    bollinger::BollingerStrategy,
+    bollinger::BollingerStrategy, ma_crossover::MACrossoverStrategy,
+    macd_momentum::MACDMomentumStrategy, rsi_reversal::RSIReversalStrategy,
 };
 
 /// Application state shared across all handlers
@@ -203,7 +204,10 @@ pub async fn start(
         .with_graceful_shutdown(async move {
             while let Ok(event) = shutdown_rx.recv().await {
                 if let crate::ipc::events::EventVariant::Shutdown { reason } = event.event {
-                    tracing::info!("HTTP server receiving shutdown signal: {}. Closing listener...", reason);
+                    tracing::info!(
+                        "HTTP server receiving shutdown signal: {}. Closing listener...",
+                        reason
+                    );
                     break;
                 }
             }
@@ -234,26 +238,24 @@ async fn get_health(State(app_state): State<AppState>) -> Json<Value> {
 
 /// Readiness check endpoint: returns 200 when engine status is Running
 /// Returns 503 when engine is not yet ready
-async fn get_ready(State(app_state): State<AppState>) -> Result<Json<Value>, (axum::http::StatusCode, Json<Value>)> {
+async fn get_ready(
+    State(app_state): State<AppState>,
+) -> Result<Json<Value>, (axum::http::StatusCode, Json<Value>)> {
     let state = app_state.engine_state.read().await;
 
     match state.status {
-        EngineStatus::Running => {
-            Ok(Json(json!({
-                "status": "ready",
+        EngineStatus::Running => Ok(Json(json!({
+            "status": "ready",
+            "timestamp": Utc::now().to_rfc3339(),
+        }))),
+        _ => Err((
+            axum::http::StatusCode::SERVICE_UNAVAILABLE,
+            Json(json!({
+                "status": "not_ready",
+                "reason": "Engine is not running",
                 "timestamp": Utc::now().to_rfc3339(),
-            })))
-        }
-        _ => {
-            Err((
-                axum::http::StatusCode::SERVICE_UNAVAILABLE,
-                Json(json!({
-                    "status": "not_ready",
-                    "reason": "Engine is not running",
-                    "timestamp": Utc::now().to_rfc3339(),
-                }))
-            ))
-        }
+            })),
+        )),
     }
 }
 
@@ -316,7 +318,8 @@ async fn get_positions(State(app_state): State<AppState>) -> Json<Value> {
     let state = app_state.engine_state.read().await;
 
     let positions: Vec<Value> = state
-        .trades.active
+        .trades
+        .active
         .iter()
         .map(|pos| {
             json!({
@@ -354,7 +357,8 @@ async fn get_signals(
     // Prefer signal_records (with execution tracking) if available
     let signals: Vec<Value> = if !state.trades.signal_records.is_empty() {
         state
-            .trades.signal_records
+            .trades
+            .signal_records
             .iter()
             .rev()
             .take(limit)
@@ -379,7 +383,8 @@ async fn get_signals(
     } else {
         // Fallback to raw signals (backward compat)
         state
-            .trades.signals
+            .trades
+            .signals
             .iter()
             .rev()
             .take(limit)
@@ -418,7 +423,8 @@ async fn get_trades(
     let limit = params.limit.unwrap_or(100);
 
     let trades: Vec<Value> = state
-        .trades.history
+        .trades
+        .history
         .iter()
         .rev()
         .take(limit)
@@ -523,7 +529,11 @@ async fn get_markets(State(app_state): State<AppState>) -> Json<Value> {
                 let (bid, offer, change, change_percent) = if let Some(candle) = latest {
                     let prev_close = candle.open;
                     let ch = candle.close - prev_close;
-                    let ch_pct = if prev_close > 0.0 { (ch / prev_close) * 100.0 } else { 0.0 };
+                    let ch_pct = if prev_close > 0.0 {
+                        (ch / prev_close) * 100.0
+                    } else {
+                        0.0
+                    };
                     (candle.close, candle.close, ch, ch_pct)
                 } else {
                     (0.0, 0.0, 0.0, 0.0)
@@ -563,9 +573,7 @@ async fn get_prices(
     let resolution = params.resolution.as_deref().unwrap_or("HOUR");
     let max = params.max.unwrap_or(100);
 
-    let candles = state
-        .markets.history
-        .get_candles(&params.epic, resolution);
+    let candles = state.markets.history.get_candles(&params.epic, resolution);
 
     let prices: Vec<Value> = if let Some(candles) = candles {
         candles
@@ -717,13 +725,18 @@ async fn get_stats(State(app_state): State<AppState>) -> Json<Value> {
     let ds = &state.metrics.daily;
 
     // Compute gross profit/loss from closed trade history (wins and losses separately)
-    let (gross_profit, gross_loss) = state.trades.history.iter().fold((0.0f64, 0.0f64), |(profit, loss), t| {
-        if t.pnl > 0.0 {
-            (profit + t.pnl, loss)
-        } else {
-            (profit, loss + t.pnl)
-        }
-    });
+    let (gross_profit, gross_loss) =
+        state
+            .trades
+            .history
+            .iter()
+            .fold((0.0f64, 0.0f64), |(profit, loss), t| {
+                if t.pnl > 0.0 {
+                    (profit + t.pnl, loss)
+                } else {
+                    (profit, loss + t.pnl)
+                }
+            });
 
     let win_rate = if ds.trades > 0 {
         (ds.wins as f64 / ds.trades as f64) * 100.0
@@ -755,7 +768,8 @@ async fn get_stats(State(app_state): State<AppState>) -> Json<Value> {
     let equity_curve: Vec<Value> = {
         let mut cumulative = 0.0;
         state
-            .trades.history
+            .trades
+            .history
             .iter()
             .map(|t| {
                 cumulative += t.pnl;
@@ -819,7 +833,12 @@ async fn get_scan(
             let market_state = state.markets.live.get(epic)?;
 
             // Get indicators for this market
-            let indicators = state.markets.indicators.get(epic)?.get("HOUR")?.snapshot()?;
+            let indicators = state
+                .markets
+                .indicators
+                .get(epic)?
+                .get("HOUR")?
+                .snapshot()?;
 
             // Calculate trend and strength
             let price = market_state.bid;
@@ -838,9 +857,13 @@ async fn get_scan(
 
             // Signal strength (0-10)
             let strength = ((rsi - 50.0).abs() / 5.0
-                + if trend == "bullish" || trend == "bearish" { 2.0 } else { 0.0 }
+                + if trend == "bullish" || trend == "bearish" {
+                    2.0
+                } else {
+                    0.0
+                }
                 + ((price - sma20).abs() / sma20 * 100.0).min(10.0))
-                .clamp(0.0, 10.0);
+            .clamp(0.0, 10.0);
 
             // Generate signal
             let signal = if trend == "bullish" && rsi < 70.0 {
@@ -892,14 +915,19 @@ async fn get_scan(
 async fn get_learning(State(app_state): State<AppState>) -> Json<Value> {
     let state = app_state.engine_state.read().await;
 
-    let (scorecard, weight_manager) = match (state.learning.scorecard.as_ref(), state.learning.weight_manager.as_ref()) {
+    let (scorecard, weight_manager) = match (
+        state.learning.scorecard.as_ref(),
+        state.learning.weight_manager.as_ref(),
+    ) {
         (Some(s), Some(w)) => (s, w),
-        _ => return Json(json!({
-            "total_trades_processed": 0,
-            "strategies": [],
-            "recent_adjustments": [],
-            "timestamp": Utc::now().to_rfc3339(),
-        })),
+        _ => {
+            return Json(json!({
+                "total_trades_processed": 0,
+                "strategies": [],
+                "recent_adjustments": [],
+                "timestamp": Utc::now().to_rfc3339(),
+            }))
+        }
     };
 
     let mut strategies = Vec::new();
@@ -909,11 +937,11 @@ async fn get_learning(State(app_state): State<AppState>) -> Json<Value> {
     for strategy in scorecard.strategies() {
         if let Some(perf) = scorecard.get_performance(&strategy) {
             let mut sessions = serde_json::Map::new();
-            
+
             for &session in &[
                 crate::engine::state::Session::Asia,
                 crate::engine::state::Session::London,
-                crate::engine::state::Session::UsOverlap
+                crate::engine::state::Session::UsOverlap,
             ] {
                 if let Some(s_perf) = scorecard.get_session_performance(&strategy, session) {
                     sessions.insert(
@@ -921,7 +949,7 @@ async fn get_learning(State(app_state): State<AppState>) -> Json<Value> {
                         json!({
                             "win_rate": s_perf.win_rate,
                             "profit_factor": s_perf.profit_factor,
-                        })
+                        }),
                     );
                 }
             }
@@ -999,17 +1027,22 @@ pub async fn post_optimize(
     Json(payload): Json<OptimizeRequest>,
 ) -> Json<Value> {
     let epic = payload.epic.clone();
-    
+
     // Get real candles from the store if available
     let mut candles = {
         let s = app_state.engine_state.read().await;
-        s.markets.history.get_candles(&epic, "HOUR")
+        s.markets
+            .history
+            .get_candles(&epic, "HOUR")
             .cloned()
             .unwrap_or_default()
     };
 
     if candles.is_empty() {
-        info!("No real candles found for {}, generating mock data for demo", epic);
+        info!(
+            "No real candles found for {}, generating mock data for demo",
+            epic
+        );
         let mut current_price = 2000.0;
         for i in 0..200 {
             let change = (rand::random::<f64>() - 0.5) * 5.0;
@@ -1024,25 +1057,33 @@ pub async fn post_optimize(
             });
         }
     } else {
-        info!("Using {} real candles for optimization of {}", candles.len(), epic);
+        info!(
+            "Using {} real candles for optimization of {}",
+            candles.len(),
+            epic
+        );
     }
 
     let balance = {
         let s = app_state.engine_state.read().await;
         s.account.balance
-    }.max(1000.0); // Fallback to 1000 if state is empty
+    }
+    .max(1000.0); // Fallback to 1000 if state is empty
 
     let optimizer = Optimizer::new(candles, balance);
-    
+
     // Run optimization in a separate task so we don't block the API
     let state_clone = app_state.clone();
     tokio::spawn(async move {
-        match optimizer.optimize_ma_crossover(
-            &epic,
-            payload.short_range.0..payload.short_range.1,
-            payload.long_range.0..payload.long_range.1,
-            vec![20.0, 25.0, 30.0],
-        ).await {
+        match optimizer
+            .optimize_ma_crossover(
+                &epic,
+                payload.short_range.0..payload.short_range.1,
+                payload.long_range.0..payload.long_range.1,
+                vec![20.0, 25.0, 30.0],
+            )
+            .await
+        {
             Ok(result) => {
                 let mut last_res = state_clone.last_optimization_result.write().await;
                 *last_res = Some(result);
@@ -1109,7 +1150,11 @@ async fn put_config(
     }
 
     // Nested strategy updates
-    if let Some(strategies) = payload.updates.get("strategies").and_then(|s| s.as_object()) {
+    if let Some(strategies) = payload
+        .updates
+        .get("strategies")
+        .and_then(|s| s.as_object())
+    {
         // MA Crossover
         if let Some(ma_config) = strategies.get("ma_crossover").and_then(|ma| ma.as_object()) {
             if let Some(config) = &mut state.config.strategies.ma_crossover {
@@ -1165,7 +1210,10 @@ async fn put_config(
         }
 
         // Bollinger Reversion
-        if let Some(boll_config) = strategies.get("bollinger_reversion").and_then(|b| b.as_object()) {
+        if let Some(boll_config) = strategies
+            .get("bollinger_reversion")
+            .and_then(|b| b.as_object())
+        {
             if let Some(config) = &mut state.config.strategies.bollinger_reversion {
                 if let Some(enabled) = boll_config.get("enabled").and_then(|e| e.as_bool()) {
                     config.enabled = enabled;
@@ -1196,7 +1244,11 @@ async fn put_config(
     }
 
     // Update trading hours
-    if let Some(trading_hours) = payload.updates.get("trading_hours").and_then(|th| th.as_object()) {
+    if let Some(trading_hours) = payload
+        .updates
+        .get("trading_hours")
+        .and_then(|th| th.as_object())
+    {
         if let Some(start) = trading_hours.get("start").and_then(|s| s.as_str()) {
             state.config.trading_hours.start = start.to_string();
             updated_fields.push("trading_hours.start");
@@ -1272,11 +1324,13 @@ pub async fn post_backtest(
     Json(payload): Json<BacktestRequest>,
 ) -> Json<Value> {
     let epic = payload.epic.clone();
-    
+
     // Get historical candles for the backtest
     let mut candles = {
         let s = app_state.engine_state.read().await;
-        s.markets.history.get_candles(&epic, "HOUR")
+        s.markets
+            .history
+            .get_candles(&epic, "HOUR")
             .cloned()
             .unwrap_or_default()
     };
@@ -1297,18 +1351,26 @@ pub async fn post_backtest(
     }
 
     // Instantiate selected strategy
-    let strategy: Box<dyn crate::strategy::traits::Strategy + Send + Sync> = match payload.strategy_name.to_lowercase().as_str() {
-        "ma_crossover" => Box::new(MACrossoverStrategy::default()),
-        "rsi_reversal" => Box::new(RSIReversalStrategy::default()),
-        "macd_momentum" => Box::new(MACDMomentumStrategy::default()),
-        "bollinger" => Box::new(BollingerStrategy::default()),
-        _ => return Json(json!({
-            "success": false,
-            "message": format!("Unknown strategy '{}'.", payload.strategy_name),
-        })),
-    };
+    let strategy: Box<dyn crate::strategy::traits::Strategy + Send + Sync> =
+        match payload.strategy_name.to_lowercase().as_str() {
+            "ma_crossover" => Box::new(MACrossoverStrategy::default()),
+            "rsi_reversal" => Box::new(RSIReversalStrategy::default()),
+            "macd_momentum" => Box::new(MACDMomentumStrategy::default()),
+            "bollinger" => Box::new(BollingerStrategy::default()),
+            _ => {
+                return Json(json!({
+                    "success": false,
+                    "message": format!("Unknown strategy '{}'.", payload.strategy_name),
+                }))
+            }
+        };
 
-    info!("Running backtest for {} using {} ({} candles)", epic, payload.strategy_name, candles.len());
+    info!(
+        "Running backtest for {} using {} ({} candles)",
+        epic,
+        payload.strategy_name,
+        candles.len()
+    );
 
     let mut engine = BacktestEngine::new(payload.initial_balance, payload.risk_pct);
     let result = engine.run(&epic, &candles, &*strategy);
@@ -1328,7 +1390,10 @@ async fn post_trigger(
     State(app_state): State<AppState>,
     Json(payload): Json<TriggerRequest>,
 ) -> Json<Value> {
-    info!("Manual trigger received for {} {}", payload.epic, payload.direction);
+    info!(
+        "Manual trigger received for {} {}",
+        payload.epic, payload.direction
+    );
 
     let event = EngineEvent::trigger_trade(payload.epic.clone(), payload.direction.clone());
     let _ = app_state.event_tx.send(event);

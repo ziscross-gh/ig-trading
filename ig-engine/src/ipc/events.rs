@@ -1,5 +1,5 @@
-use serde::{Deserialize, Serialize};
 use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
 
 use crate::engine::state::MarketState;
 
@@ -74,7 +74,10 @@ impl EngineEvent {
             event: EventVariant::Shutdown { reason },
         }
     }
-    pub fn indicator_update(epic: String, indicators: crate::indicators::IndicatorSnapshot) -> Self {
+    pub fn indicator_update(
+        epic: String,
+        indicators: crate::indicators::IndicatorSnapshot,
+    ) -> Self {
         Self {
             timestamp: Utc::now(),
             event: EventVariant::IndicatorUpdate { epic, indicators },

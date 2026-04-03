@@ -2,6 +2,7 @@
 # IG Trading Engine
 
 **Created:** 2026-03-08
+**Last updated:** 2026-03-16
 **Goal:** Evolve the engine from rule-based to self-improving — keeping classical trend-following as the core,
 adding AI layers on top for sentiment signals and autonomous parameter adaptation.
 
@@ -27,6 +28,22 @@ adding AI layers on top for sentiment signals and autonomous parameter adaptatio
 | 8.4 | ML Regime Classifier (replace fixed ADX threshold) | ✅ Done | 🟠 Medium |
 | 8.5 | Macro Calendar Awareness (CPI, NFP, FOMC) | ✅ Done | 🟡 Low |
 | 8.6 | Reinforcement Learning for Position Sizing | ⏳ Planned | 🔵 Long-term |
+| 8.7 | Code quality pass — zero clippy warnings | ✅ Done | 🔴 High |
+| 8.8 | Stochastic Momentum Strategy (6th vote source) | ✅ Done | 🟠 Medium |
+
+### Sentiment Agent Status (2026-03-16)
+
+`scripts/sentiment_agent.py` — **operational**. Runs every 15 min via cron.
+
+| Backend | Status | Notes |
+|---------|--------|-------|
+| `keyword` | ✅ Always available | Zero-cost regex scoring; fallback |
+| `ollama` | ✅ Available if Ollama running | Local llama3; no API cost |
+| `claude` | ✅ Available if `ANTHROPIC_API_KEY` set | claude-haiku-4-5; ~$0.001/call |
+
+**Python 3.9 fix applied 2026-03-16:** `dict | None` union syntax replaced with `Optional[dict]`; cron has been clean since 20:15 SGT.
+
+Current score: `0.000` (neutral) — keyword matches low. Score threshold for signal injection: `±0.55`.
 
 ---
 

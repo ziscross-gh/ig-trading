@@ -1,0 +1,6 @@
+[advisories]
+# RUSTSEC-2023-0071: rsa crate Marvin Attack timing side-channel.
+# No fix available upstream; rsa is a transitive dep via sqlx-mysql.
+# Not exploitable in this context (no RSA private key operations exposed
+# to untrusted input — used only for MySQL TLS client auth internally).
+ignore = ["RUSTSEC-2023-0071"]

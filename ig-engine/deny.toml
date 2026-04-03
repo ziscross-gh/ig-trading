@@ -1,11 +1,18 @@
 [advisories]
-vulnerability = "deny"
-unmaintained = "warn"
-yanked = "deny"
+version = 2
+
+# RUSTSEC-2023-0071: rsa Marvin Attack — no fix available upstream.
+# Transitive dep via sqlx-mysql; not exploitable in this server context.
+ignore = ["RUSTSEC-2023-0071"]
 
 [licenses]
-unlicensed = "deny"
-allow = ["MIT", "Apache-2.0", "Apache-2.0 WITH LLVM-exception", "ISC", "BSD-2-Clause", "BSD-3-Clause", "Unicode-DFS-2016", "CC0-1.0", "OpenSSL"]
+version = 2
+allow = ["MIT", "Apache-2.0", "Apache-2.0 WITH LLVM-exception", "ISC", "BSD-2-Clause", "BSD-3-Clause", "Unicode-DFS-2016", "Unicode-3.0", "CC0-1.0", "OpenSSL", "MPL-2.0", "Zlib", "GPL-3.0-only", "CDLA-Permissive-2.0"]
+
+[[licenses.clarify]]
+name = "ig-engine"
+expression = "MIT"
+license-files = []
 
 [bans]
 multiple-versions = "warn"

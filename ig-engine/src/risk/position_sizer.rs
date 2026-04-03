@@ -2,9 +2,6 @@ use tracing::debug;
 
 use super::{InstrumentSpec, SizingMethod};
 
-
-
-
 /// Calculate position size based on account and risk parameters
 ///
 /// Formula: size = risk_amount / (stop_distance_in_pips × pip_value_per_unit)
@@ -34,17 +31,21 @@ pub fn calculate_position_size(
     );
 
     // Get instrument spec: Config -> Fallback -> Default
-    let instrument = instrument_specs.get(epic).cloned().or_else(|| InstrumentSpec::from_epic_fallback(epic)).unwrap_or_else(|| InstrumentSpec {
-        epic: epic.to_string(),
-        min_deal_size: 0.1,
-        max_deal_size: 100.0,
-        pip_value: 10.0,
-        pip_scale: 0.0001,
-        contract_size: 1.0,
-        margin_requirement_pct: 2.0,
-        size_decimals: 2,
-        min_guaranteed_stop_pips: 10.0,
-    });
+    let instrument = instrument_specs
+        .get(epic)
+        .cloned()
+        .or_else(|| InstrumentSpec::from_epic_fallback(epic))
+        .unwrap_or_else(|| InstrumentSpec {
+            epic: epic.to_string(),
+            min_deal_size: 0.5,
+            max_deal_size: 100.0,
+            pip_value: 10.0,
+            pip_scale: 0.0001,
+            contract_size: 1.0,
+            margin_requirement_pct: 2.0,
+            size_decimals: 2,
+            min_guaranteed_stop_pips: 10.0,
+        });
 
     // Calculate risk amount in account currency
     let risk_amount = account_balance * risk_pct / 100.0;
@@ -166,18 +167,20 @@ mod tests {
 
     #[test]
     fn test_instrument_spec_gold() {
-        let spec = InstrumentSpec::from_epic_fallback("CS.D.CFIGOLD.CFI.IP").expect("Gold spec should exist");
-        assert_eq!(spec.pip_value, 1.0);       // SGD$1 per point
-        assert_eq!(spec.pip_scale, 1.0);       // 1 point = $1/Troy Ounce
-        assert_eq!(spec.min_deal_size, 3.0);  // IG verified minimum
+        let spec = InstrumentSpec::from_epic_fallback("CS.D.CFIGOLD.CFI.IP")
+            .expect("Gold spec should exist");
+        assert_eq!(spec.pip_value, 1.0); // SGD$1 per point
+        assert_eq!(spec.pip_scale, 1.0); // 1 point = $1/Troy Ounce
+        assert_eq!(spec.min_deal_size, 3.0); // IG verified minimum
         assert_eq!(spec.max_deal_size, 100.0);
     }
 
     #[test]
     fn test_instrument_spec_eurusd() {
-        let spec = InstrumentSpec::from_epic_fallback("CS.D.EURUSD.CFD").expect("EURUSD spec should exist");
-        assert_eq!(spec.pip_value, 1.27);      // USD 1 ≈ SGD$1.27 (IG verified)
-        assert_eq!(spec.min_deal_size, 0.02);  // IG verified minimum
+        let spec = InstrumentSpec::from_epic_fallback("CS.D.EURUSD.CFD")
+            .expect("EURUSD spec should exist");
+        assert_eq!(spec.pip_value, 12.70); // 1 std lot = $10 USD/pip × ~1.27 USD/SGD (IG verified)
+        assert_eq!(spec.min_deal_size, 0.5); // Updated verified minimum
     }
 
     #[test]
@@ -191,11 +194,11 @@ mod tests {
             "CS.D.EURUSD.CSD.IP",
             &empty_specs,
         );
-        
-        // pip_value = 1.27 (IG verified SGD)
-        // 200 risk / (50 pips * 1.27 pip_val) = 3.149...
-        // floor to 2 decimals = 3.14
-        assert_eq!(size, 3.14);
+
+        // pip_value = 12.70 (1 std lot = $10 USD/pip × ~1.27 USD/SGD)
+        // 200 risk / (50 pips * 12.70 pip_val) = 0.314...
+        // floor to 2 decimals = 0.31
+        assert_eq!(size, 0.31);
     }
 
     #[test]
@@ -239,15 +242,16 @@ mod tests {
 
     #[test]
     fn test_clamp_to_instrument_limits() {
-        let spec = InstrumentSpec::from_epic_fallback("CS.D.EURUSD.CFD").expect("EURUSD spec should exist");
+        let spec = InstrumentSpec::from_epic_fallback("CS.D.EURUSD.CFD")
+            .expect("EURUSD spec should exist");
 
         // Clamp high
         let clamped = clamp_to_instrument_limits(150.0, &spec);
         assert_eq!(clamped, 100.0);
 
         // Clamp low
-        let clamped = clamp_to_instrument_limits(0.005, &spec);
-        assert_eq!(clamped, 0.02);
+        let clamped = clamp_to_instrument_limits(0.1, &spec);
+        assert_eq!(clamped, 0.5);
 
         // Within limits
         let clamped = clamp_to_instrument_limits(1.5, &spec);
@@ -266,10 +270,10 @@ mod tests {
             "CS.D.USDJPY.CSD.IP",
             &empty_specs,
         );
-        
+
         // pips = 1.00 / 0.01 = 100
-        // pip_value = 0.81 (JPY 100 ≈ SGD$0.81, IG verified)
-        // risk = 100 -> size = 100 / (100 * 0.81) = 1.234... -> floor to 1.23
-        assert_eq!(size, 1.23);
+        // pip_value = 8.01 (1 std lot = 1000 JPY/pip × ~0.00801 JPY/SGD, IG verified)
+        // risk = 100 -> size = 100 / (100 * 8.01) = 0.1248... -> floor to 0.12
+        assert_eq!(size, 0.12);
     }
 }

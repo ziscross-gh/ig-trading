@@ -7,11 +7,11 @@
 //! [`CandleStore::persist_series`] or [`CandleStore::persist_all`] to flush
 //! the current in-memory state.
 
+use crate::indicators::Candle;
 use std::collections::HashMap;
 use std::io::{BufRead, Write};
 use std::path::PathBuf;
-use tracing::{info, warn, debug};
-use crate::indicators::Candle;
+use tracing::{debug, info, warn};
 
 /// Maximum number of candles to store per epic-resolution series.
 const MAX_CANDLES_PER_SERIES: usize = 1000;
@@ -221,7 +221,12 @@ pub fn load_from_disk(epic: &str, resolution: &str) -> Vec<Candle> {
             }
             Err(e) => {
                 bad_lines += 1;
-                warn!("IO error reading line {} of {}: {}", line_no + 1, path.display(), e);
+                warn!(
+                    "IO error reading line {} of {}: {}",
+                    line_no + 1,
+                    path.display(),
+                    e
+                );
             }
         }
     }
@@ -253,7 +258,11 @@ fn save_to_disk(epic: &str, resolution: &str, candles: &[Candle]) {
     let path = candle_file_path(epic, resolution);
     if let Some(parent) = path.parent() {
         if let Err(e) = std::fs::create_dir_all(parent) {
-            warn!("Failed to create candle data directory {}: {}", parent.display(), e);
+            warn!(
+                "Failed to create candle data directory {}: {}",
+                parent.display(),
+                e
+            );
             return;
         }
     }
@@ -263,8 +272,7 @@ fn save_to_disk(epic: &str, resolution: &str, candles: &[Candle]) {
     let result = (|| -> std::io::Result<()> {
         let mut file = std::fs::File::create(&tmp_path)?;
         for candle in candles {
-            let json = serde_json::to_string(candle)
-                .map_err(std::io::Error::other)?;
+            let json = serde_json::to_string(candle).map_err(std::io::Error::other)?;
             writeln!(file, "{}", json)?;
         }
         file.flush()?;
@@ -273,7 +281,10 @@ fn save_to_disk(epic: &str, resolution: &str, candles: &[Candle]) {
     })();
 
     if let Err(e) = result {
-        warn!("Failed to persist candles for {} [{}]: {}", epic, resolution, e);
+        warn!(
+            "Failed to persist candles for {} [{}]: {}",
+            epic, resolution, e
+        );
         // Clean up temp file if rename failed
         let _ = std::fs::remove_file(&tmp_path);
     }
@@ -333,7 +344,11 @@ mod tests {
         // Uses a unique epic name to avoid collisions with concurrent tests.
         let epic = "ROUNDTRIP.TEST";
         let resolution = "HOUR";
-        let candles = vec![sample_candle(1000), sample_candle(2000), sample_candle(3000)];
+        let candles = vec![
+            sample_candle(1000),
+            sample_candle(2000),
+            sample_candle(3000),
+        ];
 
         // Write via save_to_disk, read via load_from_disk
         save_to_disk(epic, resolution, &candles);
@@ -368,7 +383,10 @@ mod tests {
         {
             let valid1 = serde_json::to_string(&sample_candle(100)).expect("serialize");
             let valid2 = serde_json::to_string(&sample_candle(200)).expect("serialize");
-            let content = format!("{}\nTHIS IS GARBAGE\n{}\n{{\"bad\":true}}\n", valid1, valid2);
+            let content = format!(
+                "{}\nTHIS IS GARBAGE\n{}\n{{\"bad\":true}}\n",
+                valid1, valid2
+            );
             fs::write(&path, content).expect("write test file");
         }
 

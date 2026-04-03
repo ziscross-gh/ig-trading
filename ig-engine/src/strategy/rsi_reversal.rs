@@ -1,9 +1,9 @@
-use uuid::Uuid;
 use chrono::Utc;
+use uuid::Uuid;
 
-use crate::indicators::IndicatorSnapshot;
-use crate::engine::state::{Direction, Signal};
 use super::traits::Strategy;
+use crate::engine::state::{Direction, Signal};
+use crate::indicators::IndicatorSnapshot;
 
 /// RSI Mean Reversion Strategy
 /// Generates BUY/SELL signals when RSI reaches extreme levels with confirmation signals
@@ -13,7 +13,7 @@ pub struct RSIReversalStrategy {
     pub overbought: f64,
     pub oversold: f64,
     #[allow(dead_code)]
-    pub weight: f64,            // reserved for ensemble weight override; ensemble manages weights by name
+    pub weight: f64, // reserved for ensemble weight override; ensemble manages weights by name
     pub detect_divergence: bool,
     pub atr_sl_multiplier: f64,
     pub atr_tp_multiplier: f64,
@@ -119,10 +119,16 @@ impl RSIReversalStrategy {
         (stop_loss, take_profit, trailing_stop_distance)
     }
 
-    fn generate_buy_signal(&self, epic: &str, price: f64, indicators: &IndicatorSnapshot) -> Signal {
+    fn generate_buy_signal(
+        &self,
+        epic: &str,
+        price: f64,
+        indicators: &IndicatorSnapshot,
+    ) -> Signal {
         let rsi = indicators.rsi.unwrap_or(0.0);
         let strength = self.calculate_signal_strength(indicators, true);
-        let (stop_loss, take_profit, trailing_stop_distance) = self.calculate_stops_and_targets(Direction::Buy, price, indicators);
+        let (stop_loss, take_profit, trailing_stop_distance) =
+            self.calculate_stops_and_targets(Direction::Buy, price, indicators);
 
         Signal {
             id: Uuid::new_v4().to_string(),
@@ -130,7 +136,10 @@ impl RSIReversalStrategy {
             direction: Direction::Buy,
             strength,
             strategy: "RSI_Reversal".to_string(),
-            reason: format!("RSI Reversal BUY: RSI={:.2} (oversold), MACD cross positive", rsi),
+            reason: format!(
+                "RSI Reversal BUY: RSI={:.2} (oversold), MACD cross positive",
+                rsi
+            ),
             price,
             stop_loss,
             take_profit,
@@ -139,10 +148,16 @@ impl RSIReversalStrategy {
         }
     }
 
-    fn generate_sell_signal(&self, epic: &str, price: f64, indicators: &IndicatorSnapshot) -> Signal {
+    fn generate_sell_signal(
+        &self,
+        epic: &str,
+        price: f64,
+        indicators: &IndicatorSnapshot,
+    ) -> Signal {
         let rsi = indicators.rsi.unwrap_or(0.0);
         let strength = self.calculate_signal_strength(indicators, false);
-        let (stop_loss, take_profit, trailing_stop_distance) = self.calculate_stops_and_targets(Direction::Sell, price, indicators);
+        let (stop_loss, take_profit, trailing_stop_distance) =
+            self.calculate_stops_and_targets(Direction::Sell, price, indicators);
 
         Signal {
             id: Uuid::new_v4().to_string(),
@@ -150,7 +165,10 @@ impl RSIReversalStrategy {
             direction: Direction::Sell,
             strength,
             strategy: "RSI_Reversal".to_string(),
-            reason: format!("RSI Reversal SELL: RSI={:.2} (overbought), MACD cross negative", rsi),
+            reason: format!(
+                "RSI Reversal SELL: RSI={:.2} (overbought), MACD cross negative",
+                rsi
+            ),
             price,
             stop_loss,
             take_profit,
@@ -165,7 +183,12 @@ impl Strategy for RSIReversalStrategy {
         "RSI_Reversal"
     }
 
-    fn evaluate(&self, epic: &str, price: f64, indicators_map: &std::collections::HashMap<String, IndicatorSnapshot>) -> Option<Signal> {
+    fn evaluate(
+        &self,
+        epic: &str,
+        price: f64,
+        indicators_map: &std::collections::HashMap<String, IndicatorSnapshot>,
+    ) -> Option<Signal> {
         // Fallback to "HOUR" timeframe for single-TF backward compatibility
         let indicators = indicators_map.get("HOUR")?;
 
@@ -187,7 +210,7 @@ impl Strategy for RSIReversalStrategy {
             }
         } else if rsi > 70.0 {
             // Potential Bearish Divergence check (Price Higher High, RSI Lower High)
-             if let (Some(last_rsi), Some(last_price)) = (self.last_rsi_high, self.last_price_high) {
+            if let (Some(last_rsi), Some(last_price)) = (self.last_rsi_high, self.last_price_high) {
                 if price > last_price && rsi < last_rsi && self.detect_divergence {
                     // Bearish Divergence detected!
                     let mut signal = self.generate_sell_signal(epic, price, indicators);

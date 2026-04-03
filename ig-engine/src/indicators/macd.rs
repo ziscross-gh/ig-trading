@@ -13,8 +13,8 @@ pub struct MACDResult {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Crossover {
-    Bullish,  // MACD crossed above signal
-    Bearish,  // MACD crossed below signal
+    Bullish, // MACD crossed above signal
+    Bearish, // MACD crossed below signal
     None,
 }
 
@@ -85,6 +85,9 @@ mod tests {
         let closes: Vec<f64> = (0..50).map(|i| 100.0 + i as f64 * 0.5).collect();
         let result = calculate(&closes, 12, 26, 9);
         // In an uptrend, MACD should be positive
-        assert!(result.macd_line > 0.0, "MACD line should be positive in uptrend");
+        assert!(
+            result.macd_line > 0.0,
+            "MACD line should be positive in uptrend"
+        );
     }
 }
