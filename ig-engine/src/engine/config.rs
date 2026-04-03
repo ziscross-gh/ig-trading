@@ -184,7 +184,6 @@ pub struct StrategiesConfig {
     // When VOLATILE persists for many days, the tight SL/TP and BE snap become
     // the permanent (losing) default. After `regime_cooldown_days`, relax the
     // VOLATILE restrictions to intermediate values between VOLATILE and normal.
-
     /// Days before VOLATILE restrictions start relaxing (None = disabled).
     #[serde(default = "default_regime_cooldown_days")]
     pub regime_cooldown_days: Option<u64>,
