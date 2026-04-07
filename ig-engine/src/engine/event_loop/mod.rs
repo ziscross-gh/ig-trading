@@ -316,6 +316,7 @@ pub async fn run(
         config.strategies.min_consensus,
         config.strategies.min_avg_strength,
     );
+    ensemble.signal_floor = config.strategies.ensemble_signal_floor;
 
     // Strategy weight keys MUST match the string returned by each strategy's name() method.
     if let Some(ma_cfg) = &config.strategies.ma_crossover {
@@ -399,10 +400,11 @@ pub async fn run(
         }
     }
 
-    let m15_ensemble = EnsembleVoter::new(
+    let mut m15_ensemble = EnsembleVoter::new(
         config.strategies.m15_min_consensus,
         config.strategies.m15_min_avg_strength,
     );
+    m15_ensemble.signal_floor = config.strategies.ensemble_signal_floor;
 
     if !m15_strategies.is_empty() {
         info!(

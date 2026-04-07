@@ -1459,6 +1459,10 @@ pub async fn analyze_market_m15(
         // trends, the remaining signals are pure momentum — requiring 2/3 of the ORIGINAL count
         // unfairly penalises the remaining signal(s). All surviving signals must agree (handled
         // by vote_with_overrides), so consensus=1 just means "at least one momentum signal agrees".
+        //
+        // VOLATILE regime exception: in VOLATILE only 1 out of 3 M15 strategies fires per bar,
+        // so a min_consensus=2 baseline would permanently block all M15 trades. We relax by
+        // subtracting 1 (floor 1) so that a single strong signal can open a position.
         let maybe_signal = {
             let ov_opt = config.strategies.instrument_overrides.get(epic.as_str());
             let override_consensus = if mean_rev_suppressed {
@@ -1466,6 +1470,20 @@ pub async fn analyze_market_m15(
                 Some(1usize)
             } else {
                 ov_opt.and_then(|o| o.min_consensus)
+            };
+            // VOLATILE fallback: relax consensus by 1 (min 1) so a single M15 signal suffices.
+            let override_consensus = if regime_str == "VOLATILE" {
+                let base = override_consensus.unwrap_or(m15_ensemble.min_consensus);
+                let relaxed = base.saturating_sub(1).max(1);
+                if relaxed < base {
+                    info!(
+                        "[M15] {} VOLATILE consensus relaxed: {} → {}",
+                        epic, base, relaxed
+                    );
+                }
+                Some(relaxed)
+            } else {
+                override_consensus
             };
             let override_strength = ov_opt.and_then(|o| o.min_avg_strength);
             if override_consensus.is_some() || override_strength.is_some() {

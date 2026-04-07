@@ -1,6 +1,6 @@
 # TASK_TRACKER.md — IG Trading Engine
 
-**Last updated:** 2026-04-03 (Phase 17 — Trading performance fixes: breakeven snap loosened, VOLATILE SL/TP widened, M15 consensus raised, USDJPY tightened, SUNGOLD removed, regime cooldown system added)
+**Last updated:** 2026-04-05 (Bug fix — ensemble signal floor filters crushed regime-multiplied signals before vote)
 **Current phase:** Production-ready + Active trading. VOLATILE regime live + cooldown system. Gold strong-trend fix deployed.
 **Current focus:** 🤖 Engine live & trading | 📊 Gold momentum gate active | 🔄 Regime cooldown active (7-day VOLATILE → relaxed SL/TP) | 🕐 Trading hours: 07:00–20:00 UTC only
 
@@ -224,6 +224,13 @@ For the full history of completed work and debt items, see `TECH_DEBT_AUDIT.md`.
 | Low | IG 403 quota after multiple restarts — H1 REST warmup fails; tick accumulator builds M15 bars instead; ADX fallback (16.1) mitigates impact | `data/candles/` |
 | Low | Python test scripts (`test_ig_trade*.py`) fail in proxied/sandboxed environments — `ProxyError: 403 Forbidden`. Must run locally. | `test_ig_trade*.py` |
 | Low | rsa RUSTSEC-2023-0071 (Marvin Attack) — no upstream fix; ignored in audit.toml. Not exploitable in this context. | `Cargo.lock` |
+
+### Recently Fixed (2026-04-05)
+
+| Bug | Root Cause | Fix |
+|-----|-----------|-----|
+| Ensemble average poisoned by regime-crushed signals | Regime multipliers (e.g. MA_Crossover × 0.3 = 2.4 in TRENDING) left near-zero signals in the vote pool, dragging avg_strength below threshold even when 3+ valid signals agreed | New `ensemble_signal_floor = 5.0` in `StrategiesConfig`; signals below floor excluded from consensus count + avg before vote in `EnsembleVoter::vote_with_overrides`. Logged when signals are filtered. Config field in `default.toml`. |
+| VOLATILE M15 trades blocked entirely | `min_consensus=2` (global + instrument overrides) but only 1/3 M15 strategies ever fires per bar in VOLATILE → threshold never met | Runtime relaxation in `analysis.rs`: when `regime_str == "VOLATILE"`, `override_consensus` is decremented by 1 (floor 1). Global default and instrument overrides unchanged; logs `[M15] VOLATILE consensus relaxed: 2 → 1` |
 
 ### Recently Fixed (2026-03-20)
 

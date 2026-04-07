@@ -67,6 +67,13 @@ regime_cooldown_sl_multiplier = 1.25  # between VOLATILE 1.0× and normal 1.5×
 regime_cooldown_tp_multiplier = 3.0   # between VOLATILE 2.5× and normal 4.0×
 regime_cooldown_disable_be_snap = true # skip aggressive BE snap after cooldown (trailing stop handles risk)
 
+# Ensemble signal floor — signals crushed below this strength by regime multipliers
+# are excluded from the consensus count and average strength calculation.
+# Rationale: MA_Crossover 8.0 × 0.3 = 2.4 in TRENDING poisons a 7.5-avg ensemble.
+# Excluding sub-floor signals means "this strategy is unreliable in this regime —
+# don't let it vote". Set to 0.0 to disable (revert to old behaviour).
+ensemble_signal_floor = 5.0
+
 [strategies.consensus_matrix]
 trending = { barrier = 3, min_strength = 7.5 }
 ranging  = { barrier = 3, min_strength = 7.5 }

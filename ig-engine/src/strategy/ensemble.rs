@@ -10,6 +10,9 @@ pub struct EnsembleVoter {
     pub min_consensus: usize,
     pub min_avg_strength: f64,
     pub strategy_weights: HashMap<String, f64>,
+    /// Signals with post-multiplier strength below this floor are excluded from
+    /// the consensus count and average strength calculation.  Set to 0.0 to disable.
+    pub signal_floor: f64,
 }
 
 impl EnsembleVoter {
@@ -18,6 +21,7 @@ impl EnsembleVoter {
             min_consensus,
             min_avg_strength,
             strategy_weights: HashMap::new(),
+            signal_floor: 5.0,
         }
     }
 
@@ -55,14 +59,45 @@ impl EnsembleVoter {
             return None;
         }
 
+        // ── Signal floor filter ───────────────────────────────────────────────
+        // Exclude signals crushed below the floor by regime multipliers.
+        // These represent "strategy unreliable in this regime" — letting them
+        // vote drags the average down without providing useful information.
+        let floor = self.signal_floor;
+        let (active_signals, filtered_count): (Vec<&Signal>, usize) = if floor > 0.0 {
+            let active: Vec<&Signal> = signals.iter().filter(|s| s.strength >= floor).collect();
+            let n_filtered = signals.len() - active.len();
+            (active, n_filtered)
+        } else {
+            (signals.iter().collect(), 0)
+        };
+
+        if filtered_count > 0 {
+            // Derive the epic from the first signal for the log line
+            let epic = signals
+                .first()
+                .map(|s| s.epic.as_str())
+                .unwrap_or("unknown");
+            tracing::info!(
+                "[{}] Ensemble: filtered {} weak signal(s) (strength < {:.1}) before vote",
+                epic,
+                filtered_count,
+                floor
+            );
+        }
+
+        if active_signals.is_empty() {
+            return None;
+        }
+
         // Group signals by direction
         let mut buy_signals = Vec::new();
         let mut sell_signals = Vec::new();
 
-        for signal in signals {
+        for signal in &active_signals {
             match signal.direction {
-                Direction::Buy => buy_signals.push(signal),
-                Direction::Sell => sell_signals.push(signal),
+                Direction::Buy => buy_signals.push(*signal),
+                Direction::Sell => sell_signals.push(*signal),
             }
         }
 
@@ -561,6 +596,125 @@ mod tests {
         assert!(
             result.is_none(),
             "Conflicted weak signal should be filtered out by penalty"
+        );
+    }
+
+    #[test]
+    fn test_signal_floor_excludes_crushed_signals() {
+        // Simulates the VOLATILE regime bug: MA_Crossover crushed from 8.0 to 2.4
+        // by a 0.3× multiplier. Without floor filtering the average would be:
+        //   (2.4 + 5.6 + 7.0 + 10.0) / 4 = 6.25  → REJECTED (threshold 7.5)
+        // With floor=5.0, MA_Crossover (2.4) and MACD (5.6 — exactly at floor, passes):
+        //   Wait: 5.6 >= 5.0 passes, so only 2.4 is excluded.
+        //   (5.6 + 7.0 + 10.0) / 3 = 7.53 → PASSES
+        //
+        // Use 4.9 for MACD so it is also excluded, confirming the fix for
+        // the exact scenario in the bug report (floor=5.0, MACD=4.9):
+        //   Only RSI (7.0) and Stochastic (10.0) remain → (7.0+10.0)/2 = 8.5 → PASSES
+        let mut voter = EnsembleVoter::new(2, 7.5);
+        voter.signal_floor = 5.0;
+        voter.set_strategy_weight("MA_Crossover".to_string(), 1.0);
+        voter.set_strategy_weight("MACD_Momentum".to_string(), 1.0);
+        voter.set_strategy_weight("RSI_Reversal".to_string(), 1.0);
+        voter.set_strategy_weight("Stochastic_Momentum".to_string(), 1.0);
+
+        let signals = vec![
+            // Crushed by 0.3× TRENDING multiplier — should be excluded
+            create_test_signal(
+                "CS.D.CFIGOLD.CFI.IP",
+                Direction::Buy,
+                2.4,
+                "MA_Crossover",
+                2800.0,
+                2750.0,
+                2870.0,
+                None,
+            ),
+            // Also crushed — should be excluded
+            create_test_signal(
+                "CS.D.CFIGOLD.CFI.IP",
+                Direction::Buy,
+                4.9,
+                "MACD_Momentum",
+                2800.0,
+                2750.0,
+                2870.0,
+                None,
+            ),
+            // Above floor — participates in vote
+            create_test_signal(
+                "CS.D.CFIGOLD.CFI.IP",
+                Direction::Buy,
+                7.0,
+                "RSI_Reversal",
+                2800.0,
+                2750.0,
+                2870.0,
+                None,
+            ),
+            // Above floor — participates in vote
+            create_test_signal(
+                "CS.D.CFIGOLD.CFI.IP",
+                Direction::Buy,
+                10.0,
+                "Stochastic_Momentum",
+                2800.0,
+                2750.0,
+                2870.0,
+                None,
+            ),
+        ];
+
+        // Without floor: (2.4 + 4.9 + 7.0 + 10.0) / 4 = 6.075 < 7.5 → would fail
+        // With floor=5.0: (7.0 + 10.0) / 2 = 8.5 >= 7.5 and 2 signals >= min_consensus 2 → passes
+        let result = voter.vote(&signals);
+        assert!(
+            result.is_some(),
+            "Ensemble should pass once crushed signals are excluded from the average"
+        );
+        let combined = result.expect("Floor filtering test failed");
+        assert_eq!(combined.direction, Direction::Buy);
+        // avg of the 2 active signals: (7.0 + 10.0) / 2 = 8.5
+        assert!(
+            (combined.strength - 8.5).abs() < 0.01,
+            "Expected avg strength 8.5, got {:.2}",
+            combined.strength
+        );
+    }
+
+    #[test]
+    fn test_signal_floor_disabled_when_zero() {
+        // With floor=0.0, all signals participate regardless of strength
+        let mut voter = EnsembleVoter::new(2, 6.0);
+        voter.signal_floor = 0.0;
+
+        let signals = vec![
+            create_test_signal(
+                "EUR/USD",
+                Direction::Buy,
+                1.0,
+                "MA_Crossover",
+                1.1000,
+                1.0950,
+                1.1100,
+                None,
+            ),
+            create_test_signal(
+                "EUR/USD",
+                Direction::Buy,
+                9.0,
+                "RSI_Reversal",
+                1.1000,
+                1.0950,
+                1.1100,
+                None,
+            ),
+        ];
+        // avg = (1.0 + 9.0) / 2 = 5.0 < 6.0 → rejected (floor disabled, all signals count)
+        let result = voter.vote(&signals);
+        assert!(
+            result.is_none(),
+            "With floor disabled, crushed signal should still drag average below threshold"
         );
     }
 }
