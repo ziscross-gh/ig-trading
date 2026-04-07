@@ -1120,6 +1120,7 @@ pub async fn analyze_market_m15(
         let regime_str = crate::regime::read_regime(epic.as_str())
             .map(|r| r.kind.to_string())
             .unwrap_or_default();
+        let is_volatile_regime = regime_str == "VOLATILE";
 
         // Run M15 strategies
         let mut signals: Vec<Signal> = Vec::new();
@@ -1618,13 +1619,30 @@ pub async fn analyze_market_m15(
             // Phase 16.A: when require_h1_confirmation=true, also block during cold
             // start (no H1 data yet) and when H1 ran but zero strategies fired.
             // Skipped when bypass_h1_gate=true (ADX strong-trend price-slope agrees).
+            // Phase 17.A: VOLATILE cold-start bypass — when H1 is not yet warmed and
+            // the regime is VOLATILE (where H1 direction is choppy / unreliable), allow
+            // strong M15 signals (strength >= 8.0) through rather than sitting idle for
+            // up to 1 hour after every restart.
             if config.strategies.h1_direction_gate_enabled && !bypass_h1_gate {
                 let blocked_reason: Option<String> = {
                     let s = state.read().await;
                     match s.markets.h1_bias.get(epic.as_str()) {
                         None => {
                             // Cold start: H1 analysis has not run yet for this epic.
-                            if config.strategies.require_h1_confirmation {
+                            // VOLATILE bypass: H1 direction is unreliable in choppy regimes,
+                            // so a high-strength M15 signal is sufficient on its own.
+                            const VOLATILE_COLD_START_BYPASS_STRENGTH: f64 = 8.0;
+                            if is_volatile_regime
+                                && ensemble_signal.strength
+                                    >= VOLATILE_COLD_START_BYPASS_STRENGTH
+                            {
+                                tracing::info!(
+                                    "[M15] {} VOLATILE cold-start bypass: H1 not warmed, allowing strong signal (strength={:.2})",
+                                    epic,
+                                    ensemble_signal.strength
+                                );
+                                None
+                            } else if config.strategies.require_h1_confirmation {
                                 Some(format!(
                                     "H1 direction gate: no H1 data yet (cold start) — blocking M15 {:?} until H1 warms up",
                                     ensemble_signal.direction

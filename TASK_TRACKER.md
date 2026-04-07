@@ -1,6 +1,6 @@
 # TASK_TRACKER.md — IG Trading Engine
 
-**Last updated:** 2026-04-05 (Bug fix — ensemble signal floor filters crushed regime-multiplied signals before vote)
+**Last updated:** 2026-04-05 (Bug fix — VOLATILE cold-start H1 gate bypass: strong M15 signals (strength≥8.0) now allowed through when H1 not yet warmed, preventing up to 1 hour idle after every restart)
 **Current phase:** Production-ready + Active trading. VOLATILE regime live + cooldown system. Gold strong-trend fix deployed.
 **Current focus:** 🤖 Engine live & trading | 📊 Gold momentum gate active | 🔄 Regime cooldown active (7-day VOLATILE → relaxed SL/TP) | 🕐 Trading hours: 07:00–20:00 UTC only
 
@@ -81,6 +81,18 @@ For the full history of completed work and debt items, see `TECH_DEBT_AUDIT.md`.
 **Net effect of 17.1 + 17.2:** BE snap trigger = 0.5 × 1.0 ATR = **0.5 ATR** (was 0.3 × 0.75 ATR = 0.225 ATR). 2.2× more breathing room before stop snaps to entry.
 
 **Net effect of 17.6 after 7 days VOLATILE:** SL relaxes to 1.25×ATR, TP to 3.0×ATR (R:R = 2.4), BE snap disabled entirely. Progressive normalization instead of permanent restriction.
+
+---
+
+## Phase 17.A — VOLATILE Cold-Start H1 Gate Bypass (✅ 2026-04-05)
+
+> **Motivation:** After every engine restart, the H1 direction gate blocks ALL M15 trades for up to 1 hour until
+> the first H1 bar closes. H1 REST warmup often fails (IG 403 quota) so H1 data stays empty. In VOLATILE regime
+> where signals are already rare, losing 1 hour per restart is unacceptable.
+
+| # | Task | Owner | Status | Notes |
+|---|------|-------|--------|-------|
+| 17.A | VOLATILE cold-start bypass in H1 gate | Claude | ✅ Done | In `analysis.rs` `analyze_market_m15()`: when `h1_bias` is `None` (cold start) AND regime is VOLATILE AND `ensemble_signal.strength >= 8.0`, skip the block and log `VOLATILE cold-start bypass`. Only VOLATILE is bypassed — TRENDING/RANGING still require H1 confirmation. |
 
 ---
 
