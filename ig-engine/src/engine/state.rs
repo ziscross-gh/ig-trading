@@ -230,6 +230,11 @@ pub struct TradeState {
     /// while price is potentially reversing.
     #[serde(default)]
     pub cooldowns: HashMap<String, DateTime<Utc>>,
+    /// Deal IDs of positions closed in this session (OPU deduplication).
+    /// Lightstreamer can replay the last OPU on reconnect — this set prevents
+    /// double-processing and double Telegram notifications.
+    #[serde(skip)]
+    pub recently_closed_deal_ids: std::collections::HashSet<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -414,6 +419,7 @@ impl EngineState {
                 signal_records: VecDeque::new(),
                 history: VecDeque::new(),
                 cooldowns: HashMap::new(),
+                recently_closed_deal_ids: std::collections::HashSet::new(),
             },
             metrics: MetricsState {
                 daily: DailyStats {

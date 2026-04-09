@@ -272,6 +272,13 @@ pub fn spawn_state_worker(
                                 let (closed_position, close_reason, final_pnl) = {
                                     let mut s = state_worker.write().await;
 
+                                    // Dedup: Lightstreamer replays the last OPU on reconnect.
+                                    // Guard against double-notification and double P&L accounting.
+                                    if s.trades.recently_closed_deal_ids.contains(&opu.deal_id) {
+                                        info!("OPU DELETED for already-processed deal_id={} — ignoring replay", opu.deal_id);
+                                        (None, "", 0.0)
+                                    } else {
+
                                     // Find and remove the position from active list
                                     let pos_idx = s
                                         .trades
@@ -385,6 +392,8 @@ pub fn spawn_state_worker(
                                         let cooldown_secs =
                                             s.config.strategies.post_trade_cooldown_secs;
                                         s.set_trade_cooldown(&opu.epic, cooldown_secs);
+                                        // Mark deal as processed so Lightstreamer replay is ignored
+                                        s.trades.recently_closed_deal_ids.insert(opu.deal_id.clone());
                                         let close_reason_str = match close_status {
                                             "stop_loss" => "Stop Loss hit",
                                             "take_profit" => "Take Profit hit",
@@ -392,9 +401,14 @@ pub fn spawn_state_worker(
                                         };
                                         (Some(pos), close_reason_str, final_pnl)
                                     } else {
+                                        // Position not in active list — either closed by engine
+                                        // already or replayed OPU. Mark it so future replays are
+                                        // silently ignored (not warned about again).
+                                        s.trades.recently_closed_deal_ids.insert(opu.deal_id.clone());
                                         warn!("OPU DELETED for unknown deal_id={} — may have been closed by engine already", opu.deal_id);
                                         (None, "", 0.0)
                                     }
+                                    } // end else branch of recently_closed_deal_ids check
                                 };
 
                                 if let Some(pos) = closed_position {
