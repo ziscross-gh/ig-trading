@@ -211,6 +211,23 @@ def run_once() -> dict:
         proba      = model.predict_proba(X)[0]
         confidence = float(max(proba))
 
+        # Hurst-based override: the ML model was trained with broken hurst=0.1,
+        # so it can't use Hurst to distinguish regimes. Apply rule-based correction:
+        #   H >= 0.65 + ADX >= 25 → TRENDING (persistent momentum confirmed by ADX)
+        #   H <= 0.35            → RANGING  (strong mean-reversion)
+        hurst_val = feats["hurst"]
+        adx_val   = feats["adx_14"]
+        override  = None
+        if hurst_val >= 0.65 and adx_val >= 25.0 and regime == "VOLATILE":
+            override = "TRENDING"
+            confidence = max(confidence, 0.70)
+        elif hurst_val <= 0.35 and regime == "VOLATILE":
+            override = "RANGING"
+            confidence = max(confidence, 0.60)
+        if override:
+            print(f"    ↳ Hurst override: {regime} → {override} (H={hurst_val:.2f}, ADX={adx_val:.1f})")
+            regime = override
+
         epic = cfg["epic"]
         output[epic] = {
             "regime":     regime,
