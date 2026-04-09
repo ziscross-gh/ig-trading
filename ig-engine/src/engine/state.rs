@@ -605,4 +605,32 @@ impl EngineState {
             .and_then(|s| serde_json::from_str::<Vec<Position>>(&s).ok())
             .unwrap_or_default()
     }
+
+    /// Persist today's DailyStats to disk so engine restarts don't wipe the day's P&L.
+    /// Written to data/recovery/daily_stats.json on every trade close.
+    pub fn save_daily_stats(&self) {
+        let path = "data/recovery/daily_stats.json";
+        if let Some(dir) = std::path::Path::new(path).parent() {
+            let _ = std::fs::create_dir_all(dir);
+        }
+        match serde_json::to_string_pretty(&self.metrics.daily) {
+            Ok(json) => {
+                if let Err(e) = std::fs::write(path, json) {
+                    tracing::warn!("Failed to persist daily stats: {}", e);
+                }
+            }
+            Err(e) => tracing::warn!("Failed to serialize daily stats: {}", e),
+        }
+    }
+
+    /// Load persisted DailyStats from disk.
+    /// Returns None if the file is missing, unparseable, or from a different UTC date.
+    pub fn load_persisted_daily_stats() -> Option<DailyStats> {
+        let path = "data/recovery/daily_stats.json";
+        let today = Utc::now().format("%Y-%m-%d").to_string();
+        std::fs::read_to_string(path)
+            .ok()
+            .and_then(|s| serde_json::from_str::<DailyStats>(&s).ok())
+            .filter(|stats| stats.date == today)
+    }
 }

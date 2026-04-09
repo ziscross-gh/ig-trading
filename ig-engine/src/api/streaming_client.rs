@@ -389,6 +389,8 @@ pub fn spawn_state_worker(
                                         });
 
                                         s.record_trade_result_for_epic(final_pnl, Some(&opu.epic));
+                                        // Persist daily stats immediately so restarts don't wipe the day's P&L
+                                        s.save_daily_stats();
                                         let cooldown_secs =
                                             s.config.strategies.post_trade_cooldown_secs;
                                         s.set_trade_cooldown(&opu.epic, cooldown_secs);

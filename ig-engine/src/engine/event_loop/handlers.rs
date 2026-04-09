@@ -321,6 +321,8 @@ pub async fn handle_position_monitoring(
                     s.add_closed_trade(closed_trade.clone());
                     // Set re-entry cooldown
                     s.set_trade_cooldown(&position.epic, cooldown_secs);
+                    // Persist daily stats so restarts don't lose the day's P&L
+                    s.save_daily_stats();
                 }
 
                 {

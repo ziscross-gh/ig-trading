@@ -602,6 +602,16 @@ pub async fn run(
                 info!("✅ Recovery check: all previous positions still open or already synced");
             }
         }
+
+        // Restore today's daily stats from disk so restarts don't wipe the day's P&L.
+        if let Some(saved) = EngineState::load_persisted_daily_stats() {
+            let mut s = state.write().await;
+            s.metrics.daily = saved;
+            info!(
+                "📊 Daily stats restored from disk: trades={}, pnl={:.2}",
+                s.metrics.daily.trades, s.metrics.daily.pnl
+            );
+        }
     }
 
     info!(
