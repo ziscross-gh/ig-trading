@@ -134,6 +134,10 @@ fn default_volatile_be_trigger() -> f64 {
     0.3
 }
 
+fn default_max_positions_per_instrument() -> usize {
+    3
+}
+
 /// Risk management configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
@@ -143,6 +147,11 @@ pub struct RiskConfig {
     pub max_weekly_drawdown_pct: f64, // Maximum weekly drawdown % before pausing
     pub max_daily_trades: u32,   // Maximum trades per day
     pub max_open_positions: usize, // Maximum concurrent open positions
+    /// Maximum concurrent positions per instrument. Position size is divided by this value
+    /// so total risk per epic stays the same. E.g. max_positions_per_instrument=3 means
+    /// each trade is 1/3 normal size, allowing up to 3 entries on the same epic.
+    #[serde(default = "default_max_positions_per_instrument")]
+    pub max_positions_per_instrument: usize,
     pub max_correlated_positions: usize,
     pub max_margin_usage_pct: f64,
     pub min_risk_reward: f64, // Minimum risk:reward ratio
@@ -183,7 +192,8 @@ impl Default for RiskConfig {
             max_daily_loss_pct: 2.0,
             max_weekly_drawdown_pct: 5.0,
             max_daily_trades: 20,
-            max_open_positions: 2,
+            max_open_positions: 9,
+            max_positions_per_instrument: 3,
             max_correlated_positions: 1,
             max_margin_usage_pct: 20.0,
             min_risk_reward: 2.0,
@@ -514,11 +524,17 @@ impl RiskManager {
             return RiskVerdict::Rejected(reason);
         }
 
-        // Check if already in this market
-        if open_positions.iter().any(|pos| pos.epic == epic) {
+        // Check per-instrument position limit
+        let epic_position_count = open_positions
+            .iter()
+            .filter(|pos| pos.epic == epic)
+            .count();
+        if epic_position_count >= self.config.max_positions_per_instrument {
             let reason = format!(
-                "Already have an open position in {}",
-                get_instrument_name(epic)
+                "Max positions per instrument reached for {}: {} / {}",
+                get_instrument_name(epic),
+                epic_position_count,
+                self.config.max_positions_per_instrument
             );
             warn!("{}", reason);
             return RiskVerdict::Rejected(reason);
@@ -636,14 +652,19 @@ impl RiskManager {
         // Apply circuit breaker position size reduction
         let adjusted_size = raw_size * self.position_size_multiplier;
 
+        // Scale down for concurrent positions: divide by max_positions_per_instrument
+        // so total risk across all positions on this epic stays the same.
+        let per_instrument_max = self.config.max_positions_per_instrument.max(1) as f64;
+        let scaled_size = adjusted_size / per_instrument_max;
+
         // Clamp to instrument limits
-        let final_size = adjusted_size
+        let final_size = scaled_size
             .max(instrument_spec.min_deal_size)
             .min(instrument_spec.max_deal_size);
 
         debug!(
-            "Position sizing: raw={:.2}, multiplier={:.2}, final={:.2}",
-            raw_size, self.position_size_multiplier, final_size
+            "Position sizing: raw={:.2}, multiplier={:.2}, per_instr_scale=1/{}, final={:.2}",
+            raw_size, self.position_size_multiplier, per_instrument_max, final_size
         );
 
         // Final trailing stop distance logic:
@@ -850,10 +871,9 @@ impl RiskManager {
         &self.config
     }
 
-    /// M15 trade risk check — delegates to `check_trade()` then applies 0.5× position size.
-    ///
-    /// Returns the same `RiskVerdict` as `check_trade()` with the size halved after approval.
-    /// If the halved size falls below the instrument minimum, returns `Rejected`.
+    /// M15 trade risk check — delegates to `check_trade()` which already applies
+    /// the per-instrument scaling (1/max_positions_per_instrument). No extra halving
+    /// since concurrent position scaling already manages per-trade risk.
     #[allow(clippy::too_many_arguments)]
     pub fn check_trade_m15(
         &mut self,
@@ -878,29 +898,12 @@ impl RiskManager {
             open_positions,
             strategy,
         ) {
-            RiskVerdict::Approved(mut adjusted) => {
-                let spec = self.get_instrument_spec(epic);
-                let half_size = adjusted.size * 0.5;
-                if half_size < spec.min_deal_size {
-                    warn!(
-                        "M15 trade rejected: half-size {:.2} < instrument minimum {:.2} for {}",
-                        half_size, spec.min_deal_size, epic
-                    );
-                    RiskVerdict::Rejected(format!(
-                        "M15 half-size {:.2} < instrument minimum {:.2}",
-                        half_size, spec.min_deal_size
-                    ))
-                } else {
-                    adjusted.size = half_size;
-                    info!(
-                        "M15 trade approved: {} {} size={:.2} (halved from {:.2})",
-                        epic,
-                        direction,
-                        adjusted.size,
-                        half_size * 2.0
-                    );
-                    RiskVerdict::Approved(adjusted)
-                }
+            RiskVerdict::Approved(adjusted) => {
+                info!(
+                    "M15 trade approved: {} {} size={:.2}",
+                    epic, direction, adjusted.size
+                );
+                RiskVerdict::Approved(adjusted)
             }
             rejected => rejected,
         }

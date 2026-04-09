@@ -1,8 +1,8 @@
 # TASK_TRACKER.md — IG Trading Engine
 
-**Last updated:** 2026-04-05 (Bug fix — VOLATILE cold-start H1 gate bypass: strong M15 signals (strength≥8.0) now allowed through when H1 not yet warmed, preventing up to 1 hour idle after every restart)
-**Current phase:** Production-ready + Active trading. VOLATILE regime live + cooldown system. Gold strong-trend fix deployed.
-**Current focus:** 🤖 Engine live & trading | 📊 Gold momentum gate active | 🔄 Regime cooldown active (7-day VOLATILE → relaxed SL/TP) | 🕐 Trading hours: 07:00–20:00 UTC only
+**Last updated:** 2026-04-09 (Phase 17.B — multi-position concurrent trading: up to 3 positions per instrument at 1/3 size each, cooldown 30min→5min)
+**Current phase:** Production-ready + Active trading. VOLATILE regime live + cooldown system. Concurrent multi-position mode live.
+**Current focus:** 🤖 Engine live & trading | 📊 Multi-position mode: max 3/instrument at 1/3 size | 🔄 Regime cooldown active (7-day VOLATILE → relaxed SL/TP) | 🕐 Trading hours: 07:00–20:00 UTC only
 
 > 📦 Dashboard (`src/`) is **archived** — not maintained. All dashboard tasks removed.
 
@@ -81,6 +81,18 @@ For the full history of completed work and debt items, see `TECH_DEBT_AUDIT.md`.
 **Net effect of 17.1 + 17.2:** BE snap trigger = 0.5 × 1.0 ATR = **0.5 ATR** (was 0.3 × 0.75 ATR = 0.225 ATR). 2.2× more breathing room before stop snaps to entry.
 
 **Net effect of 17.6 after 7 days VOLATILE:** SL relaxes to 1.25×ATR, TP to 3.0×ATR (R:R = 2.4), BE snap disabled entirely. Progressive normalization instead of permanent restriction.
+
+---
+
+## Phase 17.B — Multi-Position Concurrent Trading (✅ 2026-04-09)
+
+> **Motivation:** One-trade-at-a-time with 30-min cooldown means the engine sits idle for most of the day. Market
+> signal re-entries and scale-ins are impossible. User requested: spread risk across up to 3 smaller concurrent
+> positions per instrument instead of one full-size trade with a long cooldown.
+
+| # | Task | Owner | Status | Notes |
+|---|------|-------|--------|-------|
+| 17.B | Multi-position mode | Claude | ✅ Done | New `max_positions_per_instrument=3` config. "Already have a position" hard block replaced with per-epic count limit. Position size auto-divided by `max_positions_per_instrument` so total risk per epic stays constant. `post_trade_cooldown_secs` 1800→300 (5 min). `max_open_positions` 5→9. M15 extra 0.5× halving removed (1/3 scaling is sufficient). Files: `config/default.toml`, `risk/mod.rs`, `engine/config.rs` |
 
 ---
 

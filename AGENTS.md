@@ -24,7 +24,7 @@ An autonomous algorithmic trading system for **IG Markets**, built with:
 
 > 📦 A Next.js dashboard exists in `src/` but is **archived** — not maintained. Focus is bot engine + Telegram only.
 
-**Current status:** Phases 1–17 + 14.A–I complete. Demo mode live and trading. M15 dual-timeframe scheme fully operational. Regime cooldown system active (7-day VOLATILE → relaxed SL/TP). RL position sizing (8.6) is the only long-term remaining item.
+**Current status:** Phases 1–17 + 14.A–I complete. Demo mode live and trading. M15 dual-timeframe scheme fully operational. Regime cooldown system active (7-day VOLATILE → relaxed SL/TP). Concurrent multi-position mode: up to 3 positions per instrument at 1/3 size each. RL position sizing (8.6) is the only long-term remaining item.
 
 ---
 
@@ -151,7 +151,8 @@ Weights auto-adjust every 10 trades via `AdaptiveWeightManager` (rolling 50-trad
 - Max risk per trade: 1% of balance
 - Max daily loss: 3% → trading halts
 - Max weekly drawdown: 5%
-- Max open positions: 3
+- Max open positions: 9 (3 per instrument × 3 instruments)
+- Max positions per instrument: 3 (each 1/3 normal size — same total risk)
 - Max margin usage: 30%
 - Min risk/reward: 1.5
 - Circuit breaker: size reduction after 3 losses, 60 min pause after 5

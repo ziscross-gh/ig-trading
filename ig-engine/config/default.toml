@@ -28,7 +28,8 @@ context_market_ids = ["USDIND"]
 max_risk_per_trade = 0.5
 max_daily_loss_pct = 2.0
 max_weekly_drawdown_pct = 5.0
-max_open_positions = 5
+max_open_positions = 9
+max_positions_per_instrument = 3   # Allow up to 3 concurrent positions per epic (size scaled down proportionally)
 max_correlated_positions = 1
 max_margin_usage_pct = 20.0
 min_risk_reward = 2.5
@@ -56,7 +57,7 @@ h1_macro_trend_gate_enabled = true # Phase 15.B — block H1 entries that trade 
 h1_macro_trend_lookback = 5        # Phase 15.B — number of H1 closes used to compute slope (min 3)
 volatile_atr_sl_multiplier = 1.0   # Phase 15.D — wider SL for VOLATILE wave trades (1.0×ATR, R:R=2.5)
 volatile_atr_tp_multiplier = 2.5   # Phase 15.D — achievable TP for VOLATILE waves (2.5×ATR vs default 4.0×)
-post_trade_cooldown_secs = 1800    # Phase 15.E — block re-entry on same epic for 30 min after any TP/SL close
+post_trade_cooldown_secs = 300     # Phase 15.E — block re-entry on same epic for 5 min after any TP/SL close (reduced from 30 min to allow concurrent entries)
 require_h1_confirmation = true     # Phase 16.A — block M15 cold-start trades until H1 has established a direction
 
 # Regime cooldown — relax VOLATILE restrictions after prolonged VOLATILE persistence.
