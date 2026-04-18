@@ -1,8 +1,8 @@
 # TASK_TRACKER.md — IG Trading Engine
 
-**Last updated:** 2026-04-09 (Phase 17.B — multi-position concurrent trading: up to 3 positions per instrument at 1/3 size each, cooldown 30min→5min)
-**Current phase:** Production-ready + Active trading. VOLATILE regime live + cooldown system. Concurrent multi-position mode live.
-**Current focus:** 🤖 Engine live & trading | 📊 Multi-position mode: max 3/instrument at 1/3 size | 🔄 Regime cooldown active (7-day VOLATILE → relaxed SL/TP) | 🕐 Trading hours: 07:00–20:00 UTC only
+**Last updated:** 2026-04-18 (Phase 17.A Fix — H1 direction gate extended for persistent 0-signal state)
+**Current phase:** Production-ready + Active trading. VOLATILE regime live + cooldown system. Concurrent multi-position mode live. H1 gate dual bypass (cold-start + zero-signal).
+**Current focus:** 🤖 Engine live & trading | 📊 Multi-position mode: max 3/instrument at 1/3 size | 🔄 Regime cooldown active (7-day VOLATILE → relaxed SL/TP) | 🕐 Trading hours: 07:00–20:00 UTC only | 🚪 H1 gate: VOLATILE bypass for 0-signal & cold-start
 
 > 📦 Dashboard (`src/`) is **archived** — not maintained. All dashboard tasks removed.
 
@@ -105,6 +105,16 @@ For the full history of completed work and debt items, see `TECH_DEBT_AUDIT.md`.
 | # | Task | Owner | Status | Notes |
 |---|------|-------|--------|-------|
 | 17.A | VOLATILE cold-start bypass in H1 gate | Claude | ✅ Done | In `analysis.rs` `analyze_market_m15()`: when `h1_bias` is `None` (cold start) AND regime is VOLATILE AND `ensemble_signal.strength >= 8.0`, skip the block and log `VOLATILE cold-start bypass`. Only VOLATILE is bypassed — TRENDING/RANGING still require H1 confirmation. |
+
+---
+
+## Phase 17.A-Fix — H1-Zero Bypass Extension (✅ 2026-04-18)
+
+> **Motivation:** Phase 17.A cold-start bypass only applied when `h1_bias` was `None`. After ~1 hour, H1 analysis runs but produces 0 signals (buy_count=0, sell_count=0), converting bias to `Some(...)`. From that point forward, the bypass no longer applied and the gate blocked all M15 trades indefinitely, killing trading for the entire day.
+
+| # | Task | Owner | Status | Notes |
+|---|------|-------|--------|-------|
+| 17.A.1 | Extend VOLATILE bypass to H1-zero case | Claude | ✅ Done | In `analysis.rs` line 1654–1674, added same bypass logic to `Some(bias) if bias.buy_count==0 && bias.sell_count==0` match arm: if VOLATILE regime AND strength >= 8.0, allow trade instead of blocking. Fixes perpetual gate block after H1 runs but fires no signals. Files: `src/engine/event_loop/analysis.rs` |
 
 ---
 

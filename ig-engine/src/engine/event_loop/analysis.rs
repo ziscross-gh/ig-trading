@@ -1624,6 +1624,10 @@ pub async fn analyze_market_m15(
             // strong M15 signals (strength >= 8.0) through rather than sitting idle for
             // up to 1 hour after every restart.
             if config.strategies.h1_direction_gate_enabled && !bypass_h1_gate {
+                debug!(
+                    "[M15] [{}] H1 gate check: regime={}, strength={:.2}, bypass=false",
+                    epic, regime_str, ensemble_signal.strength
+                );
                 let blocked_reason: Option<String> = {
                     let s = state.read().await;
                     match s.markets.h1_bias.get(epic.as_str()) {
@@ -1653,7 +1657,18 @@ pub async fn analyze_market_m15(
                         }
                         Some(bias) if bias.buy_count == 0 && bias.sell_count == 0 => {
                             // H1 ran but no strategies fired — direction unknown.
-                            if config.strategies.require_h1_confirmation {
+                            // In VOLATILE regime, high-strength signals are reliable enough to trade
+                            // without H1 confirmation (same as cold-start bypass).
+                            const VOLATILE_BYPASS_STRENGTH: f64 = 8.0;
+                            if is_volatile_regime && ensemble_signal.strength >= VOLATILE_BYPASS_STRENGTH {
+                                tracing::info!(
+                                    "[M15] {} VOLATILE H1-zero bypass: H1 has 0 signals but strength={:.2} >= {}, allowing trade",
+                                    epic,
+                                    ensemble_signal.strength,
+                                    VOLATILE_BYPASS_STRENGTH
+                                );
+                                None
+                            } else if config.strategies.require_h1_confirmation {
                                 Some(format!(
                                     "H1 direction gate: H1 total signals = 0 (direction unknown) — blocking M15 {:?}",
                                     ensemble_signal.direction
