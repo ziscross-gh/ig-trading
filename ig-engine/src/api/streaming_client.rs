@@ -413,27 +413,16 @@ pub fn spawn_state_worker(
                                     } // end else branch of recently_closed_deal_ids check
                                 };
 
-                                if let Some(pos) = closed_position {
+                                if let Some(_pos) = closed_position {
+                                    // Send position_closed event for state/metrics tracking,
+                                    // but do NOT send Telegram notification here.
+                                    // The authoritative notification comes from handlers.rs
+                                    // when the REST close completes, not from OPU stream.
+                                    // This prevents duplicate notifications when both paths fire.
                                     let _ = event_tx_worker.send(EngineEvent::position_closed(
                                         opu.deal_id.clone(),
                                         final_pnl,
                                     ));
-
-                                    // Telegram notification
-                                    let tg = TelegramNotifier::new(&None);
-                                    let name = get_instrument_name(&opu.epic);
-                                    let dir = format!("{}", pos.direction);
-                                    let pnl = final_pnl;
-                                    let reason = close_reason.to_string();
-                                    tokio::spawn(async move {
-                                        let msg = format!(
-                                            "{} <b>POSITION CLOSED (stream)</b>\n\n<b>Instrument:</b> {}\n<b>Direction:</b> {}\n<b>Reason:</b> {}\n<b>P&L:</b> {:.2}\n<b>Time:</b> {}",
-                                            if pnl >= 0.0 { "✅" } else { "❌" },
-                                            name, dir, reason, pnl,
-                                            (chrono::Utc::now() + chrono::Duration::hours(8)).format("%H:%M:%S SGT")
-                                        );
-                                        let _ = tg.send_message(&msg).await;
-                                    });
                                 }
                             }
                             Some(opu) => {
