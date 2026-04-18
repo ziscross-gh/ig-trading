@@ -361,6 +361,18 @@ impl RiskManager {
     ) -> RiskVerdict {
         debug!("Starting risk check for {} {}", epic, direction);
 
+        // Layer 0: Permanent SUNGOLD block — 2026-03-15 SUNGOLD BUY hit -72,000
+        // due to missing InstrumentSpec (pip_value fallback bug). This hard-coded
+        // block guarantees no SUNGOLD order can ever execute regardless of config.
+        if epic.contains("SUNGOLD") {
+            let reason = format!(
+                "PERMANENT BLOCK: {} rejected — SUNGOLD disabled after 2026-03-15 sizing catastrophe",
+                epic
+            );
+            warn!("{}", reason);
+            return RiskVerdict::Rejected(reason);
+        }
+
         // Layer 1: Kill Switch - Check if trading is paused
         if self.is_paused {
             if let Some(paused_until) = self.paused_until {

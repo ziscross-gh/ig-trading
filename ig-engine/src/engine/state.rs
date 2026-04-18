@@ -58,7 +58,6 @@ pub fn get_instrument_name(epic: &str) -> String {
         "CS.D.CFDGOLD.CMG.IP" => "Spot Gold ($1)".to_string(),
         "CS.D.GOL.CFD" => "Spot Gold".to_string(),
         "CS.D.XAUUSD.CFD" | "CS.D.GOLDUSD.CFD" => "Gold (XAU/USD)".to_string(),
-        "IX.D.SUNGOLD.CFI.IP" => "Weekend Spot Gold".to_string(),
         // Forex — demo (*.CSD.IP) and live (*.CFD) variants
         "CS.D.EURUSD.CSD.IP" | "CS.D.EURUSD.CFD" => "EUR/USD".to_string(),
         "CS.D.GBPUSD.CSD.IP" | "CS.D.GBPUSD.CFD" => "GBP/USD".to_string(),
