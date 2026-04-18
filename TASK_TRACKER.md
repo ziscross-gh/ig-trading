@@ -108,13 +108,16 @@ For the full history of completed work and debt items, see `TECH_DEBT_AUDIT.md`.
 
 ---
 
-## Phase 17.A-Fix — H1-Zero Bypass Extension (✅ 2026-04-18)
+## Phase 17.A-Fix — H1-Zero Bypass + Notification Spam (✅ 2026-04-18)
 
-> **Motivation:** Phase 17.A cold-start bypass only applied when `h1_bias` was `None`. After ~1 hour, H1 analysis runs but produces 0 signals (buy_count=0, sell_count=0), converting bias to `Some(...)`. From that point forward, the bypass no longer applied and the gate blocked all M15 trades indefinitely, killing trading for the entire day.
+> **Motivation 1:** Phase 17.A cold-start bypass only applied when `h1_bias` was `None`. After ~1 hour, H1 analysis runs but produces 0 signals (buy_count=0, sell_count=0), converting bias to `Some(...)`. From that point forward, the bypass no longer applied and the gate blocked all M15 trades indefinitely.
+> 
+> **Motivation 2:** Multi-position concurrent trading exposed notification spam: 5+ Telegram alerts per single trade closure. Root cause: OPU stream path and REST close path both sending notifications for the same trade, with Lightstreamer replays doubling the events.
 
 | # | Task | Owner | Status | Notes |
 |---|------|-------|--------|-------|
 | 17.A.1 | Extend VOLATILE bypass to H1-zero case | Claude | ✅ Done | In `analysis.rs` line 1654–1674, added same bypass logic to `Some(bias) if bias.buy_count==0 && bias.sell_count==0` match arm: if VOLATILE regime AND strength >= 8.0, allow trade instead of blocking. Fixes perpetual gate block after H1 runs but fires no signals. Files: `src/engine/event_loop/analysis.rs` |
+| 17.A.2 | Fix 5x notification spam (OPU duplicate path) | Claude | ✅ Done | Removed Telegram notification from OPU stream handler (`streaming_client.rs`). Keep only authoritative REST close notification from `handlers.rs`. OPU events still update state and trigger internal events, just no duplicate Telegram. With 3 concurrent positions and overlapping closes, two notification paths created 5+ alerts per trade. Files: `src/api/streaming_client.rs` |
 
 ---
 
