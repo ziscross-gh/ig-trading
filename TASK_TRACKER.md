@@ -108,6 +108,20 @@ For the full history of completed work and debt items, see `TECH_DEBT_AUDIT.md`.
 
 ---
 
+## Phase 17.C — Exit Management Breathing Room (✅ 2026-04-18)
+
+> **Motivation:** 40-trade analysis showed 15/40 (37.5%) trades closed at entry=exit ($0 P&L) due to aggressive BE snap. Only 3/40 (7.5%) hit full TP. EURUSD net +4,200 but win rate only 33% because winners got snapped to BE before pullbacks that would have recovered. Real leverage for win-rate improvement is EXIT management, not entry bars.
+
+| # | Task | Owner | Status | Notes |
+|---|------|-------|--------|-------|
+| 17.C.1 | Loosen VOLATILE BE snap 0.5 → 0.7 | Claude | ✅ Done | Trade must now be 70% of SL distance in profit before snapping SL to breakeven (was 50%). Gives winners more room to breathe through normal pullbacks. Files: `config/default.toml`, `src/engine/config.rs`, `src/risk/mod.rs` |
+| 17.C.2 | Widen trailing stop min pips 5.0 → 7.5 | Claude | ✅ Done | `trailing_stop_min_pips` 5.0→7.5 — less aggressive ratchet step so trailing SL doesn't tighten on every tiny favorable move. Reduces API spam AND gives price more room to breathe. Files: same 3 files |
+| 17.C.3 | Confirm TRENDING-birth BE skip | Claude | ✅ Already done | Verified `handlers.rs:114` — `if birth_regime == "VOLATILE" && !be_snap_cooldown_active` — TRENDING/RANGING births already skip BE snap (only VOLATILE births get it). Let TP hit on trending trades. |
+
+**Expected outcome on historical 40-trade replay:** BE trades 15 → ~7, win rate 25% → ~42%, P&L unchanged signal rate (entries unchanged).
+
+---
+
 ## Phase 17.A-Fix — H1-Zero Bypass + Notification Spam (✅ 2026-04-18)
 
 > **Motivation 1:** Phase 17.A cold-start bypass only applied when `h1_bias` was `None`. After ~1 hour, H1 analysis runs but produces 0 signals (buy_count=0, sell_count=0), converting bias to `Some(...)`. From that point forward, the bypass no longer applied and the gate blocked all M15 trades indefinitely.

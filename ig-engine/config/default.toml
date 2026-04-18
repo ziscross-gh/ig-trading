@@ -37,8 +37,8 @@ sizing_method = "quarter_kelly"
 max_daily_trades = 20
 limited_risk_account = false
 use_trailing_stop = true
-trailing_stop_min_pips = 5.0
-volatile_breakeven_trigger = 0.5   # Phase 15.C — snap SL to BE when profit >= 50% of SL distance (VOLATILE trades)
+trailing_stop_min_pips = 7.5       # Phase 17.C — widened 5.0→7.5 (less aggressive ratchet, let winners breathe)
+volatile_breakeven_trigger = 0.7   # Phase 17.C — loosened 0.5→0.7 (need 70% of SL in profit before BE snap, was 50%)
 allowed_sessions = ["Asia", "London", "UsOverlap"]
 trading_hours_utc = [0, 21]
 allow_weekend_trading = true
