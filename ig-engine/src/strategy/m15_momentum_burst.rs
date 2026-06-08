@@ -80,37 +80,47 @@ impl M15Strategy for M15MomentumBurstStrategy {
         let atr = m15_snapshot.atr?;
         let h1_ema200 = h1_snapshot.ema_200?;
 
-        // Strength: base 7.0 + ADX contribution
+        let sl_dist = atr * self.atr_sl_multiplier;
+        let tp_dist = atr * self.atr_tp_multiplier;
+
+        // Phase 17.E (option A): dropped the MACD-histogram *expansion* requirement
+        // (macd_hist vs prev_macd_hist). In mature trends (ADX 50+) momentum decelerates,
+        // so the histogram is rarely still expanding even when the trend is intact — this
+        // made MomentumBurst go 100% silent in TRENDING/VOLATILE and pinned the M15 ensemble
+        // at 1/3 consensus (unreachable barrier of 2). We keep the three robust confirmations:
+        // RSI momentum zone + MACD sign + price vs H1 EMA200. prev_macd_hist is retained for
+        // the reason string and contributes to strength below.
+        let macd_decelerating = match () {
+            _ if macd_hist > 0.0 => macd_hist < prev_macd_hist, // bullish hist shrinking
+            _ if macd_hist < 0.0 => macd_hist > prev_macd_hist, // bearish hist shrinking
+            _ => false,
+        };
+        let bull = rsi >= self.rsi_min && rsi <= self.rsi_max && macd_hist > 0.0 && price > h1_ema200;
+        let bear = rsi >= (100.0 - self.rsi_max)
+            && rsi <= (100.0 - self.rsi_min)
+            && macd_hist < 0.0
+            && price < h1_ema200;
+        let direction = if bull {
+            Direction::Buy
+        } else if bear {
+            Direction::Sell
+        } else {
+            return None;
+        };
+
+        // Strength: base 7.0 + ADX contribution, minus a penalty when the histogram is
+        // decelerating (the old hard expansion gate is now a soft quality score instead).
         let adx = m15_snapshot.adx.unwrap_or(0.0);
-        let strength = 7.0_f64
+        let strength = (7.0_f64
             + if adx > 40.0 {
                 2.0
             } else if adx > 30.0 {
                 1.0
             } else {
                 0.0
-            };
-
-        let sl_dist = atr * self.atr_sl_multiplier;
-        let tp_dist = atr * self.atr_tp_multiplier;
-
-        let direction = if rsi >= self.rsi_min
-            && rsi <= self.rsi_max
-            && macd_hist > 0.0
-            && macd_hist > prev_macd_hist
-            && price > h1_ema200
-        {
-            Direction::Buy
-        } else if rsi >= (100.0 - self.rsi_max)
-            && rsi <= (100.0 - self.rsi_min)
-            && macd_hist < 0.0
-            && macd_hist < prev_macd_hist
-            && price < h1_ema200
-        {
-            Direction::Sell
-        } else {
-            return None;
-        };
+            }
+            - if macd_decelerating { 1.5 } else { 0.0 })
+        .max(0.0);
 
         let (stop_loss, take_profit) = match &direction {
             Direction::Buy => (price - sl_dist, price + tp_dist),

@@ -248,6 +248,27 @@ These apply regardless of which AI tool is being used:
 
 ---
 
+## Model Routing (which model for which task)
+
+This project runs on **Claude Code CLI** and **Gemini CLI**. Pick the model that matches the task's
+risk and context profile — frontier reasoning where a wrong edit can silently break live trading,
+cheaper/faster models for mechanical work, large-context models for data crunching.
+
+| Task type | Use | Why |
+|-----------|-----|-----|
+| Engine/strategy/risk logic (event loop, consensus, regime, order/risk managers) | **Claude Opus** | Multi-file async + borrow-checker reasoning; a wrong edit can kill trading for weeks |
+| Live log diagnosis / root-causing stalls | **Claude Opus** (Sonnet if budget-tight) | Needs hypothesis → instrument → verify loops |
+| Routine edits, doc sync (TASK_TRACKER/AGENTS/etc.), config tweaks | **Claude Sonnet** | Fast, cheap, deterministic — no deep reasoning needed |
+| Python ML pipeline (regime classifier, backtests, feature eng.) | **Gemini** | Large context for data files; cheaper on long numeric tables |
+| Bulk log/CSV scanning, big-context summarization | **Gemini** (long context) | Cost-efficient on huge inputs |
+| One-off shell / cron / launchd ops | **Claude Sonnet/Haiku** | Mechanical; frontier model unnecessary |
+
+**Rule of thumb:** *Opus for anything touching trade-entry logic or risk; Sonnet for edits/docs/ops;
+Gemini for Python ML + large-context data crunching.* Never tune a live strategy gate or risk rule on
+a cheaper model without a human sign-off.
+
+---
+
 ## Current Status
 
 Phases 1–15 + 14.A–I complete. Engine live on demo account, actively trading VOLATILE regime via M15 scalp tier. Key systems:

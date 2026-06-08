@@ -1231,6 +1231,14 @@ pub async fn run(
                 // Fetch new M15 candles for each epic and update M15 indicators.
                 // Self-heal: if indicators not warmed up (startup warmup failed due to rate limit
                 // or missing disk cache), fetch full 250-bar history on this tick instead of 5.
+                //
+                // Phase 17.E — analyze_market_m15 ITSELF iterates over all configured epics
+                // internally, so calling it inside this per-epic for-loop produced
+                // O(epics²) redundant analyses (3 epics → 9 analyses per refresh tick).
+                // Instead: refresh data per epic, then call analyze_market_m15 ONCE after
+                // the loop. Track whether any epic became analyzable so we don't spin
+                // when nothing changed.
+                let mut should_analyze_m15 = false;
                 for epic in &config.markets.epics.clone() {
                     let needs_warmup = {
                         let s = state.read().await;
@@ -1239,39 +1247,28 @@ pub async fn run(
                             .map(|ind| !ind.is_warmed_up())
                             .unwrap_or(true)
                     };
-                    // Self-heal backoff: if a recent self-heal attempt was rate-limited,
-                    // skip the API call and fall through to tick-warmed fallback analysis.
-                    // Tick accumulator is building bars locally regardless — no API needed.
-                    if needs_warmup {
-                        let in_backoff = m15_self_heal_backoff.get(epic.as_str())
-                            .map(|t| t.elapsed() < std::time::Duration::from_secs(1800))
-                            .unwrap_or(false);
-                        if in_backoff {
-                            debug!("[M15] {} — self-heal in 30-min backoff (rate limited), tick accumulator is building bars", epic);
-                            let is_warmed = {
-                                let s = state.read().await;
-                                s.markets.indicators.get(epic.as_str())
-                                    .and_then(|tf| tf.get("MINUTE_15"))
-                                    .map(|ind| ind.is_warmed_up())
-                                    .unwrap_or(false)
-                            };
-                            if is_warmed {
-                                if let Err(ae) = analyze_market_m15(
-                                    &state,
-                                    &mut client,
-                                    &m15_strategies,
-                                    &m15_ensemble,
-                                    &mut risk_manager,
-                                    &order_manager,
-                                    &event_tx,
-                                    &config,
-                                    &telegram,
-                                ).await {
-                                    warn!("[M15] Error in M15 analysis (tick-warmed, backoff) for {}: {}", epic, ae);
-                                }
-                            }
-                            continue;
+                    // Backoff (Phase 17.D): if a recent API call was rate-limited, skip the
+                    // REST fetch and fall through to tick-warmed analysis. Tick accumulator
+                    // builds bars locally — no API needed. This applies UNCONDITIONALLY
+                    // (warmed or not) because IG's historical-data quota is account-wide and
+                    // resets weekly; hammering it during a 403 burst exhausts the quota for days.
+                    let in_backoff = m15_self_heal_backoff.get(epic.as_str())
+                        .map(|t| t.elapsed() < std::time::Duration::from_secs(3600))
+                        .unwrap_or(false);
+                    if in_backoff {
+                        debug!("[M15] {} — refresh in 60-min backoff (rate limited), tick accumulator building bars locally", epic);
+                        let is_warmed = {
+                            let s = state.read().await;
+                            s.markets.indicators.get(epic.as_str())
+                                .and_then(|tf| tf.get("MINUTE_15"))
+                                .map(|ind| ind.is_warmed_up())
+                                .unwrap_or(false)
+                        };
+                        if is_warmed {
+                            // Defer analyze_market_m15 to single call after the loop (Phase 17.E).
+                            should_analyze_m15 = true;
                         }
+                        continue;
                     }
 
                     let fetch_count = if needs_warmup { 250 } else { 5 };
@@ -1323,32 +1320,30 @@ pub async fn run(
                                 last_m15_candle_ts.insert(epic.clone(), newest_ts);
                                 debug!("[M15] {} — {} new bars, last_ts={}", epic, truly_new.len(), newest_ts);
 
-                                // Run M15 analysis for this epic now that indicators updated
-                                if let Err(e) = analyze_market_m15(
-                                    &state,
-                                    &mut client,
-                                    &m15_strategies,
-                                    &m15_ensemble,
-                                    &mut risk_manager,
-                                    &order_manager,
-                                    &event_tx,
-                                    &config,
-                                    &telegram,
-                                ).await {
-                                    warn!("[M15] Error in M15 analysis for {}: {}", epic, e);
-                                }
+                                // Defer analyze_market_m15 to single call after the loop (Phase 17.E).
+                                should_analyze_m15 = true;
                             }
                         }
                         Err(e) => {
+                            let err_str = e.to_string();
+                            // IG 403s arrive as IGError::RateLimitExceeded("Forbidden / Burst limit hit")
+                            // -> Display: "Rate limit exceeded: Forbidden / Burst limit hit".
+                            // Also catch the explicit weekly-quota errorCode if it bubbles through.
+                            let is_quota = err_str.contains("Rate limit exceeded")
+                                || err_str.contains("Forbidden")
+                                || err_str.contains("exceeded-account-historical-data-allowance")
+                                || err_str.contains("403");
                             debug!("[M15] Failed to fetch M15 candles for {}: {}", epic, e);
-                            // If this was a self-heal attempt, record backoff to stop hammering the API.
-                            // Tick accumulator will build the required bars in ~52 hours of operation.
-                            if needs_warmup {
+                            // Phase 17.D: ALWAYS back off on quota/403 errors, regardless of
+                            // needs_warmup. Without this, steady-state refresh hammers IG every
+                            // 60s × N epics = burns the weekly historical-data allowance in hours.
+                            if is_quota || needs_warmup {
                                 m15_self_heal_backoff.insert(epic.clone(), std::time::Instant::now());
                                 info!(
-                                    "[M15] {} — self-heal API failed (rate limited), backing off 30 min. \
+                                    "[M15] {} — API failed ({}), backing off 60 min. \
                                      Tick accumulator building bars locally — no action needed.",
-                                    epic
+                                    epic,
+                                    if is_quota { "rate limited / quota exceeded" } else { "self-heal failed" }
                                 );
                             }
                             // API failed — but if M15 indicators are already warmed up from
@@ -1361,21 +1356,30 @@ pub async fn run(
                                     .unwrap_or(false)
                             };
                             if is_warmed {
-                                if let Err(ae) = analyze_market_m15(
-                                    &state,
-                                    &mut client,
-                                    &m15_strategies,
-                                    &m15_ensemble,
-                                    &mut risk_manager,
-                                    &order_manager,
-                                    &event_tx,
-                                    &config,
-                                    &telegram,
-                                ).await {
-                                    warn!("[M15] Error in M15 analysis (tick-warmed) for {}: {}", epic, ae);
-                                }
+                                // Defer analyze_market_m15 to single call after the loop (Phase 17.E).
+                                should_analyze_m15 = true;
                             }
                         }
+                    }
+                }
+
+                // Phase 17.E — run M15 analysis ONCE per refresh tick (covers all epics
+                // internally). Previously this was called inside the per-epic loop AND
+                // analyze_market_m15 looped over epics internally → 3× redundant
+                // analysis on every tick. Now O(epics) instead of O(epics²).
+                if should_analyze_m15 {
+                    if let Err(e) = analyze_market_m15(
+                        &state,
+                        &mut client,
+                        &m15_strategies,
+                        &m15_ensemble,
+                        &mut risk_manager,
+                        &order_manager,
+                        &event_tx,
+                        &config,
+                        &telegram,
+                    ).await {
+                        warn!("[M15] Error in M15 analysis: {}", e);
                     }
                 }
             }

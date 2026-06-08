@@ -9,9 +9,8 @@ use lightstreamer_client::ls_client::{LightstreamerClient, LogType, Transport};
 use lightstreamer_client::subscription::{Snapshot, Subscription, SubscriptionMode};
 use lightstreamer_client::subscription_listener::SubscriptionListener;
 
-use crate::engine::state::{get_instrument_name, ClosedTrade, Direction, EngineState, MarketState};
+use crate::engine::state::{ClosedTrade, Direction, EngineState, MarketState};
 use crate::ipc::events::EngineEvent;
-use crate::notifications::telegram::TelegramNotifier;
 
 /// Internal event for the state worker
 pub enum StateUpdate {
@@ -269,7 +268,7 @@ pub fn spawn_state_worker(
                                 info!("OPU: position closed server-side: deal_id={}, epic={}, stream_pnl={:.2} (will recompute from prices)", opu.deal_id, opu.epic, opu.pnl);
                                 info!("OPU DELETED raw payload: {}", opu_str);
 
-                                let (closed_position, close_reason, final_pnl) = {
+                                let (closed_position, _close_reason, final_pnl) = {
                                     let mut s = state_worker.write().await;
 
                                     // Dedup: Lightstreamer replays the last OPU on reconnect.

@@ -1122,28 +1122,38 @@ pub async fn analyze_market_m15(
             .unwrap_or_default();
         let is_volatile_regime = regime_str == "VOLATILE";
 
-        // Run M15 strategies
+        // Run M15 strategies (Phase 17.E — promote per-strategy result to info!
+        // so we can see WHICH strategy is firing/silent — diagnostic for the
+        // "stuck at 1/3 consensus" issue blocking trades since Apr 28).
         let mut signals: Vec<Signal> = Vec::new();
+        let mut fired_names: Vec<&str> = Vec::new();
+        let mut silent_names: Vec<&str> = Vec::new();
         for strategy in m15_strategies {
-            if let Some(sig) =
-                strategy.evaluate_m15(epic, mid_price, &m15_snap, &h1_snap, &regime_str)
-            {
-                debug!(
-                    "[M15] {} signal from {}: {:?} strength={:.1}",
-                    epic,
-                    strategy.name(),
-                    sig.direction,
-                    sig.strength
-                );
-                signals.push(sig);
+            match strategy.evaluate_m15(epic, mid_price, &m15_snap, &h1_snap, &regime_str) {
+                Some(sig) => {
+                    info!(
+                        "[M15] [{}] FIRE {}: {:?} strength={:.1}",
+                        epic,
+                        strategy.name(),
+                        sig.direction,
+                        sig.strength
+                    );
+                    fired_names.push(strategy.name());
+                    signals.push(sig);
+                }
+                None => {
+                    silent_names.push(strategy.name());
+                }
             }
         }
 
         info!(
-            "[M15] [{}] Bar analysis: {}/{} M15 strategies fired signals",
+            "[M15] [{}] Bar analysis: {}/{} fired [{}] silent [{}]",
             epic,
             signals.len(),
-            m15_strategies.len()
+            m15_strategies.len(),
+            fired_names.join(","),
+            silent_names.join(",")
         );
 
         if signals.is_empty() {
