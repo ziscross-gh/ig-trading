@@ -28,7 +28,8 @@ context_market_ids = ["USDIND"]
 max_risk_per_trade = 0.5
 max_daily_loss_pct = 2.0
 max_weekly_drawdown_pct = 5.0
-max_open_positions = 5
+max_open_positions = 9
+max_positions_per_instrument = 3   # Allow up to 3 concurrent positions per epic (size scaled down proportionally)
 max_correlated_positions = 1
 max_margin_usage_pct = 20.0
 min_risk_reward = 2.5
@@ -36,8 +37,8 @@ sizing_method = "quarter_kelly"
 max_daily_trades = 20
 limited_risk_account = false
 use_trailing_stop = true
-trailing_stop_min_pips = 5.0
-volatile_breakeven_trigger = 0.5   # Phase 15.C — snap SL to BE when profit >= 50% of SL distance (VOLATILE trades)
+trailing_stop_min_pips = 7.5       # Phase 17.C — widened 5.0→7.5 (less aggressive ratchet, let winners breathe)
+volatile_breakeven_trigger = 0.7   # Phase 17.C — loosened 0.5→0.7 (need 70% of SL in profit before BE snap, was 50%)
 allowed_sessions = ["Asia", "London", "UsOverlap"]
 trading_hours_utc = [0, 21]
 allow_weekend_trading = true
@@ -56,7 +57,7 @@ h1_macro_trend_gate_enabled = true # Phase 15.B — block H1 entries that trade 
 h1_macro_trend_lookback = 5        # Phase 15.B — number of H1 closes used to compute slope (min 3)
 volatile_atr_sl_multiplier = 1.0   # Phase 15.D — wider SL for VOLATILE wave trades (1.0×ATR, R:R=2.5)
 volatile_atr_tp_multiplier = 2.5   # Phase 15.D — achievable TP for VOLATILE waves (2.5×ATR vs default 4.0×)
-post_trade_cooldown_secs = 1800    # Phase 15.E — block re-entry on same epic for 30 min after any TP/SL close
+post_trade_cooldown_secs = 300     # Phase 15.E — block re-entry on same epic for 5 min after any TP/SL close (reduced from 30 min to allow concurrent entries)
 require_h1_confirmation = true     # Phase 16.A — block M15 cold-start trades until H1 has established a direction
 
 # Regime cooldown — relax VOLATILE restrictions after prolonged VOLATILE persistence.
@@ -66,6 +67,13 @@ regime_cooldown_days = 7              # days before relaxation kicks in (comment
 regime_cooldown_sl_multiplier = 1.25  # between VOLATILE 1.0× and normal 1.5×
 regime_cooldown_tp_multiplier = 3.0   # between VOLATILE 2.5× and normal 4.0×
 regime_cooldown_disable_be_snap = true # skip aggressive BE snap after cooldown (trailing stop handles risk)
+
+# Ensemble signal floor — signals crushed below this strength by regime multipliers
+# are excluded from the consensus count and average strength calculation.
+# Rationale: MA_Crossover 8.0 × 0.3 = 2.4 in TRENDING poisons a 7.5-avg ensemble.
+# Excluding sub-floor signals means "this strategy is unreliable in this regime —
+# don't let it vote". Set to 0.0 to disable (revert to old behaviour).
+ensemble_signal_floor = 5.0
 
 [strategies.consensus_matrix]
 trending = { barrier = 3, min_strength = 7.5 }

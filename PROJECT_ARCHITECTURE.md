@@ -1,6 +1,6 @@
 # PROJECT_ARCHITECTURE.md — IG Trading Engine
 
-**Last updated:** 2026-03-17 (Phase 14 fully live — H1 gate, tick accumulator, self-heal)
+**Last updated:** 2026-04-03 (Phase 17 — trading perf fixes, regime cooldown system)
 **Scope:** Rust engine (`ig-engine/`) — bot + Telegram only (dashboard archived)
 
 ---
@@ -190,6 +190,12 @@ VOLATILE scalp:    min 2 strategies, avg strength ≥ 6.0 → 0.5× position (VO
 **Signal Boosters** (applied before regime multipliers):
 - ATR expansion: `bar_range > ATR × 1.5` → +1.0 to all signals
 - Key level proximity: price within 0.1% of round level ($50 Gold / 0.50 JPY / 0.005 FX) → ×1.2 breakout-aligned
+
+**Regime Cooldown** (Phase 17): When VOLATILE persists for `regime_cooldown_days` (default 7), the engine progressively relaxes VOLATILE restrictions:
+- SL multiplier: 1.0× → `regime_cooldown_sl_multiplier` (1.25×)
+- TP multiplier: 2.5× → `regime_cooldown_tp_multiplier` (3.0×)
+- Breakeven snap: disabled (`regime_cooldown_disable_be_snap`)
+- Persistence tracked in `data/regime_persistence.json` (per-instrument, records when regime last changed)
 
 ### `risk/`
 

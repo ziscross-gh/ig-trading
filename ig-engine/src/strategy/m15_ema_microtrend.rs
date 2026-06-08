@@ -62,6 +62,17 @@ impl M15Strategy for M15EmaMicrotrendStrategy {
         let h1_prev_ema_long = h1_snapshot.prev_ema_long?;
         let atr = m15_snapshot.atr?;
 
+        // Phase 17.E — exhaustion guard. EmaMicrotrend is a pure EMA-alignment trend-follower
+        // with no momentum/RSI filter, so in mature downtrends it kept voting Sell at RSI ~24–25
+        // (selling an exhausted move) while the momentum strategy (rightly) abstained — pinning the
+        // M15 ensemble at 1/3 consensus. Refusing entries in the exhaustion band both raises entry
+        // quality and re-aligns the ensemble (both strategies now abstain near exhaustion, both fire
+        // in healthy mid-trends). rsi defaults to Some(50) in IndicatorSnapshot, so this never blocks
+        // on missing data.
+        let rsi = m15_snapshot.rsi.unwrap_or(50.0);
+        const EXHAUSTION_OVERSOLD: f64 = 30.0;
+        const EXHAUSTION_OVERBOUGHT: f64 = 70.0;
+
         let adx = m15_snapshot.adx.unwrap_or(0.0);
         let strength = 7.5_f64
             + if adx > 35.0 {
@@ -77,14 +88,16 @@ impl M15Strategy for M15EmaMicrotrendStrategy {
 
         let direction = if ema_short > ema_long
             && ema_long > prev_ema_long        // M15 EMA21 slope positive
-            && h1_ema_long > h1_prev_ema_long
-        // H1 EMA21 slope positive (trend confirmation)
+            && h1_ema_long > h1_prev_ema_long  // H1 EMA21 slope positive (trend confirmation)
+            && rsi < EXHAUSTION_OVERBOUGHT
+        // don't buy into an overbought/exhausted move
         {
             Direction::Buy
         } else if ema_short < ema_long
             && ema_long < prev_ema_long        // M15 EMA21 slope negative
-            && h1_ema_long < h1_prev_ema_long
-        // H1 EMA21 slope negative
+            && h1_ema_long < h1_prev_ema_long  // H1 EMA21 slope negative
+            && rsi > EXHAUSTION_OVERSOLD
+        // don't sell into an oversold/exhausted move
         {
             Direction::Sell
         } else {
@@ -103,11 +116,12 @@ impl M15Strategy for M15EmaMicrotrendStrategy {
             strength,
             strategy: self.name().to_string(),
             reason: format!(
-                "M15 EMA9={:.4} vs EMA21={:.4} slope={:+.5} H1_slope={:+.5} ADX={:.1}",
+                "M15 EMA9={:.4} vs EMA21={:.4} slope={:+.5} H1_slope={:+.5} RSI={:.1} ADX={:.1}",
                 ema_short,
                 ema_long,
                 ema_long - prev_ema_long,
                 h1_ema_long - h1_prev_ema_long,
+                rsi,
                 adx
             ),
             price,

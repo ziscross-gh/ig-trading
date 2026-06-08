@@ -109,6 +109,8 @@ pub async fn handle_position_monitoring(
                             }
                         });
 
+                    // Only snap to BE for VOLATILE-birth positions. TRENDING/RANGING
+                    // births have wider SL/TP; aggressive BE snap cuts winners short.
                     if birth_regime == "VOLATILE" && !be_snap_cooldown_active {
                         let profit_dist = match position.direction {
                             Direction::Buy => current_price - position.open_price,
@@ -319,6 +321,8 @@ pub async fn handle_position_monitoring(
                     s.add_closed_trade(closed_trade.clone());
                     // Set re-entry cooldown
                     s.set_trade_cooldown(&position.epic, cooldown_secs);
+                    // Persist daily stats so restarts don't lose the day's P&L
+                    s.save_daily_stats();
                 }
 
                 {

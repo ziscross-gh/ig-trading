@@ -1,12 +1,79 @@
 # TASK_TRACKER.md — IG Trading Engine
 
-**Last updated:** 2026-04-03 (Phase 17 — Trading performance fixes: breakeven snap loosened, VOLATILE SL/TP widened, M15 consensus raised, USDJPY tightened, SUNGOLD removed, regime cooldown system added)
-**Current phase:** Production-ready + Active trading. VOLATILE regime live + cooldown system. Gold strong-trend fix deployed.
-**Current focus:** 🤖 Engine live & trading | 📊 Gold momentum gate active | 🔄 Regime cooldown active (7-day VOLATILE → relaxed SL/TP) | 🕐 Trading hours: 07:00–20:00 UTC only
+**Last updated:** 2026-06-08 (Phase 17.E — M15 analysis amplification fix + per-strategy FIRE/silent telemetry; root-caused the 1/3-consensus stall)
+**Current phase:** Production-ready + Active trading. VOLATILE regime live + cooldown system. Concurrent multi-position mode live. H1 gate dual bypass (cold-start + zero-signal).
+**Current focus:** 🤖 Engine live & trading | 📊 Multi-position mode: max 3/instrument at 1/3 size | 🔄 Regime cooldown active (7-day VOLATILE → relaxed SL/TP) | 🕐 Trading hours: 07:00–20:00 UTC only | 🚪 H1 gate: VOLATILE bypass for 0-signal & cold-start
 
 > 📦 Dashboard (`src/`) is **archived** — not maintained. All dashboard tasks removed.
 
 For the full history of completed work and debt items, see `TECH_DEBT_AUDIT.md`.
+
+---
+
+## Phase 17.E — M15 Analysis Amplification Fix + Per-Strategy Telemetry (✅ 2026-06-08)
+
+> **Motivation:** After 17.D restored signals, the M15 ensemble still placed no trades — every bar
+> stalled at 1/3 consensus (barrier ≥2 never reached). Needed to (1) stop redundant analysis and
+> (2) identify *which* strategies stay silent.
+
+**Fix #1 — O(epics²) → O(epics) analysis amplification** (`event_loop/mod.rs`):
+- `analyze_market_m15()` already loops over all epics internally, but it was being called *inside*
+  the per-epic refresh loop (3 inline call sites: backoff path, happy path, error fallback).
+  → analysis ran ~3× per refresh tick.
+- Replaced all three inline calls with `should_analyze_m15 = true;` flag, then a single call after
+  the for-loop. Verified: each epic now gets exactly **1 bar analysis per minute** (was ~3).
+
+**Fix #2 — Per-strategy FIRE/silent telemetry** (`event_loop/analysis.rs` ~line 1125):
+- Promoted per-strategy result to INFO. Each bar now logs:
+  `[M15] [EPIC] Bar analysis: N/3 fired [names] silent [names]`
+
+**Diagnostic result (root cause of the 1/3 stall):**
+| Strategy | Status | Why |
+|----------|--------|-----|
+| `M15_EmaMicrotrend` | ✅ Fires (only one) | Always Sell strength=9.0 — sole active vote |
+| `M15_BollingerReversion` | ❌ 100% silent | Hard-gated **RANGING-only**; live regimes are TRENDING (EURUSD, ADX 56.9) / VOLATILE (USDJPY) → returns `None` immediately |
+| `M15_MomentumBurst` | ❌ Silent | 4-way compound gate (RSI zone + MACD hist *expanding* + price vs H1 EMA200). RSI is in the bearish zone but MACD histogram isn't expanding in a mature trend → no fire |
+
+> **Conclusion:** Consensus barrier ≥2 was mathematically unreachable in TRENDING/VOLATILE because
+> only EmaMicrotrend was ever eligible — Bollinger is regime-locked to RANGING, and MomentumBurst's
+> MACD-expansion requirement rarely coincided.
+
+**Fix #3 — option A applied (`m15_momentum_burst.rs`, ✅ 2026-06-08):** Removed the hard MACD-histogram
+*expansion* gate (`macd_hist vs prev_macd_hist`). Entry now requires RSI momentum zone + MACD sign +
+price vs H1 EMA200. The expansion check survives as a **soft quality score**: a decelerating histogram
+subtracts 1.5 from strength (`macd_decelerating` flag) instead of vetoing the signal. Min strength stays
+≥5.0 so it remains eligible past `ensemble_signal_floor`. Goal: let MomentumBurst co-fire with
+EmaMicrotrend in trends → reach barrier 2 → unblock M15 trades. Engine restarted (PID 25643).
+
+**Fix #4 — near-miss + missing-indicator diagnostics (✅ 2026-06-08):** Added two INFO logs to
+`m15_momentum_burst.rs` to root-cause why it stayed silent even after Fix #3. Result: NO missing
+indicators; the binding blockers are genuine signal disagreements (per-epic, 2026-06-08 10:15 UTC):
+
+| Epic | RSI | bear[25,45] | MACD hist <0 | price<H1EMA200 | Blocker |
+|------|-----|-------------|--------------|----------------|---------|
+| GOLD | 25.2 | ✓ | ✗ (+1.18) | ✓ | MACD histogram **positive** (momentum turning up) |
+| EURUSD | 24.0 | ✗ (<25) | ✗ (+0.0001) | ✓ | RSI **too oversold** + MACD positive |
+| USDJPY | 35.2 | ✓ | ✓ | ✗ (price>EMA200) | **No confirmed downtrend** |
+
+> **Root cause (revised):** MomentumBurst is working *as designed* — it correctly refuses to add a
+> Sell vote into exhausted/pulling-back moves. The structural issue is that **EmaMicrotrend has NO
+> exhaustion guard** and keeps voting Sell at RSI ~24–25 (selling the bottom). The two strategies
+> rarely agree because EmaMicrotrend fires late in exhausted trends where MomentumBurst (rightly)
+> abstains. Loosening MomentumBurst further would degrade entry quality / win rate.
+>
+**Fix #5 — EmaMicrotrend exhaustion guard (✅ 2026-06-08, user-approved option 1):**
+`m15_ema_microtrend.rs` now reads M15 RSI and refuses entries in the exhaustion band:
+no Sell if RSI < 30, no Buy if RSI > 70 (`EXHAUSTION_OVERSOLD`/`OVERBOUGHT` consts). RSI added to
+the reason string. Both temporary MomentumBurst diagnostics (`SILENT` / `MISSING-IND`) removed.
+
+> **Expected behaviour:** the low-quality 1/3 "sell the bottom" signals disappear — when a downtrend
+> is exhausted (RSI < 30) EmaMicrotrend now abstains too, so bars read 0/3 instead of 1/3 (no bad
+> entries). Genuine 2/3 consensus forms in **healthy mid-trends** (RSI 30–70 with momentum agreeing),
+> which is when trades should fire. "No trades right now" while all epics sit at RSI ~24–25 is the
+> guard working as intended, not a stall.
+
+**Docs — Model Routing added to AGENTS.md (✅ 2026-06-08):** new "Model Routing" section codifies
+Opus = engine/strategy/risk + live diagnosis, Sonnet = edits/docs/ops, Gemini = Python ML + large-context.
 
 ---
 
@@ -81,6 +148,76 @@ For the full history of completed work and debt items, see `TECH_DEBT_AUDIT.md`.
 **Net effect of 17.1 + 17.2:** BE snap trigger = 0.5 × 1.0 ATR = **0.5 ATR** (was 0.3 × 0.75 ATR = 0.225 ATR). 2.2× more breathing room before stop snaps to entry.
 
 **Net effect of 17.6 after 7 days VOLATILE:** SL relaxes to 1.25×ATR, TP to 3.0×ATR (R:R = 2.4), BE snap disabled entirely. Progressive normalization instead of permanent restriction.
+
+---
+
+## Phase 17.B — Multi-Position Concurrent Trading (✅ 2026-04-09)
+
+> **Motivation:** One-trade-at-a-time with 30-min cooldown means the engine sits idle for most of the day. Market
+> signal re-entries and scale-ins are impossible. User requested: spread risk across up to 3 smaller concurrent
+> positions per instrument instead of one full-size trade with a long cooldown.
+
+| # | Task | Owner | Status | Notes |
+|---|------|-------|--------|-------|
+| 17.B | Multi-position mode | Claude | ✅ Done | New `max_positions_per_instrument=3` config. "Already have a position" hard block replaced with per-epic count limit. Position size auto-divided by `max_positions_per_instrument` so total risk per epic stays constant. `post_trade_cooldown_secs` 1800→300 (5 min). `max_open_positions` 5→9. M15 extra 0.5× halving removed (1/3 scaling is sufficient). Files: `config/default.toml`, `risk/mod.rs`, `engine/config.rs` |
+
+---
+
+## Phase 17.A — VOLATILE Cold-Start H1 Gate Bypass (✅ 2026-04-05)
+
+> **Motivation:** After every engine restart, the H1 direction gate blocks ALL M15 trades for up to 1 hour until
+> the first H1 bar closes. H1 REST warmup often fails (IG 403 quota) so H1 data stays empty. In VOLATILE regime
+> where signals are already rare, losing 1 hour per restart is unacceptable.
+
+| # | Task | Owner | Status | Notes |
+|---|------|-------|--------|-------|
+| 17.A | VOLATILE cold-start bypass in H1 gate | Claude | ✅ Done | In `analysis.rs` `analyze_market_m15()`: when `h1_bias` is `None` (cold start) AND regime is VOLATILE AND `ensemble_signal.strength >= 8.0`, skip the block and log `VOLATILE cold-start bypass`. Only VOLATILE is bypassed — TRENDING/RANGING still require H1 confirmation. |
+
+---
+
+## Phase 17.C — Exit Management Breathing Room (✅ 2026-04-18)
+
+> **Motivation:** 40-trade analysis showed 15/40 (37.5%) trades closed at entry=exit ($0 P&L) due to aggressive BE snap. Only 3/40 (7.5%) hit full TP. EURUSD net +4,200 but win rate only 33% because winners got snapped to BE before pullbacks that would have recovered. Real leverage for win-rate improvement is EXIT management, not entry bars.
+
+| # | Task | Owner | Status | Notes |
+|---|------|-------|--------|-------|
+| 17.C.1 | Loosen VOLATILE BE snap 0.5 → 0.7 | Claude | ✅ Done | Trade must now be 70% of SL distance in profit before snapping SL to breakeven (was 50%). Gives winners more room to breathe through normal pullbacks. Files: `config/default.toml`, `src/engine/config.rs`, `src/risk/mod.rs` |
+| 17.C.2 | Widen trailing stop min pips 5.0 → 7.5 | Claude | ✅ Done | `trailing_stop_min_pips` 5.0→7.5 — less aggressive ratchet step so trailing SL doesn't tighten on every tiny favorable move. Reduces API spam AND gives price more room to breathe. Files: same 3 files |
+| 17.C.3 | Confirm TRENDING-birth BE skip | Claude | ✅ Already done | Verified `handlers.rs:114` — `if birth_regime == "VOLATILE" && !be_snap_cooldown_active` — TRENDING/RANGING births already skip BE snap (only VOLATILE births get it). Let TP hit on trending trades. |
+
+**Expected outcome on historical 40-trade replay:** BE trades 15 → ~7, win rate 25% → ~42%, P&L unchanged signal rate (entries unchanged).
+
+---
+
+## Phase 17.D — IG 403 Backoff Fix (✅ 2026-04-27)
+
+> **Symptom:** Engine ran continuously for 9 days but fired ZERO new signals after 2026-04-18T08:34 UTC. Log filled with 45,000+ `error.public-api.exceeded-account-historical-data-allowance` 403s — the IG weekly historical-data quota was exhausted and the engine kept hammering it.
+>
+> **Root cause #1 — Backoff gated on warmup state:** The M15 refresh loop (`event_loop/mod.rs:1224`) calls `get_price_history` for each epic every 60s. The existing self-heal backoff only triggered when `needs_warmup == true`. Once indicators warmed up from disk, every 60s tick × 3 epics retried the API with **no backoff** → 180 calls/min during a 403 burst, burning the weekly quota in hours and locking us out for days.
+>
+> **Root cause #2 — `is_quota` substring match never matched IG errors:** First fix attempted `err.contains("403") || err.contains("exceeded-account-historical-data-allowance")`, but in `api/errors.rs` the 403 status is wrapped into `IGError::RateLimitExceeded("Forbidden / Burst limit hit")`. The `Display` string is `"Rate limit exceeded: Forbidden / Burst limit hit"` — contains neither "403" nor the original errorCode. So backoff never engaged. Verified by zero `backing off` log lines after first deployment despite ongoing 403s.
+
+| # | Task | Owner | Status | Notes |
+|---|------|-------|--------|-------|
+| 17.D.1 | Make backoff check unconditional | Claude | ✅ Done | Moved `in_backoff` skip outside the `if needs_warmup` block. Steady-state refresh now also skips API when backoff active. Tick accumulator builds bars locally during backoff — no data loss. File: `src/engine/event_loop/mod.rs:1242-1275` |
+| 17.D.2 | Widen backoff window 30→60min | Claude | ✅ Done | IG historical-data quota is weekly; 30 min was too aggressive once quota exhausted. File: same |
+| 17.D.3 | Fix `is_quota` substring detection | Claude | ✅ Done | Now matches `"Rate limit exceeded"` / `"Forbidden"` / `"403"` / `"exceeded-account-historical-data-allowance"` — covers IG's actual `IGError::RateLimitExceeded` Display output. File: `src/engine/event_loop/mod.rs:1342-1358` |
+| 17.D.4 | Verify in production | Claude | ✅ Done | Single launchd-managed instance (PID 87239). Post-restart 403s = 0 after first backoff cycle (3 epics × 1 attempt = 3 unique 403s, then silent). 15+ `backing off 60 min` log lines confirm engagement. Bar analysis firing every 60s. |
+
+**Operational note:** Engine is managed by **launchd** (`~/Library/LaunchAgents/com.igengine.plist`, `KeepAlive=true`). Killing only the PID-file process leaves launchd to respawn a duplicate. **Always use `launchctl unload/load` to restart**, not `kill` + `nohup`. Earlier verification was misled by 3 zombie engines all running simultaneously.
+
+---
+
+## Phase 17.A-Fix — H1-Zero Bypass + Notification Spam (✅ 2026-04-18)
+
+> **Motivation 1:** Phase 17.A cold-start bypass only applied when `h1_bias` was `None`. After ~1 hour, H1 analysis runs but produces 0 signals (buy_count=0, sell_count=0), converting bias to `Some(...)`. From that point forward, the bypass no longer applied and the gate blocked all M15 trades indefinitely.
+> 
+> **Motivation 2:** Multi-position concurrent trading exposed notification spam: 5+ Telegram alerts per single trade closure. Root cause: OPU stream path and REST close path both sending notifications for the same trade, with Lightstreamer replays doubling the events.
+
+| # | Task | Owner | Status | Notes |
+|---|------|-------|--------|-------|
+| 17.A.1 | Extend VOLATILE bypass to H1-zero case | Claude | ✅ Done | In `analysis.rs` line 1654–1674, added same bypass logic to `Some(bias) if bias.buy_count==0 && bias.sell_count==0` match arm: if VOLATILE regime AND strength >= 8.0, allow trade instead of blocking. Fixes perpetual gate block after H1 runs but fires no signals. Files: `src/engine/event_loop/analysis.rs` |
+| 17.A.2 | Fix 5x notification spam (OPU duplicate path) | Claude | ✅ Done | Removed Telegram notification from OPU stream handler (`streaming_client.rs`). Keep only authoritative REST close notification from `handlers.rs`. OPU events still update state and trigger internal events, just no duplicate Telegram. With 3 concurrent positions and overlapping closes, two notification paths created 5+ alerts per trade. Files: `src/api/streaming_client.rs` |
 
 ---
 
@@ -220,10 +357,16 @@ For the full history of completed work and debt items, see `TECH_DEBT_AUDIT.md`.
 
 | Priority | Description | File(s) |
 |----------|-------------|---------|
-| Medium | Watchlist parse error: `Failed to decode IGWatchlistListResponse` — non-blocking, watchlist sync skips but engine continues | `event_loop/mod.rs` |
 | Low | IG 403 quota after multiple restarts — H1 REST warmup fails; tick accumulator builds M15 bars instead; ADX fallback (16.1) mitigates impact | `data/candles/` |
 | Low | Python test scripts (`test_ig_trade*.py`) fail in proxied/sandboxed environments — `ProxyError: 403 Forbidden`. Must run locally. | `test_ig_trade*.py` |
 | Low | rsa RUSTSEC-2023-0071 (Marvin Attack) — no upstream fix; ignored in audit.toml. Not exploitable in this context. | `Cargo.lock` |
+
+### Recently Fixed (2026-04-05)
+
+| Bug | Root Cause | Fix |
+|-----|-----------|-----|
+| Ensemble average poisoned by regime-crushed signals | Regime multipliers (e.g. MA_Crossover × 0.3 = 2.4 in TRENDING) left near-zero signals in the vote pool, dragging avg_strength below threshold even when 3+ valid signals agreed | New `ensemble_signal_floor = 5.0` in `StrategiesConfig`; signals below floor excluded from consensus count + avg before vote in `EnsembleVoter::vote_with_overrides`. Logged when signals are filtered. Config field in `default.toml`. |
+| VOLATILE M15 trades blocked entirely | `min_consensus=2` (global + instrument overrides) but only 1/3 M15 strategies ever fires per bar in VOLATILE → threshold never met | Runtime relaxation in `analysis.rs`: when `regime_str == "VOLATILE"`, `override_consensus` is decremented by 1 (floor 1). Global default and instrument overrides unchanged; logs `[M15] VOLATILE consensus relaxed: 2 → 1` |
 
 ### Recently Fixed (2026-03-20)
 

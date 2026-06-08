@@ -89,19 +89,45 @@ def _atr(high: pd.Series, low: pd.Series, close: pd.Series, n: int = 14) -> pd.S
     return tr.ewm(alpha=1/n, adjust=False).mean()
 
 def _hurst(returns: np.ndarray, max_lag: int = 20) -> float:
-    lags = list(range(2, min(max_lag, len(returns) // 2)))
-    if len(lags) < 3:
+    """
+    Hurst exponent via Rescaled Range (R/S) analysis.
+    H > 0.5 → trending (persistent momentum)
+    H < 0.5 → mean-reverting (anti-persistent)
+    H ≈ 0.5 → random walk
+    """
+    N = len(returns)
+    if N < 20:
         return 0.5
-    tau = []
-    for lag in lags:
-        std = np.std(returns[lag:] - returns[:-lag])
-        tau.append(std if std > 0 else np.nan)
-    tau = np.array(tau, dtype=float)
-    valid = ~np.isnan(tau)
-    if valid.sum() < 3:
+    # Use chunk sizes from 8 up to N//2
+    chunk_sizes = []
+    s = 8
+    while s <= N // 2:
+        chunk_sizes.append(s)
+        s = int(s * 1.5)
+    if len(chunk_sizes) < 3:
+        return 0.5
+    rs_values = []
+    for cs in chunk_sizes:
+        n_chunks = N // cs
+        if n_chunks < 1:
+            continue
+        rs_chunk = []
+        for i in range(n_chunks):
+            chunk = returns[i * cs : (i + 1) * cs]
+            mean_c = np.mean(chunk)
+            cumdev = np.cumsum(chunk - mean_c)
+            R = np.max(cumdev) - np.min(cumdev)
+            S = np.std(chunk, ddof=1)
+            if S > 0:
+                rs_chunk.append(R / S)
+        if rs_chunk:
+            rs_values.append((cs, np.mean(rs_chunk)))
+    if len(rs_values) < 3:
         return 0.5
     try:
-        slope = np.polyfit(np.log(np.array(lags)[valid]), np.log(tau[valid]), 1)[0]
+        log_n = np.log([v[0] for v in rs_values])
+        log_rs = np.log([v[1] for v in rs_values])
+        slope = np.polyfit(log_n, log_rs, 1)[0]
         return float(np.clip(slope, 0.1, 0.9))
     except Exception:
         return 0.5
@@ -184,6 +210,23 @@ def run_once() -> dict:
         regime     = model.predict(X)[0]
         proba      = model.predict_proba(X)[0]
         confidence = float(max(proba))
+
+        # Hurst-based override: the ML model was trained with broken hurst=0.1,
+        # so it can't use Hurst to distinguish regimes. Apply rule-based correction:
+        #   H >= 0.65 + ADX >= 25 → TRENDING (persistent momentum confirmed by ADX)
+        #   H <= 0.35            → RANGING  (strong mean-reversion)
+        hurst_val = feats["hurst"]
+        adx_val   = feats["adx_14"]
+        override  = None
+        if hurst_val >= 0.65 and adx_val >= 25.0 and regime == "VOLATILE":
+            override = "TRENDING"
+            confidence = max(confidence, 0.70)
+        elif hurst_val <= 0.35 and regime == "VOLATILE":
+            override = "RANGING"
+            confidence = max(confidence, 0.60)
+        if override:
+            print(f"    ↳ Hurst override: {regime} → {override} (H={hurst_val:.2f}, ADX={adx_val:.1f})")
+            regime = override
 
         epic = cfg["epic"]
         output[epic] = {

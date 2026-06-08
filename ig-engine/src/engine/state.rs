@@ -58,7 +58,6 @@ pub fn get_instrument_name(epic: &str) -> String {
         "CS.D.CFDGOLD.CMG.IP" => "Spot Gold ($1)".to_string(),
         "CS.D.GOL.CFD" => "Spot Gold".to_string(),
         "CS.D.XAUUSD.CFD" | "CS.D.GOLDUSD.CFD" => "Gold (XAU/USD)".to_string(),
-        "IX.D.SUNGOLD.CFI.IP" => "Weekend Spot Gold".to_string(),
         // Forex — demo (*.CSD.IP) and live (*.CFD) variants
         "CS.D.EURUSD.CSD.IP" | "CS.D.EURUSD.CFD" => "EUR/USD".to_string(),
         "CS.D.GBPUSD.CSD.IP" | "CS.D.GBPUSD.CFD" => "GBP/USD".to_string(),
@@ -230,6 +229,11 @@ pub struct TradeState {
     /// while price is potentially reversing.
     #[serde(default)]
     pub cooldowns: HashMap<String, DateTime<Utc>>,
+    /// Deal IDs of positions closed in this session (OPU deduplication).
+    /// Lightstreamer can replay the last OPU on reconnect — this set prevents
+    /// double-processing and double Telegram notifications.
+    #[serde(skip)]
+    pub recently_closed_deal_ids: std::collections::HashSet<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -414,6 +418,7 @@ impl EngineState {
                 signal_records: VecDeque::new(),
                 history: VecDeque::new(),
                 cooldowns: HashMap::new(),
+                recently_closed_deal_ids: std::collections::HashSet::new(),
             },
             metrics: MetricsState {
                 daily: DailyStats {
@@ -598,5 +603,33 @@ impl EngineState {
             .ok()
             .and_then(|s| serde_json::from_str::<Vec<Position>>(&s).ok())
             .unwrap_or_default()
+    }
+
+    /// Persist today's DailyStats to disk so engine restarts don't wipe the day's P&L.
+    /// Written to data/recovery/daily_stats.json on every trade close.
+    pub fn save_daily_stats(&self) {
+        let path = "data/recovery/daily_stats.json";
+        if let Some(dir) = std::path::Path::new(path).parent() {
+            let _ = std::fs::create_dir_all(dir);
+        }
+        match serde_json::to_string_pretty(&self.metrics.daily) {
+            Ok(json) => {
+                if let Err(e) = std::fs::write(path, json) {
+                    tracing::warn!("Failed to persist daily stats: {}", e);
+                }
+            }
+            Err(e) => tracing::warn!("Failed to serialize daily stats: {}", e),
+        }
+    }
+
+    /// Load persisted DailyStats from disk.
+    /// Returns None if the file is missing, unparseable, or from a different UTC date.
+    pub fn load_persisted_daily_stats() -> Option<DailyStats> {
+        let path = "data/recovery/daily_stats.json";
+        let today = Utc::now().format("%Y-%m-%d").to_string();
+        std::fs::read_to_string(path)
+            .ok()
+            .and_then(|s| serde_json::from_str::<DailyStats>(&s).ok())
+            .filter(|stats| stats.date == today)
     }
 }

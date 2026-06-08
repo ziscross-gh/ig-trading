@@ -24,7 +24,7 @@ An autonomous algorithmic trading system for **IG Markets**, built with:
 
 > 📦 A Next.js dashboard exists in `src/` but is **archived** — not maintained. Focus is bot engine + Telegram only.
 
-**Current status:** Phases 1–17 + 14.A–I complete. Demo mode live and trading. M15 dual-timeframe scheme fully operational. Regime cooldown system active (7-day VOLATILE → relaxed SL/TP). RL position sizing (8.6) is the only long-term remaining item.
+**Current status:** Phases 1–17 + 14.A–I complete. Demo mode live and trading. M15 dual-timeframe scheme fully operational. Regime cooldown system active (7-day VOLATILE → relaxed SL/TP). Concurrent multi-position mode: up to 3 positions per instrument at 1/3 size each. RL position sizing (8.6) is the only long-term remaining item.
 
 ---
 
@@ -151,7 +151,8 @@ Weights auto-adjust every 10 trades via `AdaptiveWeightManager` (rolling 50-trad
 - Max risk per trade: 1% of balance
 - Max daily loss: 3% → trading halts
 - Max weekly drawdown: 5%
-- Max open positions: 3
+- Max open positions: 9 (3 per instrument × 3 instruments)
+- Max positions per instrument: 3 (each 1/3 normal size — same total risk)
 - Max margin usage: 30%
 - Min risk/reward: 1.5
 - Circuit breaker: size reduction after 3 losses, 60 min pause after 5
@@ -244,6 +245,27 @@ These apply regardless of which AI tool is being used:
     - Always update TASK_TRACKER.md (flip status, update header, move fixed bugs).
     - Only update PROJECT_ARCHITECTURE.md if architecture changed; TECH_DEBT_AUDIT.md if debt resolved; AI_ROADMAP.md if Phase 8.x changed.
     - See CLAUDE.md / GEMINI.md for the full checklist and operational commands.
+
+---
+
+## Model Routing (which model for which task)
+
+This project runs on **Claude Code CLI** and **Gemini CLI**. Pick the model that matches the task's
+risk and context profile — frontier reasoning where a wrong edit can silently break live trading,
+cheaper/faster models for mechanical work, large-context models for data crunching.
+
+| Task type | Use | Why |
+|-----------|-----|-----|
+| Engine/strategy/risk logic (event loop, consensus, regime, order/risk managers) | **Claude Opus** | Multi-file async + borrow-checker reasoning; a wrong edit can kill trading for weeks |
+| Live log diagnosis / root-causing stalls | **Claude Opus** (Sonnet if budget-tight) | Needs hypothesis → instrument → verify loops |
+| Routine edits, doc sync (TASK_TRACKER/AGENTS/etc.), config tweaks | **Claude Sonnet** | Fast, cheap, deterministic — no deep reasoning needed |
+| Python ML pipeline (regime classifier, backtests, feature eng.) | **Gemini** | Large context for data files; cheaper on long numeric tables |
+| Bulk log/CSV scanning, big-context summarization | **Gemini** (long context) | Cost-efficient on huge inputs |
+| One-off shell / cron / launchd ops | **Claude Sonnet/Haiku** | Mechanical; frontier model unnecessary |
+
+**Rule of thumb:** *Opus for anything touching trade-entry logic or risk; Sonnet for edits/docs/ops;
+Gemini for Python ML + large-context data crunching.* Never tune a live strategy gate or risk rule on
+a cheaper model without a human sign-off.
 
 ---
 

@@ -51,6 +51,9 @@ fn default_regime_cooldown_tp_multiplier() -> Option<f64> {
 fn default_regime_cooldown_disable_be_snap() -> Option<bool> {
     Some(true)
 }
+fn default_ensemble_signal_floor() -> f64 {
+    5.0
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EngineConfig {
@@ -196,6 +199,16 @@ pub struct StrategiesConfig {
     /// Whether to disable the breakeven snap after cooldown (let trailing stop handle risk).
     #[serde(default = "default_regime_cooldown_disable_be_snap")]
     pub regime_cooldown_disable_be_snap: Option<bool>,
+
+    // ── Ensemble signal floor ────────────────────────────────────────────────
+    // After regime multipliers crush a strategy's signal (e.g. MA_Crossover 8.0
+    // × 0.3 = 2.4 in TRENDING), that crushed signal poisons the ensemble average.
+    // Signals below this floor are excluded from the consensus count AND the
+    // average strength calculation — effectively "this strategy is unreliable in
+    // this regime, don't let it vote". Default 5.0; set to 0.0 to disable.
+    /// Minimum post-multiplier signal strength to be included in ensemble voting.
+    #[serde(default = "default_ensemble_signal_floor")]
+    pub ensemble_signal_floor: f64,
 }
 
 /// Regime-specific consensus threshold entry (Phase 12.1).
@@ -445,7 +458,8 @@ impl Default for EngineConfig {
                 max_daily_loss_pct: 3.0,
                 max_weekly_drawdown_pct: 5.0,
                 max_daily_trades: 20,
-                max_open_positions: 3,
+                max_open_positions: 9,
+                max_positions_per_instrument: 3,
                 max_correlated_positions: 1,
                 max_margin_usage_pct: 30.0,
                 min_risk_reward: 1.5,
@@ -461,8 +475,8 @@ impl Default for EngineConfig {
                 limited_risk_account: true,
                 min_guaranteed_stop_distance: None,
                 use_trailing_stop: false,
-                trailing_stop_min_pips: 5.0,
-                volatile_breakeven_trigger: 0.5,
+                trailing_stop_min_pips: 7.5,
+                volatile_breakeven_trigger: 0.7,
                 allowed_sessions: vec![
                     crate::engine::state::Session::Asia,
                     crate::engine::state::Session::London,
@@ -631,6 +645,7 @@ impl Default for EngineConfig {
                 regime_cooldown_sl_multiplier: Some(1.25),
                 regime_cooldown_tp_multiplier: Some(3.0),
                 regime_cooldown_disable_be_snap: Some(true),
+                ensemble_signal_floor: 5.0,
             },
             trading_hours: TradingHoursConfig {
                 start: "07:00".to_string(),

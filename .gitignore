@@ -33,3 +33,11 @@ test_ig_trade*.py
 trigger_trade.sh
 tsconfig.tsbuildinfo
 next-env.d.ts
+
+# Runtime artifacts
+ig-engine/*.pid
+ig-engine/engine_test*.log
+ig-engine/ig_architecture_summary.md
+screenshot.png
+GEMINI.md
+CLAUDE.md

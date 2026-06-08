@@ -1120,29 +1120,40 @@ pub async fn analyze_market_m15(
         let regime_str = crate::regime::read_regime(epic.as_str())
             .map(|r| r.kind.to_string())
             .unwrap_or_default();
+        let is_volatile_regime = regime_str == "VOLATILE";
 
-        // Run M15 strategies
+        // Run M15 strategies (Phase 17.E — promote per-strategy result to info!
+        // so we can see WHICH strategy is firing/silent — diagnostic for the
+        // "stuck at 1/3 consensus" issue blocking trades since Apr 28).
         let mut signals: Vec<Signal> = Vec::new();
+        let mut fired_names: Vec<&str> = Vec::new();
+        let mut silent_names: Vec<&str> = Vec::new();
         for strategy in m15_strategies {
-            if let Some(sig) =
-                strategy.evaluate_m15(epic, mid_price, &m15_snap, &h1_snap, &regime_str)
-            {
-                debug!(
-                    "[M15] {} signal from {}: {:?} strength={:.1}",
-                    epic,
-                    strategy.name(),
-                    sig.direction,
-                    sig.strength
-                );
-                signals.push(sig);
+            match strategy.evaluate_m15(epic, mid_price, &m15_snap, &h1_snap, &regime_str) {
+                Some(sig) => {
+                    info!(
+                        "[M15] [{}] FIRE {}: {:?} strength={:.1}",
+                        epic,
+                        strategy.name(),
+                        sig.direction,
+                        sig.strength
+                    );
+                    fired_names.push(strategy.name());
+                    signals.push(sig);
+                }
+                None => {
+                    silent_names.push(strategy.name());
+                }
             }
         }
 
         info!(
-            "[M15] [{}] Bar analysis: {}/{} M15 strategies fired signals",
+            "[M15] [{}] Bar analysis: {}/{} fired [{}] silent [{}]",
             epic,
             signals.len(),
-            m15_strategies.len()
+            m15_strategies.len(),
+            fired_names.join(","),
+            silent_names.join(",")
         );
 
         if signals.is_empty() {
@@ -1459,6 +1470,10 @@ pub async fn analyze_market_m15(
         // trends, the remaining signals are pure momentum — requiring 2/3 of the ORIGINAL count
         // unfairly penalises the remaining signal(s). All surviving signals must agree (handled
         // by vote_with_overrides), so consensus=1 just means "at least one momentum signal agrees".
+        //
+        // VOLATILE regime exception: in VOLATILE only 1 out of 3 M15 strategies fires per bar,
+        // so a min_consensus=2 baseline would permanently block all M15 trades. We relax by
+        // subtracting 1 (floor 1) so that a single strong signal can open a position.
         let maybe_signal = {
             let ov_opt = config.strategies.instrument_overrides.get(epic.as_str());
             let override_consensus = if mean_rev_suppressed {
@@ -1466,6 +1481,20 @@ pub async fn analyze_market_m15(
                 Some(1usize)
             } else {
                 ov_opt.and_then(|o| o.min_consensus)
+            };
+            // VOLATILE fallback: relax consensus by 1 (min 1) so a single M15 signal suffices.
+            let override_consensus = if regime_str == "VOLATILE" {
+                let base = override_consensus.unwrap_or(m15_ensemble.min_consensus);
+                let relaxed = base.saturating_sub(1).max(1);
+                if relaxed < base {
+                    info!(
+                        "[M15] {} VOLATILE consensus relaxed: {} → {}",
+                        epic, base, relaxed
+                    );
+                }
+                Some(relaxed)
+            } else {
+                override_consensus
             };
             let override_strength = ov_opt.and_then(|o| o.min_avg_strength);
             if override_consensus.is_some() || override_strength.is_some() {
@@ -1600,13 +1629,33 @@ pub async fn analyze_market_m15(
             // Phase 16.A: when require_h1_confirmation=true, also block during cold
             // start (no H1 data yet) and when H1 ran but zero strategies fired.
             // Skipped when bypass_h1_gate=true (ADX strong-trend price-slope agrees).
+            // Phase 17.A: VOLATILE cold-start bypass — when H1 is not yet warmed and
+            // the regime is VOLATILE (where H1 direction is choppy / unreliable), allow
+            // strong M15 signals (strength >= 8.0) through rather than sitting idle for
+            // up to 1 hour after every restart.
             if config.strategies.h1_direction_gate_enabled && !bypass_h1_gate {
+                debug!(
+                    "[M15] [{}] H1 gate check: regime={}, strength={:.2}, bypass=false",
+                    epic, regime_str, ensemble_signal.strength
+                );
                 let blocked_reason: Option<String> = {
                     let s = state.read().await;
                     match s.markets.h1_bias.get(epic.as_str()) {
                         None => {
                             // Cold start: H1 analysis has not run yet for this epic.
-                            if config.strategies.require_h1_confirmation {
+                            // VOLATILE bypass: H1 direction is unreliable in choppy regimes,
+                            // so a high-strength M15 signal is sufficient on its own.
+                            const VOLATILE_COLD_START_BYPASS_STRENGTH: f64 = 8.0;
+                            if is_volatile_regime
+                                && ensemble_signal.strength >= VOLATILE_COLD_START_BYPASS_STRENGTH
+                            {
+                                tracing::info!(
+                                    "[M15] {} VOLATILE cold-start bypass: H1 not warmed, allowing strong signal (strength={:.2})",
+                                    epic,
+                                    ensemble_signal.strength
+                                );
+                                None
+                            } else if config.strategies.require_h1_confirmation {
                                 Some(format!(
                                     "H1 direction gate: no H1 data yet (cold start) — blocking M15 {:?} until H1 warms up",
                                     ensemble_signal.direction
@@ -1617,7 +1666,20 @@ pub async fn analyze_market_m15(
                         }
                         Some(bias) if bias.buy_count == 0 && bias.sell_count == 0 => {
                             // H1 ran but no strategies fired — direction unknown.
-                            if config.strategies.require_h1_confirmation {
+                            // In VOLATILE regime, high-strength signals are reliable enough to trade
+                            // without H1 confirmation (same as cold-start bypass).
+                            const VOLATILE_BYPASS_STRENGTH: f64 = 8.0;
+                            if is_volatile_regime
+                                && ensemble_signal.strength >= VOLATILE_BYPASS_STRENGTH
+                            {
+                                tracing::info!(
+                                    "[M15] {} VOLATILE H1-zero bypass: H1 has 0 signals but strength={:.2} >= {}, allowing trade",
+                                    epic,
+                                    ensemble_signal.strength,
+                                    VOLATILE_BYPASS_STRENGTH
+                                );
+                                None
+                            } else if config.strategies.require_h1_confirmation {
                                 Some(format!(
                                     "H1 direction gate: H1 total signals = 0 (direction unknown) — blocking M15 {:?}",
                                     ensemble_signal.direction
