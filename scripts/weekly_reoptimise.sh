@@ -43,18 +43,18 @@ cd "$PROJECT_DIR"
 
 # ── Step 1: Refresh 6 months of historical data ───────────────────────────────
 log "Step 1/4 — Fetching 6-month OHLCV data..."
-python scripts/fetch_historical_data.py --months 6
+python3 scripts/fetch_historical_data.py --months 6
 log "Data fetch complete."
 
 # ── Step 2: Run grid search, write results JSON ───────────────────────────────
 log "Step 2/4 — Running parameter optimizer..."
-python scripts/optimize.py --output "$RESULTS_JSON"
+python3 scripts/optimize.py --output "$RESULTS_JSON"
 log "Optimizer complete. Results → $RESULTS_JSON"
 
 # ── Step 3: Compare vs current config, apply if improved ─────────────────────
 log "Step 3/4 — Comparing optimizer results to current config..."
 set +e
-python scripts/compare_params.py
+python3 scripts/compare_params.py
 COMPARE_EXIT=$?
 set -e
 
