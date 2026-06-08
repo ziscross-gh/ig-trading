@@ -95,7 +95,8 @@ impl M15Strategy for M15MomentumBurstStrategy {
             _ if macd_hist < 0.0 => macd_hist > prev_macd_hist, // bearish hist shrinking
             _ => false,
         };
-        let bull = rsi >= self.rsi_min && rsi <= self.rsi_max && macd_hist > 0.0 && price > h1_ema200;
+        let bull =
+            rsi >= self.rsi_min && rsi <= self.rsi_max && macd_hist > 0.0 && price > h1_ema200;
         let bear = rsi >= (100.0 - self.rsi_max)
             && rsi <= (100.0 - self.rsi_min)
             && macd_hist < 0.0

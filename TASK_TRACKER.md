@@ -357,7 +357,6 @@ Opus = engine/strategy/risk + live diagnosis, Sonnet = edits/docs/ops, Gemini = 
 
 | Priority | Description | File(s) |
 |----------|-------------|---------|
-| Medium | Watchlist parse error: `Failed to decode IGWatchlistListResponse` — non-blocking, watchlist sync skips but engine continues | `event_loop/mod.rs` |
 | Low | IG 403 quota after multiple restarts — H1 REST warmup fails; tick accumulator builds M15 bars instead; ADX fallback (16.1) mitigates impact | `data/candles/` |
 | Low | Python test scripts (`test_ig_trade*.py`) fail in proxied/sandboxed environments — `ProxyError: 403 Forbidden`. Must run locally. | `test_ig_trade*.py` |
 | Low | rsa RUSTSEC-2023-0071 (Marvin Attack) — no upstream fix; ignored in audit.toml. Not exploitable in this context. | `Cargo.lock` |

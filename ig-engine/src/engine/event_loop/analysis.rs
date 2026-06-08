@@ -1647,8 +1647,7 @@ pub async fn analyze_market_m15(
                             // so a high-strength M15 signal is sufficient on its own.
                             const VOLATILE_COLD_START_BYPASS_STRENGTH: f64 = 8.0;
                             if is_volatile_regime
-                                && ensemble_signal.strength
-                                    >= VOLATILE_COLD_START_BYPASS_STRENGTH
+                                && ensemble_signal.strength >= VOLATILE_COLD_START_BYPASS_STRENGTH
                             {
                                 tracing::info!(
                                     "[M15] {} VOLATILE cold-start bypass: H1 not warmed, allowing strong signal (strength={:.2})",
@@ -1670,7 +1669,9 @@ pub async fn analyze_market_m15(
                             // In VOLATILE regime, high-strength signals are reliable enough to trade
                             // without H1 confirmation (same as cold-start bypass).
                             const VOLATILE_BYPASS_STRENGTH: f64 = 8.0;
-                            if is_volatile_regime && ensemble_signal.strength >= VOLATILE_BYPASS_STRENGTH {
+                            if is_volatile_regime
+                                && ensemble_signal.strength >= VOLATILE_BYPASS_STRENGTH
+                            {
                                 tracing::info!(
                                     "[M15] {} VOLATILE H1-zero bypass: H1 has 0 signals but strength={:.2} >= {}, allowing trade",
                                     epic,

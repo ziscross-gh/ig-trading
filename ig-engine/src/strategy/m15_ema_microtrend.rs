@@ -89,13 +89,15 @@ impl M15Strategy for M15EmaMicrotrendStrategy {
         let direction = if ema_short > ema_long
             && ema_long > prev_ema_long        // M15 EMA21 slope positive
             && h1_ema_long > h1_prev_ema_long  // H1 EMA21 slope positive (trend confirmation)
-            && rsi < EXHAUSTION_OVERBOUGHT     // don't buy into an overbought/exhausted move
+            && rsi < EXHAUSTION_OVERBOUGHT
+        // don't buy into an overbought/exhausted move
         {
             Direction::Buy
         } else if ema_short < ema_long
             && ema_long < prev_ema_long        // M15 EMA21 slope negative
             && h1_ema_long < h1_prev_ema_long  // H1 EMA21 slope negative
-            && rsi > EXHAUSTION_OVERSOLD       // don't sell into an oversold/exhausted move
+            && rsi > EXHAUSTION_OVERSOLD
+        // don't sell into an oversold/exhausted move
         {
             Direction::Sell
         } else {

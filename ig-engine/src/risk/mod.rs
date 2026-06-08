@@ -537,10 +537,7 @@ impl RiskManager {
         }
 
         // Check per-instrument position limit
-        let epic_position_count = open_positions
-            .iter()
-            .filter(|pos| pos.epic == epic)
-            .count();
+        let epic_position_count = open_positions.iter().filter(|pos| pos.epic == epic).count();
         if epic_position_count >= self.config.max_positions_per_instrument {
             let reason = format!(
                 "Max positions per instrument reached for {}: {} / {}",
