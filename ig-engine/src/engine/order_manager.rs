@@ -57,9 +57,28 @@ impl OrderManager {
         trade: &AdjustedTrade,
         currency: &str,
     ) -> Result<ExecutionResult> {
+        // Round the deal size to the instrument's allowed decimal precision BEFORE sending.
+        // position_sizer already floors to size_decimals, but downstream multipliers (1/3
+        // concurrent-position sizing, VOLATILE half-size, regime/alignment factors) are applied
+        // afterwards and can re-introduce long decimals — e.g. 11.66 / 3 = 3.8866666666666667 —
+        // which IG rejects with `validation.number.too-many-decimal-places.request.size`.
+        // This is the single execution choke point for every live trade path, so rounding here
+        // fixes all of them. All configured instruments use size_decimals = 2; fall back to 2.
+        let size_decimals = crate::risk::InstrumentSpec::from_epic_fallback(&trade.epic)
+            .map(|s| s.size_decimals)
+            .unwrap_or(2);
+        let size_factor = 10_f64.powi(size_decimals as i32);
+        let exec_size = (trade.size * size_factor).round() / size_factor;
+        if (exec_size - trade.size).abs() > f64::EPSILON {
+            info!(
+                "Rounded deal size {} → {} ({} dp) for IG API",
+                trade.size, exec_size, size_decimals
+            );
+        }
+
         info!(
             "Executing trade: {} {} {} @ SL={} TP={} ({})",
-            trade.direction, trade.size, trade.epic, trade.stop_loss, trade.take_profit, currency
+            trade.direction, exec_size, trade.epic, trade.stop_loss, trade.take_profit, currency
         );
 
         // Build the trade request
@@ -87,7 +106,7 @@ impl OrderManager {
         let request = IGTradeRequest {
             epic: trade.epic.clone(),
             direction: trade.direction.clone(),
-            size: trade.size,
+            size: exec_size,
             order_type: trade
                 .order_type
                 .clone()
