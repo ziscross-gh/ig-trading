@@ -75,6 +75,21 @@ the reason string. Both temporary MomentumBurst diagnostics (`SILENT` / `MISSING
 **Docs — Model Routing added to AGENTS.md (✅ 2026-06-08):** new "Model Routing" section codifies
 Opus = engine/strategy/risk + live diagnosis, Sonnet = edits/docs/ops, Gemini = Python ML + large-context.
 
+**Fix #6 — deal-size rounding before IG submit (✅ 2026-06-09, `order_manager.rs`):** The FIRST live
+M15 trade (EURUSD SELL, 16:15 UTC) reached execution but IG rejected it:
+`validation.number.too-many-decimal-places.request.size` — deal size was `3.8866666666666667`
+(= 11.66 / 3). `position_sizer` floors to `size_decimals`, but downstream multipliers (1/3
+concurrent-position sizing, VOLATILE half-size, regime/alignment) run afterwards and re-introduce
+long decimals, sent raw. Fixed by rounding `trade.size` to the instrument's `size_decimals` (fallback 2)
+in `OrderManager::execute_trade` — the single execution choke point. **VERIFIED LIVE:** after restart,
+3 trades filled ACCEPTED at 16:20–16:30 (EURUSD SELL ×2, USDJPY BUY ×1), logs show
+`Rounded deal size … → … (2 dp)`, zero rejections post-fix. **This ends the ~6-week no-trade drought.**
+
+> **Milestone:** full live pipeline now proven end-to-end — M15 2/3 consensus (exhaustion-guard fix) →
+> VOLATILE H1-zero bypass (strength ≥8 skips H1 gate) → risk approval → size rounded → IG fill.
+> NOTE: the H1-gate loosening decision (Phase 17.E options) is now LOWER priority — strong signals
+> already bypass the gate in VOLATILE, so trades fire without H1 agreement.
+
 ---
 
 ## Phase Summary
