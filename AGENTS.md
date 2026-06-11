@@ -14,6 +14,15 @@ For deeper references, read on demand:
 - `TASK_TRACKER.md` — current task status, bugs, backlog
 - `TECH_DEBT_AUDIT.md` — full debt audit and phase history
 
+**Token discipline (keep agent sessions cheap):**
+1. For engine health/status checks run `scripts/engine_status.sh [YYYY-MM-DD]` — one call
+   replaces the process-check + fills + closes + P&L + error grep chain. Don't hand-grep the log
+   until the digest shows something worth drilling into.
+2. `TASK_TRACKER.md` is 500+ lines — read the **header only** (first ~40 lines) for current state;
+   load the full file only when researching phase history.
+3. This file is the single always-loaded brief. If you find a fact here that's wrong, fixing it is
+   the highest-leverage edit you can make (stale facts here corrupt every future session).
+
 ---
 
 ## Project Overview
@@ -130,17 +139,22 @@ Set via `config/default.toml → [general] mode`.
 | Stochastic_Momentum | %K/%D crossover + ADX/RSI bonuses | **0.8×** |
 | Gold_Sentiment | RSS news → LLM score ≥ ±0.55 (Gold only) | **1.0×** |
 
-Consensus: min 3 agree + avg strength ≥ 6.0 → full position. VOLATILE scalp tier: min 2 + avg ≥ 6.0 → 0.5× size.
+Consensus (config/default.toml): H1 min 3 agree + avg strength ≥ 7.5 → full position. VOLATILE scalp tier: min 2 → 0.5× size.
 
 **M15 (60s refresh, 15-min candles) — 3 vote sources:**
 
 | Strategy | Signal Logic | Active Regimes |
 |---|---|---|
-| M15_MomentumBurst | M15 RSI 55–75 + MACD expanding + H1 EMA200 | Trending, Volatile |
-| M15_EmaMicrotrend | M15 EMA9>EMA21 + slope + H1 EMA21 confirm | Trending, Volatile |
+| M15_MomentumBurst | M15 RSI 55–75 + MACD sign + H1 EMA200 (17.E: expansion is a strength penalty, not a gate) | Trending, Volatile, Ranging-extremes |
+| M15_EmaMicrotrend | M15 EMA9>EMA21 + slope + H1 EMA21 confirm + RSI 30/70 exhaustion guard (17.E) | Trending, Volatile |
 | M15_BollingerReversion | M15 %B<0.05 + RSI<35 + H1 RSI>35 | Ranging only |
 
-M15 size: 0.5× H1. H1 Direction Gate blocks M15 signals contradicting H1 bias. ×1.2 bonus for aligned signals.
+M15 consensus: min 2/3 + avg strength ≥ 6.5 (VOLATILE relaxes 2→1). Size: 0.5× H1.
+H1 Direction Gate blocks M15 signals contradicting H1 bias; VOLATILE H1-zero bypass lets
+strength ≥ 8 signals through when H1 has no votes. ×1.2 bonus for aligned signals.
+Per-instrument M15 SL/TP overrides (17.F): `[strategies.instrument_overrides."<epic>"]`
+`m15_atr_sl_multiplier`/`m15_atr_tp_multiplier` — EURUSD ships 2.5×/6.5× (whipsaw protection);
+TP must stay ≥ min_risk_reward × SL or the risk gate rejects (guarded by `tests/config_load.rs`).
 
 Weights auto-adjust every 10 trades via `AdaptiveWeightManager` (rolling 50-trade window).
 
@@ -148,18 +162,24 @@ Weights auto-adjust every 10 trades via `AdaptiveWeightManager` (rolling 50-trad
 
 ## Risk Rules (Hard Gate — Nothing Bypasses This)
 
+Values below mirror `config/default.toml` — if they disagree, the TOML wins; fix this file.
+
 - Max risk per trade: 1% of balance
-- Max daily loss: 3% → trading halts
+- Max daily loss: 2% → trading halts
+- Max daily trades: 20
 - Max weekly drawdown: 5%
 - Max open positions: 9 (3 per instrument × 3 instruments)
 - Max positions per instrument: 3 (each 1/3 normal size — same total risk)
 - Max margin usage: 30%
-- Min risk/reward: 1.5
+- Min risk/reward: 2.5 (⚠️ any SL widening must scale TP or the gate silently rejects)
 - Circuit breaker: size reduction after 3 losses, 60 min pause after 5
-- Trading hours: 07:00–20:00 UTC (configurable)
+- Trading hours: 07:00–20:00 UTC — **source of truth is `[trading_hours]` in default.toml**
+  (the engine overwrites `risk.trading_hours_utc` from it at startup; don't set it under `[risk]`)
 - Sessions: Asia / London / US Overlap
 - Guaranteed stops required (limited-risk account)
-- Position sizing: Half-Kelly (default)
+- Position sizing: quarter-Kelly (`sizing_method` in TOML)
+- BE-snap (VOLATILE-birth trades): SL → breakeven at 90% of trail distance
+  (`volatile_breakeven_trigger = 0.9`, Phase 17.F — 0.7 sterilized USDJPY to 7/7 scratches)
 
 ---
 
@@ -216,14 +236,42 @@ docker-compose up --build           # Engine + PostgreSQL + Redis
 
 ---
 
-## Testing
+## Testing — match CI exactly before every push
 
 ```bash
 cd ig-engine
-cargo test                       # 76 tests passing
+cargo fmt -- --check
 cargo clippy -- -D warnings      # must exit 0
-cargo fmt --check
+cargo test                       # 84 tests (incl. tests/config_load.rs — parses the real default.toml)
+cargo audit
+cargo deny check                 # CI runs BOTH audit and deny — deny escalates unsound advisories
 ```
+
+> Lesson (06-09): a push verified with `cargo audit` alone still failed CI because `cargo deny`
+> flags advisories audit doesn't. Always run the full set above.
+
+---
+
+## Live Ops Runbook (don't re-derive these)
+
+- **Service:** launchd `com.igengine.plist`. Restart:
+  `launchctl unload ~/Library/LaunchAgents/com.igengine.plist && launchctl load ~/Library/LaunchAgents/com.igengine.plist`
+  (engine re-auths, warms M15 from disk, syncs open positions from IG — safe with positions open)
+- **Log:** `/tmp/ig-engine-launchd.log` — JSON lines (`timestamp`, `level`, `fields.message`)
+- **Status digest:** `scripts/engine_status.sh [YYYY-MM-DD]` — process + API snapshot + day digest
+  (fills, closes with per-instrument P&L, M15 consensus histogram, gate blocks, 17.F markers, errors)
+- **HTTP API (authoritative state):** `curl -s localhost:9090/api/status` / `/api/positions`
+- **Key log markers:** fills `Trade execution confirmed` · approvals `Trade approved:` ·
+  closes + P&L `OPU P&L recomputed` (`pnl=` suffix) · per-bar telemetry `Bar analysis: N/3 fired` ·
+  gate `H1 direction gate` / `H1-zero bypass` · 17.F `instrument SL/TP override`
+- **Known noise (do NOT escalate):** 403 `exceeded-account-historical-data-allowance` = weekly
+  REST quota — Phase 17.D backs off 60 min and builds M15 bars from live ticks; Telegram send errors.
+- **Gotchas:** `data/regime_latest.json` RSI is H1/daily-based — NOT the M15 RSI strategies use,
+  never treat it as a trade predictor. M15 bars close on :00/:15/:30/:45 — no `Bar analysis` lines
+  for <18 min is normal, not a stall. Deal sizes are rounded to instrument precision at the single
+  execution choke point `order_manager.rs::execute_trade` (Fix #6).
+- **Live-money rule:** NEVER change strategy/risk/gate parameters without explicit human approval —
+  propose, show evidence, wait.
 
 ---
 
@@ -271,10 +319,12 @@ a cheaper model without a human sign-off.
 
 ## Current Status
 
-Phases 1–15 + 14.A–I complete. Engine live on demo account, actively trading VOLATILE regime via M15 scalp tier. Key systems:
-- **H1**: 6 strategies, VOLATILE scalp tier (need 2), regime file from ML cron
-- **M15**: 3 strategies, H1 direction gate + ×1.2 alignment bonus, tick-built candles (BarAccumulator), disk-first warmup
+Phases 1–17.F complete. Engine live on demo, first live fills 2026-06-09 after the 17.E consensus
+fixes + Fix #6 (deal-size rounding). First-week P&L is GOLD-carried; EURUSD/USDJPY tuning landed
+in 17.F (wider EURUSD SL, BE-snap 0.9) — observing. Key systems:
+- **H1**: 6 strategies + sentiment, VOLATILE scalp tier, regime file from ML cron
+- **M15**: 3 strategies, 2/3 consensus, H1 gate + VOLATILE bypasses, tick-built candles, disk-first warmup
 - **Telegram**: send + receive (startup ping, /status, /positions commands)
-- **Only long-term remaining**: 8.6 RL position sizing (needs 3+ months live data)
+- **Long-term remaining**: 8.6 RL position sizing (needs 3+ months live data)
 
-See `TASK_TRACKER.md` for full phase history and open bugs.
+For the live current state always check the **TASK_TRACKER.md header** (first ~40 lines), not this section.
