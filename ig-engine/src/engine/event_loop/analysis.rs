@@ -1511,11 +1511,59 @@ pub async fn analyze_market_m15(
             }
         };
 
-        if let Some(ensemble_signal) = maybe_signal {
+        if let Some(mut ensemble_signal) = maybe_signal {
             info!(
                 "[M15] Ensemble signal: {} {} strength={:.2}",
                 ensemble_signal.direction, epic, ensemble_signal.strength
             );
+
+            // ── Per-instrument M15 SL/TP override (whipsaw protection) ────────
+            // The strategy-level SL (1.5× M15 ATR ≈ 5–6 pips on EUR/USD) sits
+            // inside spread noise — every first-live-week EUR/USD loss was a
+            // whipsaw stop-out, in both directions. Recompute SL/TP from the
+            // per-instrument multipliers before the risk gate. TP must scale
+            // with SL: RiskManager enforces TP/SL ≥ min_risk_reward. The wider
+            // SL also widens the trailing distance and BE-snap trigger, since
+            // both derive from the SL distance in check_trade.
+            if let Some(ov) = config.strategies.instrument_overrides.get(epic.as_str()) {
+                if ov.m15_atr_sl_multiplier.is_some() || ov.m15_atr_tp_multiplier.is_some() {
+                    if let Some(atr) = m15_snap.atr {
+                        let cur_sl_dist = (ensemble_signal.price - ensemble_signal.stop_loss).abs();
+                        let cur_tp_dist =
+                            (ensemble_signal.take_profit - ensemble_signal.price).abs();
+                        let sl_dist = ov
+                            .m15_atr_sl_multiplier
+                            .map(|m| atr * m)
+                            .unwrap_or(cur_sl_dist);
+                        let tp_dist = ov
+                            .m15_atr_tp_multiplier
+                            .map(|m| atr * m)
+                            .unwrap_or(cur_tp_dist);
+                        use crate::engine::state::Direction;
+                        let (new_sl, new_tp) = match ensemble_signal.direction {
+                            Direction::Buy => (
+                                ensemble_signal.price - sl_dist,
+                                ensemble_signal.price + tp_dist,
+                            ),
+                            Direction::Sell => (
+                                ensemble_signal.price + sl_dist,
+                                ensemble_signal.price - tp_dist,
+                            ),
+                        };
+                        info!(
+                            "[M15] {} instrument SL/TP override: SL {:.5}→{:.5} TP {:.5}→{:.5} (M15 ATR={:.5})",
+                            epic,
+                            ensemble_signal.stop_loss,
+                            new_sl,
+                            ensemble_signal.take_profit,
+                            new_tp,
+                            atr
+                        );
+                        ensemble_signal.stop_loss = new_sl;
+                        ensemble_signal.take_profit = new_tp;
+                    }
+                }
+            }
 
             // Check macro pause
             let macro_paused = {

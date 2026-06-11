@@ -1,12 +1,48 @@
 # TASK_TRACKER.md — IG Trading Engine
 
-**Last updated:** 2026-06-08 (Phase 17.E — M15 analysis amplification fix + per-strategy FIRE/silent telemetry; root-caused the 1/3-consensus stall)
+**Last updated:** 2026-06-11 (Phase 17.F — EURUSD whipsaw SL widening + BE-snap 0.9; first live-week P&L review)
 **Current phase:** Production-ready + Active trading. VOLATILE regime live + cooldown system. Concurrent multi-position mode live. H1 gate dual bypass (cold-start + zero-signal).
 **Current focus:** 🤖 Engine live & trading | 📊 Multi-position mode: max 3/instrument at 1/3 size | 🔄 Regime cooldown active (7-day VOLATILE → relaxed SL/TP) | 🕐 Trading hours: 07:00–20:00 UTC only | 🚪 H1 gate: VOLATILE bypass for 0-signal & cold-start
 
 > 📦 Dashboard (`src/`) is **archived** — not maintained. All dashboard tasks removed.
 
 For the full history of completed work and debt items, see `TECH_DEBT_AUDIT.md`.
+
+---
+
+## Phase 17.F — Live-Week Tuning: EURUSD Whipsaw SL + BE-Snap Relax (✅ 2026-06-11)
+
+> **Motivation — first live-week P&L (06-08 → 06-11, ~36 closes):** run net ≈ **+1,373 SGD**, but
+> 100% GOLD-concentrated. GOLD ≈ +2,945; EURUSD ≈ −1,570 (every loss a ~5–6 pip whipsaw stop-out,
+> short AND long — the 06-10 direction-flip BUYs died the same way as the 11 losing SELLs);
+> USDJPY ≈ 0.00 with a **100% BE-scratch rate** (the 70% BE-snap sterilized every trade).
+> User approved suggestions #2 (wider EURUSD SL) and #3 (relax BE-snap).
+
+**Fix #1 — Per-instrument M15 SL/TP override** (`config.rs`, `analysis.rs`, `default.toml`):
+- New `InstrumentStrategyOverride` fields: `m15_atr_sl_multiplier` / `m15_atr_tp_multiplier`.
+- Applied in the M15 path of `analysis.rs` right after the ensemble signal forms (before the risk
+  gate): recomputes SL/TP from **M15 ATR** with the per-epic multipliers.
+- EURUSD shipped at **2.5× SL / 6.5× TP** (≈10-pip SL, R:R 2.6 — clears `min_risk_reward = 2.5`).
+- Trailing distance + BE-snap trigger derive from SL distance (`risk/mod.rs::check_trade`), so both
+  widen automatically.
+- ⚠️ Lesson encoded in `tests/config_load.rs`: widening SL without scaling TP would have made the
+  RR gate silently reject every EURUSD trade. The test parses the real `default.toml` and asserts
+  `tp_mult / sl_mult ≥ min_risk_reward` (also the first CI guard that the shipped TOML parses at all).
+
+**Fix #2 — BE-snap trigger 0.7 → 0.9** (`default.toml` `volatile_breakeven_trigger`):
+- USDJPY went 7/7 breakeven-scratch at 0.7 — SL snapped to entry at 70% of trail distance, then
+  every minor pullback tagged it. At 0.9 the snap only fires when TP is nearly reached.
+
+**Also:** removed the dead `trading_hours_utc = [0, 21]` from `[risk]` (the engine overwrites it
+from `[trading_hours]` 07:00–20:00 at startup — one source of truth now, comment points there);
+refreshed PROJECT_ARCHITECTURE.md (m15 consensus values, Phase 17.F, trading-hours note) and the
+stale `0.75× ATR` headers in the two M15 strategy files.
+
+**Pending (user decision):** suggestion #1 (per-instrument consecutive-loss cooldown) and
+#4 (≥45-min same-instrument entry spacing — 06-10 showed stacked entries 15 min apart dying
+together). **Investigation queue:** Asia-session GOLD backtest (on 06-11 every signal fell in
+00–06 UTC and was rejected on hours); H1-zero bypass threshold (GOLD 2/3-consensus SELL at
+strength 7.80 blocked, bypass needs ≥8.0).
 
 ---
 

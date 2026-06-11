@@ -5,7 +5,8 @@
 //!
 //! Active regimes: TRENDING, VOLATILE, RANGING (at RSI extremes < 35 or > 65 only)
 //! Regime multipliers applied in analyze_market_m15(): VOLATILE 1.3×, TRENDING 1.2×, RANGING 1.0×
-//! Risk: 0.75× M15 ATR stop, 1.5× ATR take profit
+//! Risk: SL/TP from config atr_sl_multiplier / atr_tp_multiplier (default.toml: 1.5× / 4.0× M15 ATR);
+//! per-instrument overrides in [strategies.instrument_overrides] may recompute them post-ensemble.
 
 use crate::engine::state::{Direction, Signal};
 use crate::indicators::IndicatorSnapshot;

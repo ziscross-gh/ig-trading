@@ -38,9 +38,10 @@ max_daily_trades = 20
 limited_risk_account = false
 use_trailing_stop = true
 trailing_stop_min_pips = 7.5       # Phase 17.C — widened 5.0→7.5 (less aggressive ratchet, let winners breathe)
-volatile_breakeven_trigger = 0.7   # Phase 17.C — loosened 0.5→0.7 (need 70% of SL in profit before BE snap, was 50%)
+volatile_breakeven_trigger = 0.9   # Phase 17.F — relaxed 0.7→0.9 (USDJPY went 7/7 BE-scratch at 0.7; snap only when TP nearly reached)
 allowed_sessions = ["Asia", "London", "UsOverlap"]
-trading_hours_utc = [0, 21]
+# Trading hours live in [trading_hours] below — the engine overwrites the risk
+# gate's window from that section at startup, so don't set trading_hours_utc here.
 allow_weekend_trading = true
 news_blackout_windows_utc = []
 instrument_specs = {}
@@ -145,6 +146,15 @@ rsi_threshold = 35.0
 h1_rsi_confirm = 35.0
 atr_sl_multiplier = 1.5
 atr_tp_multiplier = 4.0   # R:R = 2.67 (BB mid band may be closer — ATR TP as fallback)
+
+# Phase 17.F — EUR/USD whipsaw protection. The strategy-level 1.5× M15 ATR SL
+# (≈5–6 pips) sat inside spread noise: every EUR/USD loss in the first live week
+# was a whipsaw stop-out, long and short alike. Widen SL to 2.5× ATR (≈10 pips)
+# and TP to 6.5× (R:R 2.6, clears the min 2.5 risk gate). Trailing distance and
+# BE-snap trigger derive from the SL distance, so they widen with it.
+[strategies.instrument_overrides."CS.D.EURUSD.CSD.IP"]
+m15_atr_sl_multiplier = 2.5
+m15_atr_tp_multiplier = 6.5
 
 [trading_hours]
 start = "07:00"   # London open — avoid Asia session chop on EUR/USD
