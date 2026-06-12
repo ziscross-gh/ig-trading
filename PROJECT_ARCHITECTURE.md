@@ -1,6 +1,6 @@
 # PROJECT_ARCHITECTURE.md — IG Trading Engine
 
-**Last updated:** 2026-04-03 (Phase 17 — trading perf fixes, regime cooldown system)
+**Last updated:** 2026-06-11 (Phase 17.F — EURUSD M15 SL/TP instrument override, BE-snap trigger 0.9)
 **Scope:** Rust engine (`ig-engine/`) — bot + Telegram only (dashboard archived)
 
 ---
@@ -155,7 +155,18 @@ Signals carry: direction, strength (0–10), stop loss price, take profit price.
 | `M15_EmaMicrotrend` | M15 EMA9>EMA21 + EMA21 slope + H1 EMA21 slope confirm | Trending, Volatile | TRENDING 1.2× |
 | `M15_BollingerReversion` | M15 %B<0.05 + RSI<35 + H1 RSI>35 (mean reversion) | Ranging ONLY | RANGING 1.2× |
 
-M15 ensemble: `min_consensus=1, min_avg_strength=6.5`. Position size: 0.5× H1 via `check_trade_m15()`. Cooldown: max 2 trades per H1 candle. R:R = 2.67 (SL 1.5× ATR, TP 4.0× ATR). All enabled — `config/default.toml`.
+M15 ensemble: `m15_min_consensus=2, m15_min_avg_strength=6.5`. Position size: 0.5× H1 via `check_trade_m15()`. Cooldown: max 2 trades per H1 candle. R:R = 2.67 (SL 1.5× ATR, TP 4.0× ATR). All enabled — `config/default.toml`.
+
+**Per-instrument M15 SL/TP override (Phase 17.F):** `[strategies.instrument_overrides."<epic>"]`
+`m15_atr_sl_multiplier` / `m15_atr_tp_multiplier` recompute the ensemble signal's SL/TP from M15 ATR
+before the risk gate (`analysis.rs`, M15 path). EURUSD ships 2.5× / 6.5× (R:R 2.6) — the strategy
+default 1.5× ATR ≈ 5–6 pips sat inside spread noise and whipsawed out in both directions. Trailing
+distance + BE-snap trigger derive from SL distance, so they widen with it. Guarded by
+`tests/config_load.rs` (parses the real TOML, asserts R:R clears `min_risk_reward`).
+
+> ⏰ **Trading hours single source of truth:** the `[trading_hours]` section (07:00–20:00 UTC).
+> The engine overwrites `risk.trading_hours_utc` from it at startup (`event_loop/mod.rs`) — do not
+> set `trading_hours_utc` under `[risk]`.
 
 **H1 Direction Gate + Alignment Bonus (Phase 14.E):**
 - `H1DirectionBias` (buy_count vs sell_count from H1 strategies) stored per epic in `MarketStateContainer.h1_bias`
@@ -171,8 +182,8 @@ M15 ensemble: `min_consensus=1, min_avg_strength=6.5`. Position size: 0.5× H1 v
 **Ensemble Voting:**
 
 ```
-Full consensus:    min 3 strategies, avg strength ≥ 6.0 → full position
-VOLATILE scalp:    min 2 strategies, avg strength ≥ 6.0 → 0.5× position (VOLATILE regime only)
+Full consensus:    min 3 strategies, avg strength ≥ 7.5 → full position
+VOLATILE scalp:    min 2 strategies, avg strength ≥ 7.5 → 0.5× position (VOLATILE regime only)
 ```
 
 **Regime Multipliers (VOLATILE_MUTE = 0.5):**

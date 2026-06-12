@@ -284,6 +284,15 @@ pub struct InstrumentStrategyOverride {
     /// Block all entries if ATR% (atr/price * 100) exceeds this value.
     /// Gold: 1.8 (blocks truly chaotic conditions; current ~1.0% is fine).
     pub atr_pct_max_entry: Option<f64>,
+
+    // ── M15 SL/TP override (whipsaw protection) ─────────────────────────────
+    /// Recompute the M15 ensemble signal's stop loss as `M15 ATR × this` before
+    /// the risk gate. EUR/USD: 2.5 — the strategy default (1.5× ≈ 5–6 pips) sat
+    /// inside spread noise and every first-live-week loss was a whipsaw stop-out.
+    pub m15_atr_sl_multiplier: Option<f64>,
+    /// Recompute the M15 take profit as `M15 ATR × this`. Must stay ≥
+    /// min_risk_reward × m15_atr_sl_multiplier or RiskManager rejects the trade.
+    pub m15_atr_tp_multiplier: Option<f64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -579,6 +588,7 @@ impl Default for EngineConfig {
                             max_daily_trades: Some(2),
                             // Block if ATR% > 1.8% (extreme volatility spike)
                             atr_pct_max_entry: Some(1.8),
+                            ..Default::default()
                         },
                     );
 
@@ -626,6 +636,7 @@ impl Default for EngineConfig {
                             mean_reversion_suppress_adx_min: Some(50.0),
                             max_daily_trades: Some(3),
                             atr_pct_max_entry: Some(1.2),
+                            ..Default::default()
                         },
                     );
 
