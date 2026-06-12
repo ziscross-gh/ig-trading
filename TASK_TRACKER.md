@@ -1,12 +1,43 @@
 # TASK_TRACKER.md — IG Trading Engine
 
-**Last updated:** 2026-06-11 (Phase 17.F — EURUSD whipsaw SL widening + BE-snap 0.9; first live-week P&L review)
+**Last updated:** 2026-06-12 (Phase 17.G — USDJPY SL override + 45-min entry spacing; ⛔ PARAMETER FREEZE in effect until 2026-07-03)
 **Current phase:** Production-ready + Active trading. VOLATILE regime live + cooldown system. Concurrent multi-position mode live. H1 gate dual bypass (cold-start + zero-signal).
 **Current focus:** 🤖 Engine live & trading | 📊 Multi-position mode: max 3/instrument at 1/3 size | 🔄 Regime cooldown active (7-day VOLATILE → relaxed SL/TP) | 🕐 Trading hours: 07:00–20:00 UTC only | 🚪 H1 gate: VOLATILE bypass for 0-signal & cold-start
 
 > 📦 Dashboard (`src/`) is **archived** — not maintained. All dashboard tasks removed.
 
 For the full history of completed work and debt items, see `TECH_DEBT_AUDIT.md`.
+
+---
+
+## Phase 17.G — USDJPY SL Override + Entry Spacing + ⛔ Parameter Freeze (✅ 2026-06-12)
+
+> **Motivation:** BE-snap 0.9 unmasked USDJPY's real problem on 06-11 — both longs stopped ~4.7
+> pips from entry (1.5× of a tiny M15 ATR): the same whipsaw disease 17.F fixed for EURUSD.
+> Separately, every multi-loss day featured same-instrument entries stacked 1–15 min apart that
+> won or died together (06-10 EURUSD ×2, 06-11 USDJPY ×2) — doubled risk, zero diversification.
+> User approved: USDJPY override extension + suggestion #4 (entry spacing) + parameter freeze.
+
+**Fix #1 — USDJPY M15 SL/TP override** (`default.toml`): same treatment as EURUSD —
+`2.5× ATR SL / 6.5× ATR TP` under `[strategies.instrument_overrides."CS.D.USDJPY.CSD.IP"]`.
+`tests/config_load.rs` now loops over both overridden epics asserting R:R ≥ min_risk_reward.
+
+**Fix #2 — Minimum same-instrument entry spacing** (`state.rs`, `config.rs`, `analysis.rs`):
+- `M15CooldownTracker` gains `last_entry_ts` per epic + `secs_since_last_entry()`.
+- New config `m15_min_entry_spacing_secs = 2700` (45 min; 0 disables; serde default 2700).
+- Checked in the M15 path next to the per-H1-candle cap; logs
+  `[M15] {epic} — entry spacing: last entry {n}s ago < {min}s minimum`.
+- M15 path only — all observed stacking came through the 60s M15 refresh.
+- Unit tests: `m15_cooldown_tests` in `state.rs` (spacing per-epic + H1 counter unchanged).
+
+**⛔ PARAMETER FREEZE (2026-06-12 → 2026-07-03):** no strategy/risk/gate tuning for ~3 weeks of
+clean data. Evaluation criteria fixed up-front: profit factor > 1.3 overall; EURUSD and USDJPY
+each individually ≥ 0; performance through at least one regime change. Monitoring continues
+(observe + propose only). Exceptions: genuine bugs (crashes, API errors, wrong math) — not P&L.
+
+**Pending (frozen, revisit 2026-07-03):** #1 consecutive-loss cooldown; H1-zero bypass threshold
+(8.0 vs observed 7.80 GOLD block); Asia-session investigation (recurring blocked-consensus
+overnight, inconclusive 12-trade backtest).
 
 ---
 

@@ -152,9 +152,14 @@ Consensus (config/default.toml): H1 min 3 agree + avg strength ≥ 7.5 → full 
 M15 consensus: min 2/3 + avg strength ≥ 6.5 (VOLATILE relaxes 2→1). Size: 0.5× H1.
 H1 Direction Gate blocks M15 signals contradicting H1 bias; VOLATILE H1-zero bypass lets
 strength ≥ 8 signals through when H1 has no votes. ×1.2 bonus for aligned signals.
-Per-instrument M15 SL/TP overrides (17.F): `[strategies.instrument_overrides."<epic>"]`
-`m15_atr_sl_multiplier`/`m15_atr_tp_multiplier` — EURUSD ships 2.5×/6.5× (whipsaw protection);
-TP must stay ≥ min_risk_reward × SL or the risk gate rejects (guarded by `tests/config_load.rs`).
+Per-instrument M15 SL/TP overrides (17.F/G): `[strategies.instrument_overrides."<epic>"]`
+`m15_atr_sl_multiplier`/`m15_atr_tp_multiplier` — EURUSD and USDJPY ship 2.5×/6.5× (whipsaw
+protection); TP must stay ≥ min_risk_reward × SL or the risk gate rejects (guarded by
+`tests/config_load.rs`). Same-instrument entries are spaced ≥ 45 min apart
+(`m15_min_entry_spacing_secs`, 17.G — stacked entries die together).
+
+> ⛔ **Parameter freeze until 2026-07-03** (see TASK_TRACKER 17.G): no strategy/risk/gate tuning;
+> observe + propose only. Bug fixes exempt.
 
 Weights auto-adjust every 10 trades via `AdaptiveWeightManager` (rolling 50-trade window).
 

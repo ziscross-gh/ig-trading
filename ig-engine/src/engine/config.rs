@@ -36,6 +36,9 @@ fn default_volatile_atr_tp_multiplier() -> f64 {
 fn default_post_trade_cooldown_secs() -> u64 {
     1800
 } // 30 min = 2 M15 bars
+fn default_m15_min_entry_spacing_secs() -> i64 {
+    2700
+} // 45 min — stacked same-instrument entries die together (Phase 17.G)
 fn default_require_h1_confirmation() -> bool {
     true
 }
@@ -128,6 +131,11 @@ pub struct StrategiesConfig {
     pub m15_position_size_multiplier: f64,
     #[serde(default = "default_m15_max_trades")]
     pub m15_max_trades_per_h1: u32,
+    /// Minimum seconds between entries on the same instrument (M15 path).
+    /// Live evidence (06-10/06-11): entries 1–15 min apart on one epic always
+    /// shared the same fate — stacked risk, no diversification. 0 disables.
+    #[serde(default = "default_m15_min_entry_spacing_secs")]
+    pub m15_min_entry_spacing_secs: i64,
     pub default_atr_sl_multiplier: f64,
     pub default_atr_tp_multiplier: f64,
     /// Per-instrument strategy overrides keyed by IG epic string.
@@ -559,6 +567,7 @@ impl Default for EngineConfig {
                 m15_min_avg_strength: 6.5,
                 m15_position_size_multiplier: 0.5,
                 m15_max_trades_per_h1: 2,
+                m15_min_entry_spacing_secs: default_m15_min_entry_spacing_secs(),
                 instrument_overrides: {
                     let mut m = HashMap::new();
 

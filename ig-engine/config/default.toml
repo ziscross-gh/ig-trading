@@ -48,6 +48,7 @@ instrument_specs = {}
 
 [strategies]
 m15_min_consensus = 2
+m15_min_entry_spacing_secs = 2700  # Phase 17.G — ≥45 min between same-instrument entries (stacked entries die together)
 min_consensus = 3
 min_avg_strength = 7.5
 default_atr_sl_multiplier = 1.5
@@ -153,6 +154,13 @@ atr_tp_multiplier = 4.0   # R:R = 2.67 (BB mid band may be closer — ATR TP as 
 # and TP to 6.5× (R:R 2.6, clears the min 2.5 risk gate). Trailing distance and
 # BE-snap trigger derive from the SL distance, so they widen with it.
 [strategies.instrument_overrides."CS.D.EURUSD.CSD.IP"]
+m15_atr_sl_multiplier = 2.5
+m15_atr_tp_multiplier = 6.5
+
+# Phase 17.G — USD/JPY got the same disease once BE-snap 0.9 unmasked it:
+# 06-11 both longs stopped ~4.7 pips from entry (1.5× of a tiny M15 ATR).
+# Same treatment as EUR/USD.
+[strategies.instrument_overrides."CS.D.USDJPY.CSD.IP"]
 m15_atr_sl_multiplier = 2.5
 m15_atr_tp_multiplier = 6.5
 
