@@ -18,8 +18,8 @@ For deeper references, read on demand:
 1. For engine health/status checks run `scripts/engine_status.sh [YYYY-MM-DD]` — one call
    replaces the process-check + fills + closes + P&L + error grep chain. Don't hand-grep the log
    until the digest shows something worth drilling into.
-2. `TASK_TRACKER.md` is 500+ lines — read the **header only** (first ~40 lines) for current state;
-   load the full file only when researching phase history.
+2. `TASK_TRACKER.md`: read the **header only** (first ~40 lines) for current state. It now holds
+   only recent phases — older history lives in `docs/PHASE_HISTORY.md`, load on demand.
 3. This file is the single always-loaded brief. If you find a fact here that's wrong, fixing it is
    the highest-leverage edit you can make (stale facts here corrupt every future session).
 
@@ -260,6 +260,8 @@ cargo deny check                 # CI runs BOTH audit and deny — deny escalate
 - **Log:** `/tmp/ig-engine-launchd.log` — JSON lines (`timestamp`, `level`, `fields.message`)
 - **Status digest:** `scripts/engine_status.sh [YYYY-MM-DD]` — process + API snapshot + day digest
   (fills, closes with per-instrument P&L, M15 consensus histogram, gate blocks, 17.F markers, errors)
+- **Recurring monitoring:** standing loop instructions in `docs/MONITORING.md` — recurring prompts
+  should reference it plus a short context delta instead of restating the rules each cycle
 - **HTTP API (authoritative state):** `curl -s localhost:9090/api/status` / `/api/positions`
 - **Key log markers:** fills `Trade execution confirmed` · approvals `Trade approved:` ·
   closes + P&L `OPU P&L recomputed` (`pnl=` suffix) · per-bar telemetry `Bar analysis: N/3 fired` ·
