@@ -305,12 +305,18 @@ pub struct SessionState {
 
 use crate::data::trade_logger::TradeLogger;
 
-/// Tracks M15 trade count per H1 candle boundary per epic.
-/// Prevents overtrading by enforcing a maximum of `max_trades` M15 trades
-/// within a single H1 candle period.
+/// Tracks M15 trade count per H1 candle boundary per epic, plus the last
+/// entry time per epic for minimum same-instrument entry spacing.
+/// Prevents overtrading: max `max_trades` M15 trades within a single H1
+/// candle, and (Phase 17.G) no two entries on one instrument closer than the
+/// configured spacing — live data showed entries stacked 1–15 min apart
+/// consistently winning or dying together (same signal, same noise band),
+/// doubling risk without diversifying it.
 pub struct M15CooldownTracker {
     /// epic -> (h1_candle_start_ts, trade_count)
     pub trades_per_h1_candle: HashMap<String, (i64, u32)>,
+    /// epic -> unix ts of the most recent entry attempt
+    pub last_entry_ts: HashMap<String, i64>,
 }
 
 impl Default for M15CooldownTracker {
@@ -323,6 +329,7 @@ impl M15CooldownTracker {
     pub fn new() -> Self {
         Self {
             trades_per_h1_candle: HashMap::new(),
+            last_entry_ts: HashMap::new(),
         }
     }
 
@@ -334,8 +341,13 @@ impl M15CooldownTracker {
         }
     }
 
+    /// Seconds since the last recorded entry on this epic; None if no entry yet.
+    pub fn secs_since_last_entry(&self, epic: &str, now_ts: i64) -> Option<i64> {
+        self.last_entry_ts.get(epic).map(|ts| now_ts - ts)
+    }
+
     /// Record a new M15 trade for this epic in the current H1 candle.
-    pub fn record_trade(&mut self, epic: &str, h1_ts: i64) {
+    pub fn record_trade(&mut self, epic: &str, h1_ts: i64, now_ts: i64) {
         let entry = self
             .trades_per_h1_candle
             .entry(epic.to_string())
@@ -345,6 +357,7 @@ impl M15CooldownTracker {
         } else {
             entry.1 += 1;
         }
+        self.last_entry_ts.insert(epic.to_string(), now_ts);
     }
 }
 
@@ -631,5 +644,41 @@ impl EngineState {
             .ok()
             .and_then(|s| serde_json::from_str::<DailyStats>(&s).ok())
             .filter(|stats| stats.date == today)
+    }
+}
+
+#[cfg(test)]
+mod m15_cooldown_tests {
+    use super::M15CooldownTracker;
+
+    #[test]
+    fn entry_spacing_tracks_per_epic() {
+        let mut t = M15CooldownTracker::new();
+        let h1 = 1_700_000_000_i64 / 3600 * 3600;
+
+        assert_eq!(t.secs_since_last_entry("EPIC.A", 1_700_000_000), None);
+        t.record_trade("EPIC.A", h1, 1_700_000_000);
+        // 60s later: well inside a 2700s minimum spacing window
+        assert_eq!(t.secs_since_last_entry("EPIC.A", 1_700_000_060), Some(60));
+        // other epics are unaffected
+        assert_eq!(t.secs_since_last_entry("EPIC.B", 1_700_000_060), None);
+        // 45 min later the window has elapsed
+        assert_eq!(
+            t.secs_since_last_entry("EPIC.A", 1_700_000_000 + 2700),
+            Some(2700)
+        );
+    }
+
+    #[test]
+    fn h1_candle_counter_still_enforced() {
+        let mut t = M15CooldownTracker::new();
+        let h1 = 1_700_000_000_i64 / 3600 * 3600;
+        assert!(t.can_trade("EPIC.A", h1, 2));
+        t.record_trade("EPIC.A", h1, 1_700_000_000);
+        assert!(t.can_trade("EPIC.A", h1, 2));
+        t.record_trade("EPIC.A", h1, 1_700_000_100);
+        assert!(!t.can_trade("EPIC.A", h1, 2));
+        // new H1 candle resets the counter
+        assert!(t.can_trade("EPIC.A", h1 + 3600, 2));
     }
 }

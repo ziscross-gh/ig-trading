@@ -1578,14 +1578,20 @@ pub async fn analyze_market_m15(
                 continue;
             }
 
-            // Check M15 cooldown (max trades per H1 candle boundary)
-            let h1_ts = (Utc::now().timestamp() / 3600) * 3600;
-            let can_trade = {
+            // Check M15 cooldown (max trades per H1 candle boundary) and
+            // minimum same-instrument entry spacing (Phase 17.G — stacked
+            // entries minutes apart share the same fate; see M15CooldownTracker).
+            let now_ts = Utc::now().timestamp();
+            let h1_ts = (now_ts / 3600) * 3600;
+            let (can_trade, since_last) = {
                 let s = state.read().await;
-                s.m15_cooldown.can_trade(
-                    epic.as_str(),
-                    h1_ts,
-                    config.strategies.m15_max_trades_per_h1,
+                (
+                    s.m15_cooldown.can_trade(
+                        epic.as_str(),
+                        h1_ts,
+                        config.strategies.m15_max_trades_per_h1,
+                    ),
+                    s.m15_cooldown.secs_since_last_entry(epic.as_str(), now_ts),
                 )
             };
             if !can_trade {
@@ -1594,6 +1600,18 @@ pub async fn analyze_market_m15(
                     epic, config.strategies.m15_max_trades_per_h1
                 );
                 continue;
+            }
+            let min_spacing = config.strategies.m15_min_entry_spacing_secs;
+            if min_spacing > 0 {
+                if let Some(elapsed) = since_last {
+                    if elapsed < min_spacing {
+                        info!(
+                            "[M15] {} — entry spacing: last entry {}s ago < {}s minimum",
+                            epic, elapsed, min_spacing
+                        );
+                        continue;
+                    }
+                }
             }
 
             // ── ADX Price-Slope Bypass (Gold strong-trend fix) ────────────────
@@ -1833,7 +1851,7 @@ pub async fn analyze_market_m15(
                     // Record cooldown before execution attempt
                     {
                         let mut s = state.write().await;
-                        s.m15_cooldown.record_trade(epic.as_str(), h1_ts);
+                        s.m15_cooldown.record_trade(epic.as_str(), h1_ts, now_ts);
                     }
 
                     if config.general.mode != EngineMode::Paper {
