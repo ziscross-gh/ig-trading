@@ -1,12 +1,40 @@
 # TASK_TRACKER.md — IG Trading Engine
 
-**Last updated:** 2026-06-12 (Phase 17.G — USDJPY SL override + 45-min entry spacing; ⛔ PARAMETER FREEZE in effect until 2026-07-03)
+**Last updated:** 2026-06-16 (Bug fix: guaranteed-stop close accounting — closes that 404'd were dropped from stats/scorecard/circuit-breaker; ⛔ PARAMETER FREEZE still in effect until 2026-07-03)
 **Current phase:** Production-ready + Active trading. VOLATILE regime live + cooldown system. Concurrent multi-position mode live. H1 gate dual bypass (cold-start + zero-signal).
 **Current focus:** 🤖 Engine live & trading | 📊 Multi-position mode: max 3/instrument at 1/3 size | 🔄 Regime cooldown active (7-day VOLATILE → relaxed SL/TP) | 🕐 Trading hours: 07:00–20:00 UTC only | 🚪 H1 gate: VOLATILE bypass for 0-signal & cold-start
 
 > 📦 Dashboard (`src/`) is **archived** — not maintained. All dashboard tasks removed.
 
 For the full history of completed work and debt items, see `TECH_DEBT_AUDIT.md`.
+
+---
+
+## Bug Fix — Guaranteed-Stop Close Accounting (✅ 2026-06-16, freeze-exempt)
+
+> **Found during freeze monitoring** (operator noticed balance dropping with no logged closes).
+> On a limited-risk account, IG closes the position **server-side** the instant the guaranteed
+> stop fires. The engine independently detects the same hit and fires a redundant REST close,
+> which **404s `position.notional.details.null`** (position already gone). Guaranteed-stop closes
+> emit **no OPU close event** (only `status=OPEN`), so the old `Err` branch — which merely logged —
+> **silently dropped the trade** from daily stats, the scorecard, AND the circuit breaker.
+
+**Evidence (reconciled from balance, this engine):** since the 06-12 restart the engine
+under-recorded realized P&L by **≈ −1,435 SGD**; 9 stop-losses incl. a **−1,122 GOLD** were invisible,
+and **06-14 21:19–21:27 was a 4-loss streak (−1,506) the circuit breaker never counted.** Confirmed
+the OPU stream never sends a close for these (only `status=OPEN … ignoring`) → fully *missed*, not
+double-counted.
+
+**Fix** (`handlers.rs`): `is_already_closed_error()` detects 404/`notional.null`/`POSITION_NOT_FOUND`;
+the `Err` branch then records the close with the engine's locally-computed P&L, **dedup-gated through
+`recently_closed_deal_ids`** so any later OPU event can't double-book. Genuine failures still error.
+Unit tests pin the error strings. `engine_status.sh` gained a RECONCILED line. PR #5 (merged), engine
+redeployed PID 15950.
+
+> ⚠️ **Scorecard/freeze-data caveat:** the freeze-period P&L collected before this fix is unreliable
+> (the 06-14 evening session was logged as "weekend flat" but was a real −2.6k losing session). The
+> clean freeze-evaluation window effectively **restarts 2026-06-16**; ground-truth P&L is the account
+> balance, not the pre-fix stats. The adaptive scorecard was also training on incomplete history.
 
 ---
 
