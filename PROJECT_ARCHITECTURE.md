@@ -64,7 +64,7 @@ IG Markets (REST + Lightstreamer)
 │  │     └── Refresh IG CST + security tokens              │
 │  ├── heartbeat_interval                                  │
 │  │     └── Broadcast uptime + position count             │
-│  └── daily_summary_interval (21:00 SGT)                  │
+│  └── daily_summary_interval (07:55 SGT, config-driven)   │
 │        └── Telegram daily P&L summary                    │
 │                                                          │
 │  State:   Arc<RwLock<EngineState>>                       │
@@ -243,7 +243,7 @@ Circuit breaker triggers: reduces position size after 3 consecutive losses; paus
 
 ### `notifications/`
 
-`TelegramNotifier` sends alerts on: trade opened, trade closed, risk limit hit, circuit breaker trigger, and the daily P&L summary at 21:00 SGT.
+`TelegramNotifier` sends alerts on: trade opened, trade closed, risk limit hit, circuit breaker trigger, and the daily P&L summary at the `[notifications.telegram] summary_time` (SGT, default **07:55**). The summary fires late-SGT/morning so it covers the complete overnight UTC trading day (entries 07:00–20:00 UTC) before the 00:00 UTC stats reset — firing mid-day would structurally miss the US session.
 
 ---
 

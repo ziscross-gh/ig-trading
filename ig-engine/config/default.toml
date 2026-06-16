@@ -176,4 +176,7 @@ chat_id = "CHAT_ID" # Replaced by environment variable
 trade_alerts = true
 risk_alerts = true
 daily_summary = true
-summary_time = "21:00"
+# SGT "HH:MM". Must be late in the SGT day (after ~04:00 SGT entry cutoff, before
+# 08:00 SGT = the 00:00 UTC stats reset) so the summary covers the FULL overnight
+# London+US trading day. 07:55 SGT = morning report of last night's session.
+summary_time = "07:55"
