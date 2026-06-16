@@ -922,6 +922,40 @@ pub async fn run(
     // IG applies financing once per day; polling hourly ensures we capture it promptly.
     let mut financing_poll_interval = interval(Duration::from_secs(60 * 60));
     let mut last_summary_date = String::new();
+    // Daily summary fire time, parsed from config (SGT "HH:MM"). The summary must
+    // fire late in the SGT day so it covers the full UTC trading day (entries
+    // 07:00–20:00 UTC = 15:00–04:00 SGT, stats reset at 00:00 UTC = 08:00 SGT)
+    // BEFORE the reset wipes it. Default 07:55 SGT = a morning report of the whole
+    // overnight London+US session. (Was hardcoded 21:00 SGT = 13:00 UTC, which
+    // fired mid-day and structurally missed the entire US session.)
+    let (summary_hour, summary_minute) = {
+        let raw = config
+            .notifications
+            .telegram
+            .as_ref()
+            .map(|t| t.summary_time.trim().to_string())
+            .unwrap_or_default();
+        let mut parts = raw.split(':');
+        let h = parts.next().and_then(|s| s.parse::<u32>().ok());
+        let m = parts
+            .next()
+            .and_then(|s| s.parse::<u32>().ok())
+            .unwrap_or(0);
+        match h {
+            Some(h) if h < 24 && m < 60 => (h, m),
+            _ => {
+                warn!(
+                    "Invalid telegram.summary_time '{}', falling back to 07:55 SGT",
+                    raw
+                );
+                (7, 55)
+            }
+        }
+    };
+    info!(
+        "Daily summary scheduled for {:02}:{:02} SGT",
+        summary_hour, summary_minute
+    );
     // Track the most recent bar-start timestamp per epic that we ran analysis on.
     // Strategy evaluation only runs when indicators have actually advanced (new bar closed),
     // avoiding hundreds of redundant evaluations on intra-bar ticks.
@@ -1066,7 +1100,13 @@ pub async fn run(
                 };
                 let today = now_sgt.format("%Y-%m-%d").to_string();
                 let hour = now_sgt.hour();
-                if hour == 21 && today != last_summary_date {
+                let minute = now_sgt.minute();
+                // Fire once per SGT day, in the configured minute window. The narrow
+                // (hour == target && minute >= target) window — rather than a broad
+                // "past target time" — avoids a spurious summary firing whenever the
+                // engine restarts later in the day.
+                let at_summary_time = hour == summary_hour && minute >= summary_minute;
+                if at_summary_time && today != last_summary_date {
                     let s = state.read().await;
                     let tg = telegram.clone();
                     let trades = s.metrics.daily.trades;

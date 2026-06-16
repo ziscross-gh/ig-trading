@@ -32,4 +32,20 @@ fn default_toml_parses() {
     assert_eq!(config.risk.volatile_breakeven_trigger, 0.9);
     // Phase 17.G — same-instrument entry spacing.
     assert_eq!(config.strategies.m15_min_entry_spacing_secs, 2700);
+
+    // Daily summary must fire late-SGT (morning report covering the full overnight
+    // UTC trading day) — between 04:00 SGT (entry cutoff) and 08:00 SGT (00:00 UTC
+    // reset). A mid-day time would structurally miss the US session.
+    let st = config
+        .notifications
+        .telegram
+        .as_ref()
+        .expect("telegram config must exist")
+        .summary_time
+        .clone();
+    let sgt_hour: u32 = st.split(':').next().unwrap().parse().unwrap();
+    assert!(
+        (4..8).contains(&sgt_hour),
+        "summary_time {st} must be 04:00–07:59 SGT to cover the full trading day"
+    );
 }

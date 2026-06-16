@@ -678,7 +678,7 @@ impl Default for EngineConfig {
                     trade_alerts: true,
                     risk_alerts: true,
                     daily_summary: true,
-                    summary_time: "21:00".to_string(),
+                    summary_time: "07:55".to_string(),
                 }),
                 slack: None,
             },
