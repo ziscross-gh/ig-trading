@@ -41,6 +41,7 @@ from collections import defaultdict
 day, path = os.environ["D"], os.environ["LOG"]
 fills, approvals, closes = 0, [], []
 overrides, besnaps, gate_blocks, bypasses, rr_rejects = [], 0, 0, 0, 0
+reconciled = []  # guaranteed-stop closes recovered by the accounting fix
 err_decimal = err_panic = err_other = e403 = 0
 consensus = defaultdict(int)
 
@@ -61,6 +62,10 @@ with open(path, errors="replace") as f:
             mt = re.search(r"recomputed: (\S+) (\S+) entry=([\d.]+) exit=([\d.]+).*reason=(\w+).*pnl=([-\d.]+)", m)
             if mt:
                 closes.append((ts, *mt.groups()))
+        elif "reconciled" in m and "P&L" in m:
+            mt = re.search(r"P&L ([-\d.]+)", m)
+            if mt:
+                reconciled.append((ts, float(mt.group(1))))
         elif "instrument SL/TP override" in m:
             overrides.append(f"{ts} {m[:110]}")
         elif "BE snap" in m:
@@ -87,9 +92,13 @@ for _, epic, _, _, _, _, pnl in closes:
     p = float(pnl); per[k][0] += p
     per[k][1 if p > 0 else (3 if p == 0 else 2)] += 1
 
-print(f"LOG-DAY: {fills} fills | {len(closes)} closes net {sum(float(c[-1]) for c in closes):+.2f}")
+print(f"LOG-DAY: {fills} fills | {len(closes)} OPU closes net {sum(float(c[-1]) for c in closes):+.2f}")
 for k, (net, w, l, be) in sorted(per.items()):
     print(f"  {k:7s} {net:+9.2f}  ({w}W/{l}L/{be}BE)")
+if reconciled:
+    rnet = sum(p for _, p in reconciled)
+    print(f"  RECONCILED (guaranteed-stop closes recovered): {len(reconciled)}, net {rnet:+.2f} "
+          f"(now counted in stats/scorecard/CB — included in ENGINE-DAY above)")
 for c in closes[-5:]:
     print(f"  close {c[0]} {c[1].split('.')[2]:7s} {c[2]:4s} {c[3]}->{c[4]} {c[5]:12s} {float(c[6]):+9.2f}")
 for a in approvals[-3:]:
