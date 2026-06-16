@@ -39,6 +39,27 @@ each individually ≥ 0; performance through at least one regime change. Monitor
 (8.0 vs observed 7.80 GOLD block); Asia-session investigation (recurring blocked-consensus
 overnight, inconclusive 12-trade backtest).
 
+### Freeze-end backlog — exit-management investigation (logged 2026-06-15)
+
+> **Operator observation:** "sometimes already in profit but TP is too high" — trades reach real
+> profit then reverse to a break-even scratch. **Confirmed in log:** of 44 closes (06-09→06-15),
+> **16 scratched at exactly 0.00** after arming the BE-snap (≥2.25× ATR in profit); only 4 hit the
+> full TP, 5 trailed to a partial win. 31 BE-snap arming events total. Whole edge = 4 big TP wins.
+
+> **Backtest verdict (do NOT implement — both "obvious" fixes fail; `/tmp/trailing_backtest.py`,
+> EURUSD+USDJPY M15 04-27→06-15, EmaMicrotrend-approx entries, identical across policies):**
+> - **Tighter trailing (1.0× ATR once in profit):** recovers only 4/26 scratches, +50 pips (~7%). Marginal.
+> - **Nearer TP (pull 6.5×→3.0× ATR):** net gets *worse* (−717→−813 pips). More green trades but it
+>   caps the rare big winner that carries a low-win-rate system. The far TP is doing its job.
+> - **Real lever is entry quality, not exits:** 132/195 backtest trades were full SL losses that never
+>   reached profit — no exit tweak touches those. Win rate ~32% sits right on the 33% break-even line
+>   for a 2.0× payoff. (Backtest PF ~0.4 is pessimistic vs live ~0.93 because it omits the 2/3
+>   consensus + H1 gate — which is itself evidence that selectivity is the lever.)
+
+> **Post-freeze direction (not a decision — evidence for 07-03 review):** (1) raise entry selectivity
+> to lift win rate above ~33%; (2) concentrate on GOLD (only instrument whose trends run far enough
+> to reach the TPs). Exit-management tinkering is a dead end per the above.
+
 ---
 
 ## Phase 17.F — Live-Week Tuning: EURUSD Whipsaw SL + BE-Snap Relax (✅ 2026-06-11)

@@ -2,7 +2,7 @@ use anyhow::Result;
 use chrono::Utc;
 use std::sync::Arc;
 use tokio::sync::{broadcast, RwLock};
-use tracing::{debug, error, info};
+use tracing::{debug, error, info, warn};
 
 use crate::api::rest_client::IGRestClient;
 use crate::engine::event_loop::learning::build_learning_snapshot;
@@ -10,6 +10,15 @@ use crate::engine::state::{get_instrument_name, ClosedTrade, Direction, EngineSt
 use crate::ipc::events::EngineEvent;
 use crate::notifications::telegram::TelegramNotifier;
 use crate::strategy::ensemble::EnsembleVoter;
+
+/// True when a failed REST close means the position is already gone server-side
+/// (guaranteed stop fired before the engine's redundant close call landed).
+/// Such closes must be reconciled into stats, not silently dropped.
+fn is_already_closed_error(msg: &str) -> bool {
+    msg.contains("notional.details.null")
+        || msg.contains("POSITION_NOT_FOUND")
+        || msg.contains("404")
+}
 
 pub async fn handle_position_monitoring(
     state: &Arc<RwLock<EngineState>>,
@@ -381,7 +390,79 @@ pub async fn handle_position_monitoring(
                 });
             }
             Err(e) => {
-                error!("Failed to close position {}: {}", position.deal_id, e);
+                // On a limited-risk (guaranteed-stop) account, IG closes the position
+                // server-side the instant the stop is hit. The engine independently
+                // detects the same hit on its price feed and fires this REST close a
+                // beat later — by which point the position is already gone, so IG
+                // returns 404 `position.notional.details.null` (or POSITION_NOT_FOUND).
+                // Crucially, guaranteed-stop closes do NOT emit an OPU close event
+                // (only `status=OPEN`), so if we merely log here the trade is lost from
+                // daily stats, the scorecard, AND the circuit breaker — exactly the
+                // losses the breaker exists to catch. Reconcile it as a real close
+                // using the engine's locally-computed P&L, dedup-gated through
+                // `recently_closed_deal_ids` so a (hypothetical) later OPU event can't
+                // double-book it.
+                let already_closed = is_already_closed_error(&e.to_string());
+                if !already_closed {
+                    error!("Failed to close position {}: {}", position.deal_id, e);
+                } else {
+                    let reconciled_pnl = position.pnl;
+                    let closed_trade = ClosedTrade {
+                        deal_id: position.deal_id.clone(),
+                        epic: position.epic.clone(),
+                        direction: position.direction.clone(),
+                        size: position.size,
+                        entry_price: position.open_price,
+                        exit_price: position.current_price,
+                        stop_loss: position.stop_loss.unwrap_or(0.0),
+                        take_profit: position.take_profit,
+                        pnl: reconciled_pnl,
+                        strategy: position.strategy.clone(),
+                        status: format!("{}_reconciled", reason.to_lowercase().replace(' ', "_")),
+                        opened_at: position.opened_at,
+                        closed_at: Utc::now(),
+                        is_virtual: position.is_virtual,
+                        opened_in_regime: position.opened_in_regime.clone(),
+                    };
+
+                    let recorded = {
+                        let mut s = state.write().await;
+                        if s.trades
+                            .recently_closed_deal_ids
+                            .contains(&position.deal_id)
+                        {
+                            false
+                        } else {
+                            s.record_trade_result_for_epic(reconciled_pnl, Some(&position.epic));
+                            s.add_closed_trade(closed_trade.clone());
+                            s.set_trade_cooldown(&position.epic, cooldown_secs);
+                            s.save_daily_stats();
+                            s.trades
+                                .recently_closed_deal_ids
+                                .insert(position.deal_id.clone());
+                            if let Some(ref mut scorecard) = s.learning.scorecard {
+                                scorecard.update(&closed_trade);
+                            }
+                            true
+                        }
+                    };
+
+                    if recorded {
+                        warn!(
+                            "Position {} already closed server-side (guaranteed stop): {} — reconciled {} P&L {:.2} into stats/scorecard/circuit-breaker",
+                            position.deal_id, e, reason, reconciled_pnl
+                        );
+                        let _ = event_tx.send(EngineEvent::position_closed(
+                            position.deal_id.clone(),
+                            reconciled_pnl,
+                        ));
+                    } else {
+                        debug!(
+                            "Position {} already closed and already recorded (OPU) — skipping duplicate",
+                            position.deal_id
+                        );
+                    }
+                }
             }
         }
     }
@@ -395,4 +476,33 @@ pub async fn handle_position_monitoring(
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod close_reconciliation_tests {
+    use super::is_already_closed_error;
+
+    #[test]
+    fn detects_guaranteed_stop_already_closed_errors() {
+        // The exact IG error seen live when a guaranteed stop closed the position
+        // before the engine's REST close landed (06-14/06-15 dropped trades).
+        assert!(is_already_closed_error(
+            "API request failed with status 404 Not Found: {\"errorCode\":\"error.service.marketdata.position.notional.details.null.error\"}"
+        ));
+        assert!(is_already_closed_error("POSITION_NOT_FOUND"));
+        assert!(is_already_closed_error("status 404 Not Found"));
+    }
+
+    #[test]
+    fn does_not_swallow_genuine_close_failures() {
+        // Real failures (network, auth, server error) must still surface as errors,
+        // not be silently booked as closes.
+        assert!(!is_already_closed_error("connection reset by peer"));
+        assert!(!is_already_closed_error(
+            "API request failed with status 500 Internal Server Error"
+        ));
+        assert!(!is_already_closed_error(
+            "Deal confirmation timeout after 10 retries"
+        ));
+    }
 }
