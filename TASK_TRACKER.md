@@ -1,12 +1,39 @@
 # TASK_TRACKER.md — IG Trading Engine
 
-**Last updated:** 2026-06-16 (Bug fix: guaranteed-stop close accounting — closes that 404'd were dropped from stats/scorecard/circuit-breaker; ⛔ PARAMETER FREEZE still in effect until 2026-07-03)
+**Last updated:** 2026-06-16 (Phase 17.H — CRITICAL: circuit breaker + daily-loss limit were DEAD in production, now wired; also close-accounting + summary-time fixes. ⛔ PARAMETER FREEZE still in effect until 2026-07-03)
 **Current phase:** Production-ready + Active trading. VOLATILE regime live + cooldown system. Concurrent multi-position mode live. H1 gate dual bypass (cold-start + zero-signal).
 **Current focus:** 🤖 Engine live & trading | 📊 Multi-position mode: max 3/instrument at 1/3 size | 🔄 Regime cooldown active (7-day VOLATILE → relaxed SL/TP) | 🕐 Trading hours: 07:00–20:00 UTC only | 🚪 H1 gate: VOLATILE bypass for 0-signal & cold-start
 
 > 📦 Dashboard (`src/`) is **archived** — not maintained. All dashboard tasks removed.
 
 For the full history of completed work and debt items, see `TECH_DEBT_AUDIT.md`.
+
+---
+
+## Phase 17.H — CRITICAL: Circuit Breaker + Daily-Loss Limit Were Dead (✅ 2026-06-16, freeze-exempt)
+
+> **Discovered during a live drawdown.** A correlated cluster stopped out the one-directional book on
+> 06-16, running the day to **−3,264 with 6 consecutive losses** — and **neither** the loss-streak
+> circuit breaker **nor** the 2% daily-loss limit engaged. Investigation: `metrics.circuit_breaker_active`
+> gates `can_trade()` (both H1 + M15 paths) but was **never set true anywhere**; the RiskManager's own
+> `consecutive_losses`/`daily_pnl`/`is_paused` were only updated by `record_trade_result()`, which is
+> called **only in a unit test**. So both safety nets had been non-functional the entire time — the
+> documented "reduce after N / pause after M / stop at 2%" protections did not exist in the running bot.
+> (Only became visible because the same-day close-accounting fix made the losses show up in stats.)
+
+> **Live action:** engine manually **paused** via `/api/control` (user-approved) to stop the bleed, fix
+> built + tested under pause, then deployed + resumed.
+
+**Fix** (`state.rs`, `default.toml`): `EngineState::update_circuit_breaker()` recomputes
+`metrics.circuit_breaker_active` from live daily stats on every close — trips when
+`consecutive_losses >= consecutive_losses_pause` OR daily P&L breaches `max_daily_loss_pct`; clears on a
+winning close or the 00:00 UTC daily reset (which now also clears the flag). Thresholds made explicit in
+`[risk.circuit_breaker]`: **pause at 5** (the ~32% win rate makes 3-streaks common, so the dead-default 3
+would halt constantly; the 06-16 blow-up was a 5–6 cluster). Daily limit stays **2%**. Tests: 4 new
+`circuit_breaker_tests` + `config_load` asserts the threshold. PR #8 merged, engine redeployed.
+
+> **Risk-system audit follow-up (queued):** other `#[allow(dead_code)]` risk methods exist — worth a
+> sweep to confirm nothing else documented-but-dead (e.g. weekly drawdown limit, correlated-position cap).
 
 ---
 

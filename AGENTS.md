@@ -177,7 +177,11 @@ Values below mirror `config/default.toml` — if they disagree, the TOML wins; f
 - Max positions per instrument: 3 (each 1/3 normal size — same total risk)
 - Max margin usage: 30%
 - Min risk/reward: 2.5 (⚠️ any SL widening must scale TP or the gate silently rejects)
-- Circuit breaker: size reduction after 3 losses, 60 min pause after 5
+- Circuit breaker (Phase 17.H — wired into the live gate; was **dead** before 2026-06-16):
+  halts new entries for the rest of the SGT day when consecutive losses reach
+  `circuit_breaker.consecutive_losses_pause` (5) **or** daily P&L breaches `max_daily_loss_pct`
+  (2%). Set by `EngineState::update_circuit_breaker()` on every close; gates `can_trade()`.
+  Clears on a winning close (streak resets) or the 00:00 UTC daily reset.
 - Trading hours: 07:00–20:00 UTC — **source of truth is `[trading_hours]` in default.toml**
   (the engine overwrites `risk.trading_hours_utc` from it at startup; don't set it under `[risk]`)
 - Sessions: Asia / London / US Overlap
