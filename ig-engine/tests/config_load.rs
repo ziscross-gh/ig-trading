@@ -48,4 +48,12 @@ fn default_toml_parses() {
         (4..8).contains(&sgt_hour),
         "summary_time {st} must be 04:00–07:59 SGT to cover the full trading day"
     );
+
+    // Phase 17.H — circuit breaker pause threshold. Must be explicitly set (the
+    // dead-code default is 3, too tight for a ~32%-win strategy). Guards against
+    // silently reverting to a value that halts trading on normal variance.
+    assert_eq!(
+        config.risk.circuit_breaker.consecutive_losses_pause, 5,
+        "circuit-breaker pause threshold must be the explicit tail-risk value (5)"
+    );
 }

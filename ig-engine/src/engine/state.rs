@@ -486,6 +486,9 @@ impl EngineState {
                 date: today,
                 ..Default::default()
             };
+            // Clear any circuit-breaker halt from the previous day — the new day
+            // starts with a fresh loss streak and daily P&L.
+            self.metrics.circuit_breaker_active = false;
         }
     }
 
@@ -527,6 +530,49 @@ impl EngineState {
         let drawdown = self.metrics.daily.high_watermark - self.metrics.daily.pnl;
         if drawdown > self.metrics.daily.max_drawdown {
             self.metrics.daily.max_drawdown = drawdown;
+        }
+
+        self.update_circuit_breaker();
+    }
+
+    /// Circuit breaker (Phase 17.H). `metrics.circuit_breaker_active` gates
+    /// `can_trade()` (both the H1 and M15 trade paths), but until now NOTHING
+    /// ever set it — so the breaker AND the daily-loss limit were dead in
+    /// production (the RiskManager's own copies were only ever updated by a
+    /// test-only method). This recomputes the flag from the live daily stats on
+    /// every close. Trips when the consecutive-loss streak reaches
+    /// `consecutive_losses_pause` OR the day breaches `max_daily_loss_pct`.
+    /// Clears automatically when a winning close resets the streak (and the
+    /// daily limit isn't breached) or at the daily reset.
+    pub fn update_circuit_breaker(&mut self) {
+        let cb = &self.config.risk.circuit_breaker;
+        let daily_loss_limit = self.account.balance * self.config.risk.max_daily_loss_pct / 100.0;
+        let streak_halt = self.metrics.daily.consecutive_losses >= cb.consecutive_losses_pause;
+        let daily_halt = daily_loss_limit > 0.0 && self.metrics.daily.pnl <= -daily_loss_limit;
+        let was_active = self.metrics.circuit_breaker_active;
+        self.metrics.circuit_breaker_active = streak_halt || daily_halt;
+
+        if self.metrics.circuit_breaker_active && !was_active {
+            let reason = if daily_halt {
+                format!(
+                    "daily loss {:.2} breached limit {:.2} ({:.1}% of {:.0})",
+                    self.metrics.daily.pnl,
+                    -daily_loss_limit,
+                    self.config.risk.max_daily_loss_pct,
+                    self.account.balance
+                )
+            } else {
+                format!(
+                    "{} consecutive losses (limit {})",
+                    self.metrics.daily.consecutive_losses, cb.consecutive_losses_pause
+                )
+            };
+            tracing::warn!(
+                "🛑 CIRCUIT BREAKER TRIPPED — halting new entries: {}",
+                reason
+            );
+        } else if !self.metrics.circuit_breaker_active && was_active {
+            tracing::info!("✅ Circuit breaker cleared — new entries re-enabled");
         }
     }
 
@@ -680,5 +726,78 @@ mod m15_cooldown_tests {
         assert!(!t.can_trade("EPIC.A", h1, 2));
         // new H1 candle resets the counter
         assert!(t.can_trade("EPIC.A", h1 + 3600, 2));
+    }
+}
+
+#[cfg(test)]
+mod circuit_breaker_tests {
+    use super::*;
+    use crate::engine::config::EngineConfig;
+
+    fn state_with(pause_threshold: u32, daily_loss_pct: f64, balance: f64) -> EngineState {
+        let mut cfg = EngineConfig::default();
+        cfg.risk.circuit_breaker.consecutive_losses_pause = pause_threshold;
+        cfg.risk.max_daily_loss_pct = daily_loss_pct;
+        let mut s = EngineState::new(cfg);
+        s.status = EngineStatus::Running;
+        s.account.balance = balance;
+        s
+    }
+
+    #[test]
+    fn trips_on_consecutive_loss_streak_and_blocks_trading() {
+        let mut s = state_with(5, 2.0, 100_000.0);
+        for _ in 0..4 {
+            s.record_trade_result(-100.0);
+            assert!(
+                !s.metrics.circuit_breaker_active,
+                "must not trip before threshold"
+            );
+            assert!(s.can_trade(), "trading allowed under threshold");
+        }
+        s.record_trade_result(-100.0); // 5th consecutive loss == threshold
+        assert!(
+            s.metrics.circuit_breaker_active,
+            "breaker must trip at threshold"
+        );
+        assert!(!s.can_trade(), "new entries must be blocked while tripped");
+    }
+
+    #[test]
+    fn winning_close_clears_the_streak_halt() {
+        let mut s = state_with(3, 2.0, 100_000.0);
+        s.record_trade_result(-100.0);
+        s.record_trade_result(-100.0);
+        s.record_trade_result(-100.0);
+        assert!(s.metrics.circuit_breaker_active);
+        s.record_trade_result(50.0); // a win resets consecutive_losses → clears
+        assert!(!s.metrics.circuit_breaker_active);
+        assert!(s.can_trade());
+    }
+
+    #[test]
+    fn daily_loss_limit_halts_independently_of_streak() {
+        // One large loss under the 2% limit on a 100k balance = -2000.
+        let mut s = state_with(99, 2.0, 100_000.0); // streak threshold unreachable
+        s.record_trade_result(-2500.0); // breaches 2% (-2000) on a single close
+        assert!(
+            s.metrics.circuit_breaker_active,
+            "daily-loss limit must halt"
+        );
+        assert!(!s.can_trade());
+    }
+
+    #[test]
+    fn daily_reset_clears_a_tripped_breaker() {
+        let mut s = state_with(2, 2.0, 100_000.0);
+        s.record_trade_result(-100.0);
+        s.record_trade_result(-100.0);
+        assert!(s.metrics.circuit_breaker_active);
+        s.metrics.daily.date = "1999-01-01".to_string(); // force a stale day
+        s.check_daily_reset();
+        assert!(
+            !s.metrics.circuit_breaker_active,
+            "reset must clear the halt"
+        );
     }
 }
