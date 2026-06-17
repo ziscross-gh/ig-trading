@@ -46,6 +46,20 @@ allow_weekend_trading = true
 news_blackout_windows_utc = []
 instrument_specs = {}
 
+# Phase 17.H — circuit breaker. Until now this was unset and the breaker was
+# DEAD in production (nothing fed it). Now wired to live daily stats: new entries
+# halt for the rest of the SGT day when the consecutive-loss streak hits
+# `consecutive_losses_pause` OR the day breaches `max_daily_loss_pct` (2%, above).
+# Cleared by a winning close (streak resets) or the 00:00 UTC daily reset.
+# Pause threshold 5: the strategy's ~32% win rate makes 3-loss streaks common, so
+# pause-at-3 would halt constantly; the 06-16 blow-up was a 5–6 loss cluster, so
+# 5 catches the tail without firing on normal variance.
+[risk.circuit_breaker]
+consecutive_losses_reduce = 3
+consecutive_losses_pause = 5
+pause_duration_mins = 120
+daily_loss_warning_pct = 70.0
+
 [strategies]
 m15_min_consensus = 2
 m15_min_entry_spacing_secs = 2700  # Phase 17.G — ≥45 min between same-instrument entries (stacked entries die together)
