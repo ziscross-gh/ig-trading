@@ -1,12 +1,38 @@
 # TASK_TRACKER.md — IG Trading Engine
 
-**Last updated:** 2026-06-16 (Phase 17.H — CRITICAL: circuit breaker + daily-loss limit were DEAD in production, now wired; also close-accounting + summary-time fixes. ⛔ PARAMETER FREEZE still in effect until 2026-07-03)
+**Last updated:** 2026-06-24 (Incident: Lightstreamer feed died at weekend close, engine blind ~4 days — added stale-data watchdog + restart recovery. ⛔ PARAMETER FREEZE still in effect until 2026-07-03)
 **Current phase:** Production-ready + Active trading. VOLATILE regime live + cooldown system. Concurrent multi-position mode live. H1 gate dual bypass (cold-start + zero-signal).
 **Current focus:** 🤖 Engine live & trading | 📊 Multi-position mode: max 3/instrument at 1/3 size | 🔄 Regime cooldown active (7-day VOLATILE → relaxed SL/TP) | 🕐 Trading hours: 07:00–20:00 UTC only | 🚪 H1 gate: VOLATILE bypass for 0-signal & cold-start
 
 > 📦 Dashboard (`src/`) is **archived** — not maintained. All dashboard tasks removed.
 
 For the full history of completed work and debt items, see `TECH_DEBT_AUDIT.md`.
+
+---
+
+## Incident — Lightstreamer Feed Death / Engine Blind ~4 Days (2026-06-24)
+
+> **Symptom (operator-reported):** "no signals for 3 days." **Root cause:** the Lightstreamer
+> tick feed died at the Friday weekend close (last bar 06-19 22:05 UTC) and the auto-reconnect
+> never recovered when the market reopened Sunday — a silent half-open socket (`connect()` blocked
+> forever, never returned, so the reconnect loop never re-iterated). Auth/tokens stayed healthy
+> (refreshing every 50 min), masking it. With the REST fallback also blocked by the 403 weekly
+> quota, the engine ran "alive" but blind: no bars → no analysis → no signals → no trades for ~4
+> days. 4 positions sat "open" in the engine's view (actually closed at IG via guaranteed stops;
+> reconciled +1,227 on restart). No money lost — the outage froze the engine's *view*, not the account.
+
+**Recovery:** restart re-established the feed instantly (bars + 2/3 GOLD consensus within seconds),
+re-synced positions from IG. Balance 218,931.
+
+**Fixes shipped:** `engine_status.sh` gained a `DATA:` watchdog — flags `⚠️ STALE` if no `Bar closed`
+in >20 min during market hours (weekday, FX open). `docs/MONITORING.md` + AGENTS.md: a confirmed
+stale feed during market hours = auto-restart (the one restart exception that doesn't need approval).
+
+**Queued follow-up (not done — risky):** in-engine auto-reconnect-on-staleness watchdog (notify the
+streaming shutdown when no tick for N min → force a fresh reconnect). Depends on the external
+`lightstreamer-client` 0.1.x crate honoring the shutdown notify mid-blocked-read; needs weekend
+validation and conservative thresholds to avoid false-positive reconnect storms. The monitoring
+auto-restart is the reliable backstop until then.
 
 ---
 
