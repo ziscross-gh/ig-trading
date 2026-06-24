@@ -281,6 +281,12 @@ cargo deny check                 # CI runs BOTH audit and deny — deny escalate
   never treat it as a trade predictor. M15 bars close on :00/:15/:30/:45 — no `Bar analysis` lines
   for <18 min is normal, not a stall. Deal sizes are rounded to instrument precision at the single
   execution choke point `order_manager.rs::execute_trade` (Fix #6).
+- **Stale-feed outage (2026-06-24):** the Lightstreamer tick feed can die silently at the weekend
+  close and NOT auto-reconnect (half-open socket; auth/tokens stay healthy, so it's not obvious) —
+  the engine runs "alive" but blind for days (no bars → no signals → no trades). `engine_status.sh`
+  now has a `DATA:` watchdog (flags `⚠️ STALE` if no bar >20 min during market hours). Recovery =
+  restart. Durable in-engine auto-reconnect-on-staleness is a queued follow-up (risky critical-path
+  code; needs weekend validation).
 - **Live-money rule:** NEVER change strategy/risk/gate parameters without explicit human approval —
   propose, show evidence, wait.
 

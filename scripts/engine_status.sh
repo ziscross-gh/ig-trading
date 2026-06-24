@@ -34,6 +34,45 @@ fi
 
 [ -r "$LOG" ] || { echo "LOG: $LOG not readable — no log digest"; exit 0; }
 
+# ── Stale-data watchdog ─────────────────────────────────────────────────────
+# 2026-06-24 incident: the Lightstreamer feed died at the Friday weekend close
+# and never reconnected — the engine ran "alive" for ~4 days with zero market
+# bars (no data → no signals → no trades) and nobody noticed. This flags a
+# stalled feed within minutes instead of days. M15 bars close every 15 min, so
+# >20 min with no bar during weekday market hours means the feed is dead.
+LOG="$LOG" python3 <<'EOF'
+import json, os, re, time
+from datetime import datetime, timezone
+path = os.environ["LOG"]
+last_bar = None
+# scan the tail for the most recent "Bar closed" timestamp
+try:
+    lines = open(path, errors="replace").read().splitlines()
+except OSError:
+    lines = []
+for line in reversed(lines[-4000:]):
+    if "Bar closed for" in line:
+        try:
+            last_bar = datetime.fromisoformat(json.loads(line)["timestamp"].replace("Z", "+00:00"))
+        except Exception:
+            continue
+        break
+now = datetime.now(timezone.utc)
+wd, h = now.weekday(), now.hour  # Mon=0..Sun=6
+mkt_open = not ((wd == 5) or (wd == 4 and h >= 21) or (wd == 6 and h < 21))
+if last_bar is None:
+    print("DATA: ⚠️  no 'Bar closed' found in recent log — feed status unknown")
+else:
+    age_min = (now - last_bar).total_seconds() / 60
+    tag = "ok"
+    if mkt_open and age_min > 20:
+        tag = "⚠️  STALE — feed likely DEAD, restart to reconnect Lightstreamer"
+    elif not mkt_open:
+        tag = "(market closed — staleness expected)"
+    print("DATA: last bar %s UTC (%.0f min ago) %s" % (last_bar.strftime("%m-%d %H:%M"), age_min, tag))
+EOF
+
+
 D="$D" LOG="$LOG" python3 <<'EOF'
 import json, os, re
 from collections import defaultdict

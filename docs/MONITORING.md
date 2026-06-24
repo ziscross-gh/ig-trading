@@ -27,6 +27,14 @@ active experiments, pending decisions) — everything stable lives here.
 - Closes: entry→exit, reason, pnl. Classify: trailed/TP win · BE scratch (0.00) ·
   whipsaw stop-out (loss within ~spread-noise distance of entry).
 - Engine DEAD / panic / `⚠️ ESCALATE` line in the digest.
+- **`DATA: ⚠️ STALE` line in the digest** — the Lightstreamer feed has gone
+  silent during market hours (no bar in >20 min). This is the 2026-06-24
+  failure mode: the engine runs "alive" but blind (no data → no signals → no
+  trades), and it can persist for DAYS. **Auto-recover: restart the engine
+  immediately** (`launchctl unload && load ~/Library/LaunchAgents/com.igengine.plist`),
+  then confirm the next digest shows a fresh bar (`DATA: ... ok`). Report it.
+  This is the one exception to "don't restart without approval" — a confirmed
+  stale feed during market hours is an outage; restart to restore data flow.
 - `too-many-decimal` errors — Fix #6 regression, escalate immediately.
 - Risk-gate rejections mentioning risk/reward — per-instrument SL/TP override
   math is off, escalate.
@@ -51,6 +59,7 @@ active experiments, pending decisions) — everything stable lives here.
   propose with evidence and wait for explicit user approval. Track proposals in
   the TASK_TRACKER.md header/pending section.
 - Restart (`launchctl unload && load ~/Library/LaunchAgents/com.igengine.plist`)
-  only on engine death or user-approved deploys; say so when you do.
+  only on engine death, a confirmed `DATA: ⚠️ STALE` feed outage, or
+  user-approved deploys; say so when you do.
 - Reschedule each cycle with the same short prompt (runbook pointer + updated
   context delta) unless the user says stop.
