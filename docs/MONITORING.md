@@ -28,13 +28,17 @@ active experiments, pending decisions) — everything stable lives here.
   whipsaw stop-out (loss within ~spread-noise distance of entry).
 - Engine DEAD / panic / `⚠️ ESCALATE` line in the digest.
 - **`DATA: ⚠️ STALE` line in the digest** — the Lightstreamer feed has gone
-  silent during market hours (no bar in >20 min). This is the 2026-06-24
-  failure mode: the engine runs "alive" but blind (no data → no signals → no
-  trades), and it can persist for DAYS. **Auto-recover: restart the engine
-  immediately** (`launchctl unload && load ~/Library/LaunchAgents/com.igengine.plist`),
-  then confirm the next digest shows a fresh bar (`DATA: ... ok`). Report it.
-  This is the one exception to "don't restart without approval" — a confirmed
-  stale feed during market hours is an outage; restart to restore data flow.
+  silent during market hours (no bar in >20 min). This is the 2026-06-24 /
+  2026-06-30 failure mode: the engine runs "alive" but blind (no data → no
+  signals → no trades), and it can persist for DAYS. **An autonomous OS-level
+  watchdog (`com.igengine.feedwatchdog`, every 2 min) now auto-restarts the
+  engine on this within ~22 min** — it should self-heal without you (audit log
+  `/tmp/ig-feed-watchdog.log`). If you still see `STALE` persist >25 min, the
+  watchdog itself failed: check its log, then manually restart as fallback
+  (`launchctl unload && load ~/Library/LaunchAgents/com.igengine.plist`) and
+  confirm the next digest shows a fresh bar (`DATA: ... ok`). Report it. Manual
+  restart on a confirmed stale feed during market hours remains the one
+  exception to "don't restart without approval."
 - `too-many-decimal` errors — Fix #6 regression, escalate immediately.
 - Risk-gate rejections mentioning risk/reward — per-instrument SL/TP override
   math is off, escalate.

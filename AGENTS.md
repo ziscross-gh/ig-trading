@@ -266,6 +266,11 @@ cargo deny check                 # CI runs BOTH audit and deny — deny escalate
 - **Service:** launchd `com.igengine.plist`. Restart:
   `launchctl unload ~/Library/LaunchAgents/com.igengine.plist && launchctl load ~/Library/LaunchAgents/com.igengine.plist`
   (engine re-auths, warms M15 from disk, syncs open positions from IG — safe with positions open)
+- **Feed watchdog (autonomous, live 2026-06-30):** launchd `com.igengine.feedwatchdog.plist` runs
+  `scripts/feed_watchdog.sh` every 2 min — auto-restarts the engine on a `⚠️ STALE` feed during
+  market hours, **independent of any Claude/agent loop**. Install: copy
+  `scripts/com.igengine.feedwatchdog.plist` → `~/Library/LaunchAgents/` then `launchctl load` it.
+  Audit log: `/tmp/ig-feed-watchdog.log`. Thresholds: >22 min stale → restart; 20-min cooldown.
 - **Log:** `/tmp/ig-engine-launchd.log` — JSON lines (`timestamp`, `level`, `fields.message`)
 - **Status digest:** `scripts/engine_status.sh [YYYY-MM-DD]` — process + API snapshot + day digest
   (fills, closes with per-instrument P&L, M15 consensus histogram, gate blocks, 17.F markers, errors)
@@ -281,12 +286,19 @@ cargo deny check                 # CI runs BOTH audit and deny — deny escalate
   never treat it as a trade predictor. M15 bars close on :00/:15/:30/:45 — no `Bar analysis` lines
   for <18 min is normal, not a stall. Deal sizes are rounded to instrument precision at the single
   execution choke point `order_manager.rs::execute_trade` (Fix #6).
-- **Stale-feed outage (2026-06-24):** the Lightstreamer tick feed can die silently at the weekend
-  close and NOT auto-reconnect (half-open socket; auth/tokens stay healthy, so it's not obvious) —
-  the engine runs "alive" but blind for days (no bars → no signals → no trades). `engine_status.sh`
-  now has a `DATA:` watchdog (flags `⚠️ STALE` if no bar >20 min during market hours). Recovery =
-  restart. Durable in-engine auto-reconnect-on-staleness is a queued follow-up (risky critical-path
-  code; needs weekend validation).
+- **Stale-feed outage (2026-06-24, recurred 2026-06-30):** the Lightstreamer tick feed can die
+  silently at the weekend close and NOT auto-reconnect at the Sunday reopen (half-open socket;
+  auth/tokens stay healthy, so it's not obvious) — the engine runs "alive" but blind for days (no
+  bars → no signals → no trades). `engine_status.sh` flags `⚠️ STALE` (no bar >20 min during market
+  hours) but only *detects*; on 06-30 the agent monitoring loop meant to act on it had also stalled,
+  so it went unnoticed ~3.5 days. **Durable fix (live 2026-06-30): an autonomous OS-level watchdog**
+  — `scripts/feed_watchdog.sh` + launchd `com.igengine.feedwatchdog` (every 2 min, independent of
+  any agent loop) auto-restarts the engine when a bar is >22 min stale during market hours (20-min
+  cooldown anti-flap; no-op when closed; log `/tmp/ig-feed-watchdog.log`). Feed-liveness is now
+  machine-guaranteed; manual restart is the fallback. **Lesson: the agent monitoring loop is NOT a
+  reliable safety net (it has stalled repeatedly) — safety-critical recovery must run machine-local.**
+  Durable *in-engine* auto-reconnect-on-staleness remains a queued follow-up (deeper root cause;
+  risky critical-path code; needs weekend validation).
 - **Live-money rule:** NEVER change strategy/risk/gate parameters without explicit human approval —
   propose, show evidence, wait.
 
