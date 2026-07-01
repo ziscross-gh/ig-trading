@@ -271,6 +271,14 @@ cargo deny check                 # CI runs BOTH audit and deny — deny escalate
   market hours, **independent of any Claude/agent loop**. Install: copy
   `scripts/com.igengine.feedwatchdog.plist` → `~/Library/LaunchAgents/` then `launchctl load` it.
   Audit log: `/tmp/ig-feed-watchdog.log`. Thresholds: >22 min stale → restart; 20-min cooldown.
+- **Exposure watchdog (autonomous, live 2026-07-01):** launchd `com.igengine.exposurewatchdog.plist`
+  runs `scripts/exposure_watchdog.sh` every 5 min — Telegram-alerts (reuses the engine's
+  `TELEGRAM_BOT_TOKEN`/`TELEGRAM_CHAT_ID` from `.env`) on same-instrument pyramiding (≥3 same-dir
+  legs on one epic) or correlated cross-instrument USD exposure (≥4 net USD-direction legs across
+  USDJPY/EURUSD/GBPUSD/AUDUSD). Read + notify only — never touches the engine or any risk param,
+  **independent of any Claude/agent loop**. Install: copy `scripts/com.igengine.exposurewatchdog.plist`
+  → `~/Library/LaunchAgents/` then `launchctl load` it. Audit log: `/tmp/ig-exposure-watchdog.log`.
+  Per-trigger 30-min cooldown; escalation (growing leg count) always re-alerts immediately.
 - **Log:** `/tmp/ig-engine-launchd.log` — JSON lines (`timestamp`, `level`, `fields.message`)
 - **Status digest:** `scripts/engine_status.sh [YYYY-MM-DD]` — process + API snapshot + day digest
   (fills, closes with per-instrument P&L, M15 consensus histogram, gate blocks, 17.F markers, errors)

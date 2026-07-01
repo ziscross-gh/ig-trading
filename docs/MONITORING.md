@@ -44,6 +44,11 @@ active experiments, pending decisions) — everything stable lives here.
   math is off, escalate.
 - Entries stacked < 45 min apart on one instrument (evidence for the pending
   entry-spacing suggestion) — flag, don't fix.
+- Same-instrument pyramiding (≥3 same-dir legs) or correlated cross-instrument
+  USD exposure (≥4 net USD-direction legs) now also auto-alerts to Telegram via
+  the autonomous `com.igengine.exposurewatchdog` launchd job (independent of
+  this monitoring loop — see AGENTS.md). Still flag it here too; this loop is
+  the one that can reason about *why* and whether to propose a fix.
 - Signals repeatedly blocked (H1 gate, trading hours) — count them; they feed
   the standing investigation queue.
 
