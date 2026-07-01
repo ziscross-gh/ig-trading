@@ -1,6 +1,6 @@
 # TASK_TRACKER.md — IG Trading Engine
 
-**Last updated:** 2026-06-24 (Incident: Lightstreamer feed died at weekend close, engine blind ~4 days — added stale-data watchdog + restart recovery. ⛔ PARAMETER FREEZE still in effect until 2026-07-03)
+**Last updated:** 2026-06-30 (Incident RECURRED: Lightstreamer feed died at the 06-26 Fri close, no reconnect at the Sun reopen — engine blind ~3.5 days; the agent monitoring loop that should have caught it had also stalled. Fixed with an autonomous OS-level feed watchdog (launchd `com.igengine.feedwatchdog`, every 2 min). ⛔ PARAMETER FREEZE still in effect until 2026-07-03)
 **Current phase:** Production-ready + Active trading. VOLATILE regime live + cooldown system. Concurrent multi-position mode live. H1 gate dual bypass (cold-start + zero-signal).
 **Current focus:** 🤖 Engine live & trading | 📊 Multi-position mode: max 3/instrument at 1/3 size | 🔄 Regime cooldown active (7-day VOLATILE → relaxed SL/TP) | 🕐 Trading hours: 07:00–20:00 UTC only | 🚪 H1 gate: VOLATILE bypass for 0-signal & cold-start
 
@@ -33,6 +33,28 @@ streaming shutdown when no tick for N min → force a fresh reconnect). Depends 
 `lightstreamer-client` 0.1.x crate honoring the shutdown notify mid-blocked-read; needs weekend
 validation and conservative thresholds to avoid false-positive reconnect storms. The monitoring
 auto-restart is the reliable backstop until then.
+
+---
+
+## Incident — Feed Death RECURRED + Permanent OS Watchdog (2026-06-30)
+
+> Same failure as 06-24: Lightstreamer died at the Fri 06-26 21:00 close and never reconnected at the
+> Sun 21:00 reopen; the engine ran blind ~3.5 days. This time the *detection* layer also failed — the
+> agent monitoring loop AND its cron heartbeat both stalled, so the `DATA: ⚠️ STALE` flag was never
+> acted on (it only detects; something has to run it). The 5 carried USD-long legs closed flat at the
+> broker (+2,222 → bal 220,795.99). No money lost.
+
+**Recovery:** restart re-established the feed (fresh bars within seconds; book was already flat).
+
+**Permanent fix shipped (freeze-exempt ops):** an autonomous OS-level feed watchdog —
+`scripts/feed_watchdog.sh` + launchd `com.igengine.feedwatchdog` (every 2 min, **independent of any
+agent loop**). During market hours, if the newest bar is >22 min stale it auto-restarts the engine
+(`launchctl unload/load` → `KeepAlive` restarts it); 20-min cooldown anti-flap; no-op when market
+closed; audit log `/tmp/ig-feed-watchdog.log`. Tested end-to-end (detect → restart → recover) on
+06-30. Feed-liveness is now machine-guaranteed; the agent loop is for P&L/observation only. **Lesson:
+the agent monitoring loop is not a reliable safety net — safety-critical recovery must run
+machine-local.** The in-engine auto-reconnect (deeper root cause) remains the queued, approval-gated
+follow-up.
 
 ---
 

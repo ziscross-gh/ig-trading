@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.igengine.feedwatchdog</string>
+
+    <!-- Autonomous stale-feed auto-restart. Runs INDEPENDENT of any Claude/agent loop. -->
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>/Users/ziscross/.openclaw/workspace/projects/ig-trading/scripts/feed_watchdog.sh</string>
+    </array>
+
+    <!-- Check every 2 minutes -->
+    <key>StartInterval</key>
+    <integer>120</integer>
+
+    <!-- Start checking as soon as it is loaded -->
+    <key>RunAtLoad</key>
+    <true/>
+
+    <key>StandardOutPath</key>
+    <string>/tmp/ig-feed-watchdog.out.log</string>
+    <key>StandardErrorPath</key>
+    <string>/tmp/ig-feed-watchdog.out.log</string>
+</dict>
+</plist>
